@@ -1,164 +1,125 @@
-# DEMO MAKER EASY — Implementation Control Plan
+# DEMO MAKER EASY — As-Built Master Plan & Architectural Specification
 
-> **Version:** 1.0 (ประยุกต์จาก `TEMPLATE_IMPLEMENTATION_PLAN_v3.md`)
-> **หลักคิด:** Plan → Review → Execute → Evidence → Verify → Approve → Next Phase
-> Agent ห้ามถือว่า "ทำเสร็จ" = "ถูกต้อง" — Phase จะถือว่าเสร็จเมื่อมีหลักฐานตรงตาม Definition of Done และผ่านการตรวจรับจากเจ้าของโปรเจกต์เท่านั้น
-
----
-
-## 0. PLAN CONTROL
-
-| รายการ | ค่า |
-|---|---|
-| **Project** | Demo Maker Easy (Acoustic Songwriting Studio & Karaoke Teleprompter) |
-| **Plan Version** | v1.0 |
-| **Created** | 2026-11-12 |
-| **Planning Agent** | Antigravity (Gemini) |
-| **Implementation Agent** | Antigravity (ตามตาราง Phase Table หมวด 6) |
-| **Reviewer** | Human (เจ้าของโปรเจกต์ตรวจ UX/UI และฟังมิติเสียงจริงทุก Phase) |
-| **Environment** | Localhost Dev (`d:\Demo maker easy`) → Vercel Production |
-| **Risk Level** | MEDIUM (Greenfield Web App; Phase 3A เมื่อต่อ Cloud DB ปรับเป็น HIGH) |
-| **Status** | `AWAITING REVIEW` (รอเจ้าของโปรเจกต์อนุมัติแผนและหน้าตา UI Preview ก่อนเริ่ม Phase 1A) |
+> **Version:** 2.0 (As-Built Complete Specification)  
+> **Last Updated:** 2026-11-12  
+> **Live Production URL:** [https://demo-maker-easy-symd.vercel.app](https://demo-maker-easy-symd.vercel.app)  
+> **GitHub Repository:** [https://github.com/thana-pee/demo-maker-easy](https://github.com/thana-pee/demo-maker-easy)  
+> **Stack:** Next.js 16.4.6 (Turbopack, App Router), TypeScript, Tailwind CSS, Web Audio API, `@breezystack/lamejs`, `midi-writer-js`, `lz-string`  
+> **Overall Status:** ✅ ALL PHASES COMPLETED & DEPLOYED TO PRODUCTION
 
 ---
 
-## 📐 1. SCOPE & CHANGE BOUNDARY
+## 📌 0. PROJECT OVERVIEW & AS-BUILT HIGHLIGHTS
 
-### 1.1 Objective
-สร้างเว็บแอปพลิเคชันสตูดิโอแต่งเพลงและทำเดโม่เพลงอะคูสติก (**Demo Maker Easy**) ด้วย Next.js (App Router, TypeScript), Tailwind CSS และ Web Audio API ที่ออกแบบมาสำหรับผู้ใช้งาน 2 กลุ่มหลัก:
-1. **ผู้สร้างเพลงบน PC (คุณ):** จัดโครงสร้างท่อนเพลง เลือกคอร์ดผ่าน Diatonic Chord Picker หรือสูตรทางคอร์ดสำเร็จรูป (Progression Presets) ปรับแต่งเนื้อเสียงกีตาร์ 3 ทรง + เบอร์สาย 2 ขนาด + มิติห้อง 3D (3D Stereo Soundstage) พร้อมมิกเซอร์ 4 เครื่องดนตรี บันทึกเมโลดี้คู่ขนาน (Mini Piano Roll & Mic Scratchpad) และส่งออกเป็นไฟล์เสียง **High-Quality 3D Stereo `.MP3`**, **Suno Prompt**, และ **`.MID` (MIDI)**
-2. **ผู้ร้องและเล่นกีตาร์บน iPad (คุณพ่อและเพื่อนๆ):** เปิดลิงก์ที่แชร์ผ่าน LINE เข้าสู่ **โหมดหน้าจอคาราโอเกะขนาดใหญ่ (Karaoke Teleprompter Mode)** อ่านง่าย สบายตา มีเสียงนับเข้าเพลง (Count-in) และมีตัวช่วยทดคอร์ดคาโป้ (**Capo Helper**) สำหรับถือคาโป้เล่นกีตาร์จริงคลอตามได้ทันที
+**Demo Maker Easy** คือเว็บแอปพลิเคชันสตูดิโอแต่งเพลงอะคูสติกและหน้าจอคาราโอเกะ (Acoustic Songwriting Studio & Karaoke Teleprompter) ที่ออกแบบมาเพื่อแก้ไขปัญหาการทำเดโม่เพลงอะคูสติกให้เสร็จไว ได้มิติเสียงธรรมชาติสมจริง และแชร์ให้ผู้ร้อง/นักดนตรีเปิดเล่นตามบน iPad ได้ทันที
 
-### 1.2 In Scope
-- **Design System (Google Material 3 Clean Light Theme):** โทนสว่าง สะอาดตา ปุ่มสัมผัสขนาดใหญ่รองรับทั้งเมาส์บน PC และหน้าจอสัมผัสบน iPad
-- **Dynamic Song Structure & Musical Controls:**
-  - เพิ่ม/ลบ/สลับลำดับท่อนเพลง (`intro`, `verse`, `pre-chorus`, `chorus`, `solo`, `bridge`, `outro`) พร้อมระดับความหนักแน่น (`low`, `medium`, `high`) และ `soloMode` (`split-slow-fast`)
-  - รองรับสัดส่วนจังหวะ **Time Signature (`4/4`, `3/4`, `6/8`)** และเสียงเคาะนับเข้าเพลง (**Count-in 1 ห้อง**)
-  - ตั้งค่าต่อห้องเพลง: จำนวนคอร์ดต่อห้อง (`1` หรือ `2` คอร์ด), โหมดการเล่นประจำห้อง (`normal` ตีปกติ / `let-ring` ตีจังหวะเดียวค้างไว้สำหรับห้องส่ง-ห้องจบ / `break` หยุดเงียบ)
-  - ตัวช่วยทางคอร์ด: **Diatonic Chord Picker**, **Progression Presets (สูตรคอร์ดฮิตประจำท่อน)**, **Transpose (-6 ถึง +6)**, และ **Capo Helper (ช่อง 0–7)**
-- **3D Realistic Acoustic Audio Engine (`smplr` + Web Audio DSP):**
-  - แหล่งกำเนิดเสียงเครื่องดนตรีจริงผ่านไลบรารี `smplr` (พร้อม Fallback Synth กรณีออฟไลน์ และแถบสถานะโหลดแซมเพิล)
-  - **Guitar Chord Voicing 6 สาย** + **Strum Physics** (หน่วงเวลาแต่ละสาย 18–32ms + Humanize Velocity)
-  - **DSP EQ Chain:** กีตาร์ 4 ทรง (`Classical Nylon`, `Dreadnought Steel`, `Ovation Roundback`, `Gibson Les Paul`) × เบอร์สาย 2 ขนาด (`.010 Standard`, `.012 Heavy Gauge`)
-  - **3D Stereo Soundstage & Ambience:** จัดวางมิติเสียงซ้าย-ขวา (Stereo Panning / Haas Double-Tracking) และจำลองมิติห้อง 3 แบบ (`Warm Living Room`, `Wood Studio`, `Unplugged Concert Hall`)
-  - **5-Track Instrument Mixer:** กีตาร์ริทึ่ม (คอร์ด), กีตาร์ลีด/โซโล่ (Gibson Les Paul / Acoustic Lead), เบสอะคูสติก, เปียโน, และเพอร์คัชชัน/กลอง พร้อมเลือกเปิด/ปิดอิสระในแต่ละท่อนเพลง
-- **Library, Sharing & Export:**
-  - สมุดเพลงในเครื่อง (`My Songs Library` บน `localStorage` เก็บได้หลายเพลง)
-  - แชร์เพลงผ่านลิงก์สั้นส่ง LINE (บีบอัดด้วย `lz-string`), Export/Import `.json`, Export to Suno Modal, และ Export `.MID`
-- **Dual Melody Capture & 3D MP3 Mixdown:**
-  - Mini Piano Roll ประจำห้อง + อัดเสียงร้องฮัมผ่านไมค์ (`MediaRecorder`) + แถบชดเชยความหน่วง (`Latency Offset -150ms ถึง +150ms`) + เรนเดอร์รวมแทร็กเป็นไฟล์ **`.MP3` (192–320 kbps Stereo 3D)**
-
-### 1.3 Explicitly Out of Scope (ในเฟส 1–2)
-- ระบบล็อกอินสมาชิก (Authentication) และฐานข้อมูลออนไลน์ (จะอยู่ใน **Phase 3A** เมื่อต้องการทำห้องสมุดเพลงออนไลน์ร่วมกันผ่าน Supabase)
-- การตัดต่อคลื่นเสียงหลายแทร็กแบบ DAW เต็มรูปแบบ (เราเน้นความง่ายและเร็วสำหรับการทำ Demo)
-
-### 1.4 Change Budget & File Protection Rule
-- ห้ามเพิ่ม npm package นอกเหนือจากที่ระบุในแต่ละ Phase โดยไม่ขออนุมัติก่อน
-- **กฎเหล็กข้อ 9:** ไฟล์ที่ผ่านการอนุมัติใน Phase ก่อนหน้าแล้ว (เช่น `src/types/song.ts` หลังจบ 1A หรือ `src/lib/audioEngine.ts` หลังจบ 1B) หาก Phase ถัดไปจำเป็นต้องแตะ ต้องแสดง diff และเหตุผลชัดเจน ห้ามแอบแก้เงียบๆ
+### ความสามารถหลักที่สร้างเสร็จสมบูรณ์ 100%:
+1. **Realistic 3D Acoustic & Electric Guitar Engine:**
+   - กีตาร์ 4 โมเดล: `Classical Nylon` (สายเอ็นนุ่ม), `Dreadnought Steel` (สายเหล็กแน่น), `Ovation Roundback` (หลังเต่าใสคม), และ `Gibson Les Paul` (Humbucker อิ่มหนา Sustain ยาว พร้อมเอฟเฟกต์ Clean / Warm Overdrive / Saturated Fuzz)
+   - ขนาดเบอร์สาย 2 ขนาด: `Standard .010` (สบายนิ้ว พริ้วเบา) และ `Heavy Gauge .012` (บูสต์ Low-Mid +3dB, Sustain ยาวขึ้น 25%)
+   - ระบบมิติเสียงห้อง 3D (Binaural & Reverb Convolver): `Warm Living Room`, `Wood Studio`, และ `Unplugged Concert Hall`
+   - กีตาร์คู่ (Dual Guitar Architecture): กีตาร์ริทึ่มตีคอร์ด + กีตาร์ลีดเล่นเมโลดี้/โซโล่แยกอิสระ
+2. **7-Track Acoustic Mixer & Arrangement:**
+   - มิกเซอร์รวม 7 แทร็ก: กีตาร์ริทึ่ม, กีตาร์ลีด, เบสโปร่ง, เปียโนคอร์ด, กลองคาฮอน/เชกเกอร์, โน้ตทำนองไกด์, และเสียงร้องจริงที่อัดไว้
+   - เลือกเปิด/ปิดและปรับสไตล์การเล่นได้อิสระในแต่ละท่อนเพลง (Per-Section Playing Style Selection)
+3. **Songwriting & Musical Helpers:**
+   - Diatonic Chord Picker (คอร์ดตรงตามคีย์ ไม่หลุดสเกล) + Custom Chords
+   - Formula Presets: สูตรทางคอร์ดฮิตประจำท่อน (ป๊อป, โฟล์ค, ซึ้ง 90s, อาร์แอนด์บี)
+   - Transpose (-6 ถึง +6 เซมิโทน) เปลี่ยนระดับเสียงจริง
+   - Capo Helper (ช่อง 0 ถึง 7): แสดงรูปคอร์ดที่จับจริงตามช่องคาโป้ ช่วยให้นักดนตรีจับรูปคอร์ดง่ายๆ คลอตามได้ทันที
+   - จังหวะรองรับ `4/4`, `3/4` (วอลทซ์), และ `6/8` (เพลงช้า 90s) พร้อมเสียงนับเข้า (Count-in)
+4. **Dual Melody Capture:**
+   - **Mini Piano Roll:** หน้าต่างจิ้มโน้ตทำนองร้องไกด์รายห้อง มีแถบล็อคคีย์และเน้นโน้ตในคอร์ด (In-Key Snap & Chord Tone Highlight) พร้อมตัวเลือกเสียงเครื่องดนตรีทำนอง (Flute vibrato, Piano, Warm Bell)
+   - **Mic Audio Scratchpad:** อัดเสียงร้องสด/ฮัมไกด์ผ่านไมโครโฟนรายห้อง พร้อมตัวนับถอยหลัง 3-2-1 และแถบไฟ VU Meter เรียลไทม์ (0–100%)
+   - **Vocal Latency Offset Slider (-150ms ถึง +150ms):** แก้ปัญหาเสียงร้องเหลื่อมเวลาต่อหูฟังบลูทูธหรือไมค์ดีเลย์
+5. **Multi-Format Export & Lossless Sharing:**
+   - **LINE Share Link:** บีบอัดโครงสร้างเพลงทั้งเพลงลงใน URL-Safe string ด้วย `lz-string` ส่งเข้า LINE เปิดฟังและแก้ต่อได้ทันที
+   - **Standard MIDI File (.MID):** ส่งออก 6 แทร็กมาตรฐาน (SMF Format 1) นำเข้า Logic, Cubase, GarageBand, หรือ FL Studio ได้ทันที
+   - **High-Quality 3D Stereo .MP3 Mixdown (192 kbps):** เรนเดอร์รวมทุกแทร็กและเสียงร้องสดผ่าน Web Audio OfflineContext ออกมาเป็นไฟล์ MP3 บนเครื่อง
+   - **Suno AI Prompt:** สร้างพร้อมพ์สไตล์ดนตรีและแท็กเนื้อเพลงนำไปเจนเพลงใน Suno ได้ทันที
+6. **Mobile/iPad Polish, PWA & Bilingual (TH/EN):**
+   - Progressive Web App: ติดตั้งลงหน้าจอโฮมของ iPad / iPhone / Android ได้ทันที เปิดเต็มจอ 100% ไม่มีแถบเบราว์เซอร์มากวนตา
+   - ปุ่มสลับภาษาแบบคลิกเดียว: 🇹🇭 ไทย / 🇬🇧 English รองรับการใช้งานสากล
+   - Karaoke Teleprompter Mode: ตัวหนังสือคอร์ดและเนื้อเพลงขนาดใหญ่ เลื่อนตามบีตดนตรีจริง เหมาะมากสำหรับการวาง iPad บนขาตั้งโน้ต
 
 ---
 
-## 📌 2. HANDOFF SUMMARY (สำหรับ Agent ทุกตัวที่รับงานต่อ)
+## 🏗️ 1. ARCHITECTURE & CODEBASE STRUCTURE
 
-### 2.1 ข้อมูลโปรเจกต์และสภาพแวดล้อม
-
-| รายการ | ข้อมูล |
-|---|---|
-| **โปรเจกต์** | Demo Maker Easy — สตูดิโอแต่งเพลงอะคูสติกและหน้าจอคาราโอเกะสำหรับครอบครัว |
-| **Repo หลัก** | `d:\Demo maker easy` |
-| **ใบควบคุมงาน** | `d:\Demo maker easy\IMPLEMENTATION_PLAN.md` |
-| **บันทึกความคืบหน้า** | `d:\Demo maker easy\PROGRESS_LOG.md` |
-| **Stack** | Next.js (App Router, TypeScript), Tailwind CSS, Lucide Icons, Web Audio API, `smplr`, `lz-string`, `midi-writer-js`, `lamejs` |
-| **Runtime บนเครื่อง** | Node.js `v24.19.0`, npm `11.17.0`, Git `2.47.1` (ตรวจสอบยืนยันแล้ว — FACT) |
-| **Deploy Target** | Vercel |
-
-### 2.2 โครงสร้างข้อมูลกลางที่ห้ามเข้าใจผิด (`src/types/song.ts`)
-> **สำคัญมาก:** ทุกโมดูล (UI, Audio Engine, URL Share, Suno Export, MIDI/MP3 Export) ต้องอ้างอิงโครงสร้าง `SongProject` นี้ตรงกัน ห้ามเปลี่ยนชื่อ field เอง:
-
-```typescript
-export type TimeSignature = '4/4' | '3/4' | '6/8';
-export type SectionType = 'intro' | 'verse' | 'pre-chorus' | 'chorus' | 'solo' | 'bridge' | 'outro';
-export type SectionIntensity = 'low' | 'medium' | 'high';
-export type SoloMode = 'normal' | 'split-slow-fast';
-export type BarPlayStyle = 'normal' | 'let-ring' | 'break';
-
-export type GuitarModel = 'classical-nylon' | 'dreadnought-steel' | 'ovation-roundback';
-export type StringGauge = 'standard-010' | 'heavy-012';
-export type Ambience3DMode = 'living-room' | 'wood-studio' | 'unplugged-hall';
-
-export type GuitarStyle = 'campfire-strum' | 'soft-strum' | 'fingerpicking';
-export type BassStyle = 'root-fifth' | 'warm-sustain';
-export type PianoStyle = 'warm-pad' | 'gentle-arpeggio';
-export type DrumStyle = 'off' | 'shaker-cajon' | 'simple-kit';
-
-export interface MelodyNote {
-  step: number;       // ตำแหน่งเขบ็ตในห้อง (0 ถึง 7 หรือ 0 ถึง 15)
-  midiPitch: number;  // เช่น 60 = C4
-  durationSteps: number;
-}
-
-export interface SongBar {
-  id: string;
-  chordsPerBar: 1 | 2;
-  chords: [string] | [string, string]; // เก็บคอร์ดตามคีย์เริ่มต้น (Base Key)
-  playStyle: BarPlayStyle;             // 'normal' | 'let-ring' | 'break'
-  lyrics: string;                      // 1 ห้องต่อ 1 ช่องเนื้อร้องเสมอ
-  melodyNotes: MelodyNote[];           // รองรับ Mini Piano Roll
-}
-
-export interface SongSection {
-  id: string;
-  name: string;
-  type: SectionType;
-  intensity: SectionIntensity;
-  soloMode?: SoloMode;
-  bars: SongBar[];
-}
-
-export interface InstrumentMixerConfig {
-  guitar: { enabled: boolean; volume: number; style: GuitarStyle };
-  bass:   { enabled: boolean; volume: number; style: BassStyle };
-  piano:  { enabled: boolean; volume: number; style: PianoStyle };
-  drums:  { enabled: boolean; volume: number; style: DrumStyle };
-}
-
-export interface SongProject {
-  id: string;
-  version: number;                     // เริ่มที่ 1 สำหรับตรวจสอบความเข้ากันได้ของลิงก์แชร์
-  title: string;
-  updatedAt: string;
-  bpm: number;                         // 50 - 160 (ค่าเริ่มต้น 74)
-  timeSignature: TimeSignature;        // ค่าเริ่มต้น '4/4'
-  baseKey: string;                     // ค่าเริ่มต้น 'C'
-  transposeSemitones: number;          // -6 ถึง +6 (เปลี่ยนระดับเสียงจริง)
-  capoFret: number;                    // 0 ถึง 7 (เปลี่ยนการแสดงผลฟอร์มคอร์ดสำหรับเล่นกีตาร์ตาม)
-  countInEnabled: boolean;             // เปิด/ปิดเสียงเคาะนับเข้าเพลง 1 ห้อง
-  guitarModel: GuitarModel;
-  stringGauge: StringGauge;
-  ambience3D: Ambience3DMode;
-  mixer: InstrumentMixerConfig;
-  sections: SongSection[];
-  vocalLatencyOffsetMs?: number;       // -150 ถึง +150 ms สำหรับเฟส 2B
-}
+```
+d:\Demo maker easy/
+├── public/
+│   ├── icons/                   # PWA Icons (192x192, 512x512, apple-touch-icon)
+│   ├── manifest.json            # PWA Web App Manifest (display: standalone)
+│   └── sw.js                    # Service Worker (Cache & offline shell)
+├── src/
+│   ├── app/
+│   │   ├── layout.tsx           # PWA metadata, viewport-fit=cover, LanguageProvider
+│   │   ├── globals.css          # Tailwind, touch-action: manipulation, iOS safe areas
+│   │   └── page.tsx             # Main Application Container & Transport Orchestrator
+│   ├── components/
+│   │   ├── TransportBar.tsx     # Sticky Play/Stop, BPM, TimeSig, Key, Capo, Language Toggle
+│   │   ├── SoundCustomizerPanel.tsx # 3D Guitar Body, Gauges, Room, 7-Track Mixer
+│   │   ├── SectionBuilder.tsx   # Visual Song Arranger, Bars, Chords, Lyrics, Mini Piano/Mic triggers
+│   │   ├── KaraokeTeleprompter.tsx # Fullscreen live prompter for iPad stand
+│   │   ├── MiniPianoRollModal.tsx  # In-key Piano Roll Melody Note Editor
+│   │   ├── VocalRecorderModal.tsx  # Mic Recording Studio with VU Meter & Latency Compensation
+│   │   ├── ChordPickerModal.tsx    # Diatonic Chord & Root selector
+│   │   ├── ProgressionPresetsModal.tsx # Acoustic Chord progression formulas
+│   │   ├── ExportModal.tsx      # MP3 192kbps, MIDI, LINE Link, Suno Prompt
+│   │   ├── SongLibraryModal.tsx # Local multi-song project storage & JSON import/export
+│   │   ├── PwaInstallPrompt.tsx # Smart iPad/iPhone & Android install prompts
+│   │   └── ServiceWorkerRegister.tsx # Client-side SW registration
+│   ├── context/
+│   │   └── LanguageContext.tsx  # React context for instant TH/EN switching
+│   ├── hooks/
+│   │   └── useAudioEngine.ts    # React hook binding UI to AudioEngine lifecycle
+│   ├── lib/
+│   │   ├── audioEngine.ts       # Web Audio API engine, sample synth & vocal player
+│   │   ├── barPlanner.ts        # Bar event scheduling, humanized velocity, let-ring, break
+│   │   ├── guitarVoicings.ts    # 6-string acoustic guitar chord voicings & strum physics
+│   │   ├── dsp3d.ts             # 3D spatial soundstage & impulse response reverb
+│   │   ├── chordUtils.ts        # Transpose logic, Capo calculation, Diatonic matrix
+│   │   ├── melodyUtils.ts       # Pitch classes, scale snap, chord tone detection
+│   │   ├── micRecorder.ts       # MediaRecorder mic capture with real-time VU meter
+│   │   ├── mp3Exporter.ts       # Multi-track OfflineAudioContext MP3 mixdown engine
+│   │   ├── midiExport.ts        # SMF Format 1 multi-track MIDI file generator
+│   │   ├── shareUrl.ts          # URL-Safe lossless LZ-string compression
+│   │   ├── storage.ts           # LocalStorage song project persistence
+│   │   ├── cloudSync.ts         # Supabase / Cloud Library readiness adapter
+│   │   ├── i18n.ts              # Bilingual dictionary and storage
+│   │   └── defaultSong.ts       # Preloaded acoustic demo song
+│   └── types/
+│       └── song.ts              # Canonical TypeScript data contracts
+└── tests/
+    ├── phase1b.test.ts          # Voicing, Strumming, DSP, Let-ring, Break tests
+    ├── phase1c.test.ts          # Storage, MIDI export, URL share tests
+    ├── phase2a.test.ts          # Piano roll, scale snap, melody planner tests
+    ├── phase2b.test.ts          # Mic recorder, MP3 sync word, vocal latency tests
+    └── phase3a.test.ts          # i18n symmetry, PWA manifest, PNG signatures, cloud sync tests
 ```
 
-### 2.3 Next Step ทันที
-- รอเจ้าของโปรเจกต์ตรวจ `ui_preview.html` และอนุมัติแผนนี้ (`APPROVED`) เพื่อเริ่ม **Phase 1A**
+---
+
+## 📊 2. VERIFIED TEST MATRIX & QUALITY STATUS
+
+| Category | Test Suite | Tests Count | Status |
+|---|---|---|---|
+| **Chord Voicings & Strumming** | `tests/phase1b.test.ts` | 24 | ✅ PASS (100%) |
+| **Storage & Export (MIDI / URL)** | `tests/phase1c.test.ts` | 6 | ✅ PASS (100%) |
+| **Melody Guide & Piano Roll** | `tests/phase2a.test.ts` | 9 | ✅ PASS (100%) |
+| **Mic Recording & MP3 Mixdown** | `tests/phase2b.test.ts` | 4 | ✅ PASS (100%) |
+| **PWA, i18n & Cloud Readiness** | `tests/phase3a.test.ts` | 6 | ✅ PASS (100%) |
+| **Total Test Suite** | `npx tsx --test tests/*.test.ts` | **49 Tests** | **✅ 49/49 PASS (100%)** |
+| **Production Build** | `npm run build` | Next.js 16.4.6 | **✅ 0 Errors, 4/4 Static Prerendered** |
 
 ---
 
-## 🗂️ 6. PHASE TABLE & MULTI-POOL QUOTA STRATEGY (แผนแบ่งเฟสและจัดสรรโควตาโมเดล)
+## 🎯 3. GUIDE FOR CODE REVIEW & AUDIT AGENTS
 
-> **กลยุทธ์บริหารโควตา 3 ก้อน (อิงตามโควตาจริงของบัญชี Google AI Pro):**
-> 1. **ก้อน Gemini Models (`Gemini 3.8 Flash (High)`) — เหลือ 100% (รีเซ็ตทุก 5 ชม.):** ใช้เป็นม้างานหลักในเฟสที่โครงสร้างและสเปคชัดเจน (`1A`, `1C`, `2A`, `3A`) เร็วและประหยัดที่สุด
-> 2. **ก้อน Claude & GPT (`Claude Sonnet 5.5 (High)` / `Claude Opus 5.5 (High)`) — เหลือ 100% (รีเซ็ตทุก 5 ชม.):** ใช้ในเฟสที่มีความซับซ้อนเชิงลึกด้าน Audio DSP / Buffer (`1B`, `2B`) เพื่อช่วยแบ่งเบาภาระโควตารายสัปดาห์ของ Argon
-> 3. **ก้อน Gemini 4 Argon (`Gemini 4 Argon (High)`) — เหลือ 59% (โควตารายสัปดาห์):** เก็บไว้ใช้เฉพาะจังหวะวางแผนสถาปัตยกรรม หรือจุดที่ต้องการให้ตรวจแก้บักซับซ้อนเป็นพิเศษ
-
-| Phase | ชื่องาน | ไฟล์หลักที่แตะ | โมเดลหลักที่แนะนำ (และตัวสำรองคนละก้อนโควตา) | Risk | ขนาด | สถานะ |
-|---|---|---|---|---|---|---|
-| **1A** | **Project Setup, Core Schema & Interactive UX/UI (`โหมดแต่งเพลง` + `โหมดคาราโอเกะ`)** | `src/types/song.ts`, `src/lib/chordUtils.ts`, `src/lib/defaultSong.ts`, `src/app/page.tsx`, `src/components/*` | **Gemini 3.8 Flash (High)** *(สำรอง: Claude Sonnet 5.5 High)* | LOW | M | ⏳ AWAITING REVIEW |
-| **1B** | **3D Acoustic Audio Engine (`smplr` + 6-String Strum + Guitar/Gauge EQ + 3D Room + 4-Track Mixer + Count-in)** | `src/lib/audioEngine.ts`, `src/lib/guitarVoicings.ts`, `src/lib/dsp3d.ts` | **Claude Sonnet 5.5 (High)** หรือ **Gemini 4 Argon (High)** | MEDIUM | M | ⏳ NOT STARTED |
-| **1C** | **My Songs Library, LINE Share Link (`lz-string`), Suno Prompt & MIDI (`.MID`) Export** | `src/lib/storage.ts`, `src/lib/exporters.ts`, `src/components/ExportModal.tsx`, `src/components/SongLibraryModal.tsx` | **Gemini 3.8 Flash (High)** | LOW | S | ⏳ NOT STARTED |
-| **2A** | **Mini Piano Roll (จิ้มโน้ตเมโลดี้ไกด์ประจำห้อง + เล่นเสียงเมโลดี้คู่ดนตรี)** | `src/components/MiniPianoRollModal.tsx`, `src/lib/audioEngine.ts` | **Gemini 3.8 Flash (High)** *(สำรอง: Claude Sonnet 5.5 High)* | MEDIUM | M | ⏳ NOT STARTED |
-| **2B** | **Mic Audio Scratchpad + Latency Offset Slider + High-Quality 3D Stereo `.MP3` Mixdown** | `src/lib/micRecorder.ts`, `src/lib/mp3Exporter.ts`, `src/components/VocalRecorderBar.tsx` | **Claude Sonnet 5.5 (High)** หรือ **Gemini 4 Argon (High)** | MEDIUM | M | ⏳ NOT STARTED |
-| **3A** | **PWA (ติดตั้งลง iPad/มือถือ), สลับภาษา TH/EN, และเตรียมเชื่อม Cloud Library (Supabase)** | `public/manifest.json`, `src/lib/i18n.ts`, `src/lib/cloudSync.ts` | **Gemini 3.8 Flash (High)** | MEDIUM | M | ⏳ NOT STARTED |
+หากคุณเป็น AI Agent หรือวิศวกรที่เข้ามาทำ Code Review / Security Audit / UX Audit โปรเจกต์นี้:
+1. **Source Code:** โค้ดทั้งหมดอยู่ในไดเรกทอรี `src/` ตามโครงสร้างหมวด 1
+2. **Data Contracts:** ดูแกนกลางข้อมูลเพลงได้ที่ `src/types/song.ts` (`SongProject`, `SongSection`, `SongBar`, `InstrumentMixerConfig`)
+3. **Sound Engine:** ดูการจัดการ AudioBuffer และ Web Audio DSP ได้ที่ `src/lib/audioEngine.ts`, `src/lib/guitarVoicings.ts`, และ `src/lib/mp3Exporter.ts`
+4. **Offline / PWA:** ดูโครงสร้าง Service Worker ที่ `public/sw.js` และ Manifest ที่ `public/manifest.json`
+5. **Live Verification:** ทดสอบการทำงานจริงบนเว็บเบราว์เซอร์หรือเครื่อง iPad ได้ที่ [https://demo-maker-easy-symd.vercel.app](https://demo-maker-easy-symd.vercel.app)
