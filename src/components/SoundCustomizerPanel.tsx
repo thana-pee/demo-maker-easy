@@ -327,7 +327,9 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
           {/* Track 1: Rhythm Guitar */}
           <div className="p-3.5 rounded-2xl border border-blue-200 bg-blue-50/50 space-y-2.5">
             <div className="flex items-center justify-between">
-              <span className="font-bold text-xs text-slate-900">🎸 1. กีตาร์ริทึ่ม (คอร์ด)</span>
+              <span className="font-bold text-xs text-slate-900">
+                {lang === 'th' ? '🎸 1. กีตาร์ริทึ่ม (คอร์ด)' : '🎸 1. Rhythm Guitar'}
+              </span>
               <button
                 onClick={() =>
                   onUpdateSong((prev) => ({
@@ -342,7 +344,7 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
                   song.mixer.guitarRhythm.enabled ? 'bg-[#1A73E8] text-white' : 'bg-slate-200 text-slate-600'
                 }`}
               >
-                {song.mixer.guitarRhythm.enabled ? 'เปิด' : 'ปิด'}
+                {song.mixer.guitarRhythm.enabled ? (lang === 'th' ? 'เปิด' : 'ON') : (lang === 'th' ? 'ปิด' : 'OFF')}
               </button>
             </div>
             <select
@@ -358,9 +360,9 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
               }
               className="w-full text-xs bg-white border border-slate-200 rounded-xl px-2 py-1 font-bold text-slate-800"
             >
-              <option value="dreadnought-steel">โปร่งไม้ Dreadnought</option>
-              <option value="classical-nylon">คลาสสิกสายเอ็น Nylon</option>
-              <option value="ovation-roundback">หลังเต่า Ovation</option>
+              <option value="dreadnought-steel">{lang === 'th' ? 'โปร่งไม้ Dreadnought' : 'Dreadnought Steel'}</option>
+              <option value="classical-nylon">{lang === 'th' ? 'คลาสสิกสายเอ็น Nylon' : 'Classical Nylon'}</option>
+              <option value="ovation-roundback">{lang === 'th' ? 'หลังเต่า Ovation' : 'Ovation Roundback'}</option>
               <option value="gibson-les-paul">Gibson Les Paul</option>
             </select>
             <select
@@ -376,12 +378,12 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
               }
               className="w-full text-xs bg-white border border-slate-200 rounded-xl px-2 py-1 font-medium"
             >
-              <option value="campfire-strum">ตีคอร์ดแคมป์ไฟ</option>
-              <option value="soft-strum">ตีคอร์ดนุ่มนวล</option>
-              <option value="fingerpicking">เกาสายอะคูสติก</option>
+              <option value="campfire-strum">{lang === 'th' ? 'ตีคอร์ดแคมป์ไฟ' : 'Campfire Strum'}</option>
+              <option value="soft-strum">{lang === 'th' ? 'ตีคอร์ดนุ่มนวล' : 'Soft Strum'}</option>
+              <option value="fingerpicking">{lang === 'th' ? 'เกาสายอะคูสติก' : 'Fingerpicking'}</option>
             </select>
             <div className="flex items-center gap-2 text-[11px] text-slate-600">
-              <span>ดัง</span>
+              <span>{lang === 'th' ? 'ดัง' : 'Vol'}</span>
               <input
                 type="range"
                 min="0"
@@ -403,7 +405,9 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
           {/* Track 2: Lead / Solo Guitar (Gibson Les Paul) */}
           <div className="p-3.5 rounded-2xl border border-purple-200 bg-purple-50/50 space-y-2.5">
             <div className="flex items-center justify-between">
-              <span className="font-bold text-xs text-purple-950">🎸 2. กีตาร์ลีด / โซโล่</span>
+              <span className="font-bold text-xs text-purple-950">
+                {lang === 'th' ? '🎸 2. กีตาร์ลีด / โซโล่' : '🎸 2. Lead / Solo Guitar'}
+              </span>
               <button
                 onClick={() =>
                   onUpdateSong((prev) => ({
@@ -418,7 +422,7 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
                   song.mixer.guitarLead.enabled ? 'bg-purple-600 text-white' : 'bg-slate-200 text-slate-600'
                 }`}
               >
-                {song.mixer.guitarLead.enabled ? 'เปิด' : 'ปิด'}
+                {song.mixer.guitarLead.enabled ? (lang === 'th' ? 'เปิด' : 'ON') : (lang === 'th' ? 'ปิด' : 'OFF')}
               </button>
             </div>
             <select
@@ -434,10 +438,10 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
               }
               className="w-full text-xs bg-white border border-purple-200 rounded-xl px-2 py-1 font-bold text-purple-900"
             >
-              <option value="gibson-les-paul">Gibson Les Paul (ไฟฟ้า)</option>
-              <option value="dreadnought-steel">โปร่งไม้ Dreadnought</option>
-              <option value="classical-nylon">คลาสสิกสายเอ็น Nylon</option>
-              <option value="ovation-roundback">หลังเต่า Ovation</option>
+              <option value="gibson-les-paul">Gibson Les Paul</option>
+              <option value="dreadnought-steel">{lang === 'th' ? 'โปร่งไม้ Dreadnought' : 'Dreadnought Steel'}</option>
+              <option value="classical-nylon">{lang === 'th' ? 'คลาสสิกสายเอ็น Nylon' : 'Classical Nylon'}</option>
+              <option value="ovation-roundback">{lang === 'th' ? 'หลังเต่า Ovation' : 'Ovation Roundback'}</option>
             </select>
             <select
               value={song.mixer.guitarLead.style}
@@ -452,12 +456,14 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
               }
               className="w-full text-xs bg-white border border-purple-200 rounded-xl px-2 py-1 font-medium"
             >
-              <option value="melodic-solo">โซโล่ทำนอง (Melodic Solo)</option>
-              <option value="riff-fills">หยอดลูกส่ง (Riff Fills)</option>
-              <option value="soft-arpeggio">เกาโน้ตสูงคลอ (Arpeggio)</option>
+              <option value="melodic-solo">{lang === 'th' ? 'โซโล่ทำนอง (Melodic Solo)' : 'Melodic Solo'}</option>
+              <option value="riff-fills">{lang === 'th' ? 'หยอดลูกส่ง (Riff Fills)' : 'Riff Fills'}</option>
+              <option value="soft-arpeggio">{lang === 'th' ? 'เกาโน้ตสูงคลอ (Arpeggio)' : 'Soft Arpeggio'}</option>
             </select>
             <div className="space-y-1">
-              <span className="text-[10px] font-bold text-purple-900 block">🎛️ เสียงแตก (Overdrive):</span>
+              <span className="text-[10px] font-bold text-purple-900 block">
+                {lang === 'th' ? '🎛️ เสียงแตก (Overdrive):' : '🎛️ Drive Mode:'}
+              </span>
               <select
                 value={song.mixer.guitarLead.drive || 'overdrive'}
                 onChange={(e) =>
@@ -474,14 +480,14 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
                 }
                 className="w-full text-xs bg-white border border-purple-300 rounded-xl px-2 py-1 font-bold text-purple-900"
               >
-                <option value="clean">🧊 คลีนใส (Clean)</option>
-                <option value="crunch">⚡ เสียงแตกอ่อน (Crunch)</option>
-                <option value="overdrive">🔥 แตกหวาน (Tube Overdrive)</option>
-                <option value="distortion">💥 แตกดุดัน (Heavy Distortion)</option>
+                <option value="clean">{lang === 'th' ? '🧊 คลีนใส (Clean)' : '🧊 Clean'}</option>
+                <option value="crunch">{lang === 'th' ? '⚡ เสียงแตกอ่อน (Crunch)' : '⚡ Crunch'}</option>
+                <option value="overdrive">{lang === 'th' ? '🔥 แตกหวาน (Tube Overdrive)' : '🔥 Tube Overdrive'}</option>
+                <option value="distortion">{lang === 'th' ? '💥 แตกดุดัน (Heavy Distortion)' : '💥 Saturated Fuzz'}</option>
               </select>
             </div>
             <div className="flex items-center gap-2 text-[11px] text-slate-600">
-              <span>ดัง</span>
+              <span>{lang === 'th' ? 'ดัง' : 'Vol'}</span>
               <input
                 type="range"
                 min="0"
@@ -503,7 +509,9 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
           {/* Track 3: Bass */}
           <div className="p-3.5 rounded-2xl border border-slate-200 bg-white space-y-2.5">
             <div className="flex items-center justify-between">
-              <span className="font-bold text-xs text-slate-900">🎻 3. เบสอะคูสติก</span>
+              <span className="font-bold text-xs text-slate-900">
+                {lang === 'th' ? '🎻 3. เบสอะคูสติก' : '🎻 3. Acoustic Bass'}
+              </span>
               <button
                 onClick={() =>
                   onUpdateSong((prev) => ({
@@ -518,7 +526,7 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
                   song.mixer.bass.enabled ? 'bg-[#1A73E8] text-white' : 'bg-slate-200 text-slate-600'
                 }`}
               >
-                {song.mixer.bass.enabled ? 'เปิด' : 'ปิด'}
+                {song.mixer.bass.enabled ? (lang === 'th' ? 'เปิด' : 'ON') : (lang === 'th' ? 'ปิด' : 'OFF')}
               </button>
             </div>
             <select
@@ -534,11 +542,11 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
               }
               className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 font-medium"
             >
-              <option value="root-fifth">เดินเบส Root-Fifth นุ่มๆ</option>
-              <option value="warm-sustain">เดินเบสค้างโน้ตต่ำ (Warm Sustain)</option>
+              <option value="root-fifth">{lang === 'th' ? 'เดินเบส Root-Fifth นุ่มๆ' : 'Root-Fifth Walk'}</option>
+              <option value="warm-sustain">{lang === 'th' ? 'เดินเบสค้างโน้ตต่ำ (Warm Sustain)' : 'Warm Sustain'}</option>
             </select>
             <div className="flex items-center gap-2 text-[11px] text-slate-600">
-              <span>ดัง</span>
+              <span>{lang === 'th' ? 'ดัง' : 'Vol'}</span>
               <input
                 type="range"
                 min="0"
@@ -560,7 +568,9 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
           {/* Track 4: Piano */}
           <div className="p-3.5 rounded-2xl border border-slate-200 bg-white space-y-2.5">
             <div className="flex items-center justify-between">
-              <span className="font-bold text-xs text-slate-900">🎹 4. เปียโนคลอ</span>
+              <span className="font-bold text-xs text-slate-900">
+                {lang === 'th' ? '🎹 4. เปียโนคลอ' : '🎹 4. Piano Chords'}
+              </span>
               <button
                 onClick={() =>
                   onUpdateSong((prev) => ({
@@ -575,7 +585,7 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
                   song.mixer.piano.enabled ? 'bg-[#1A73E8] text-white' : 'bg-slate-200 text-slate-600'
                 }`}
               >
-                {song.mixer.piano.enabled ? 'เปิด' : 'ปิด'}
+                {song.mixer.piano.enabled ? (lang === 'th' ? 'เปิด' : 'ON') : (lang === 'th' ? 'ปิด' : 'OFF')}
               </button>
             </div>
             <select
@@ -591,11 +601,11 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
               }
               className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 font-medium"
             >
-              <option value="warm-pad">กดคอร์ดปูพื้นอุ่นๆ (Warm Pad)</option>
-              <option value="gentle-arpeggio">พรมนิ้วเบาๆ (Gentle Arpeggio)</option>
+              <option value="warm-pad">{lang === 'th' ? 'กดคอร์ดปูพื้นอุ่นๆ (Warm Pad)' : 'Warm Pad Chords'}</option>
+              <option value="gentle-arpeggio">{lang === 'th' ? 'พรมนิ้วเบาๆ (Gentle Arpeggio)' : 'Gentle Arpeggio'}</option>
             </select>
             <div className="flex items-center gap-2 text-[11px] text-slate-600">
-              <span>ดัง</span>
+              <span>{lang === 'th' ? 'ดัง' : 'Vol'}</span>
               <input
                 type="range"
                 min="0"
@@ -617,7 +627,9 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
           {/* Track 5: Drums */}
           <div className="p-3.5 rounded-2xl border border-slate-200 bg-white space-y-2.5">
             <div className="flex items-center justify-between">
-              <span className="font-bold text-xs text-slate-900">🥁 5. เพอร์คัชชัน / กลอง</span>
+              <span className="font-bold text-xs text-slate-900">
+                {lang === 'th' ? '🥁 5. เพอร์คัชชัน / กลอง' : '🥁 5. Percussion / Drums'}
+              </span>
               <button
                 onClick={() =>
                   onUpdateSong((prev) => ({
@@ -637,7 +649,9 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
                     : 'bg-slate-200 text-slate-600'
                 }`}
               >
-                {song.mixer.drums.enabled && song.mixer.drums.style !== 'off' ? 'เปิด' : 'ปิด'}
+                {song.mixer.drums.enabled && song.mixer.drums.style !== 'off'
+                  ? (lang === 'th' ? 'เปิด' : 'ON')
+                  : (lang === 'th' ? 'ปิด' : 'OFF')}
               </button>
             </div>
             <select
@@ -657,12 +671,12 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
               }
               className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 font-medium"
             >
-              <option value="shaker-cajon">เขย่า Shaker & เคาะ Cajon</option>
-              <option value="off">ปิดกลอง (Off — ดนตรีล้วน)</option>
-              <option value="simple-kit">กลองชุดอะคูสติกเรียบๆ (Simple Kit)</option>
+              <option value="shaker-cajon">{lang === 'th' ? 'เขย่า Shaker & เคาะ Cajon' : 'Shaker & Cajon'}</option>
+              <option value="off">{lang === 'th' ? 'ปิดกลอง (Off — ดนตรีล้วน)' : 'Off (Acoustic Only)'}</option>
+              <option value="simple-kit">{lang === 'th' ? 'กลองชุดอะคูสติกเรียบๆ (Simple Kit)' : 'Simple Drum Kit'}</option>
             </select>
             <div className="flex items-center gap-2 text-[11px] text-slate-600">
-              <span>ดัง</span>
+              <span>{lang === 'th' ? 'ดัง' : 'Vol'}</span>
               <input
                 type="range"
                 min="0"
@@ -684,7 +698,9 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
           {/* Track 6: Vocal Melody Guide */}
           <div className="p-3.5 rounded-2xl border border-indigo-200 bg-indigo-50/40 space-y-2.5">
             <div className="flex items-center justify-between">
-              <span className="font-bold text-xs text-indigo-950">🎤 6. ทำนองร้องไกด์</span>
+              <span className="font-bold text-xs text-indigo-950">
+                {lang === 'th' ? '🎤 6. ทำนองร้องไกด์' : '🎤 6. Vocal Melody Guide'}
+              </span>
               <button
                 onClick={() =>
                   onUpdateSong((prev) => ({
@@ -705,7 +721,7 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
                     : 'bg-slate-200 text-slate-600'
                 }`}
               >
-                {song.mixer.melody?.enabled ?? true ? 'เปิด' : 'ปิด'}
+                {song.mixer.melody?.enabled ?? true ? (lang === 'th' ? 'เปิด' : 'ON') : (lang === 'th' ? 'ปิด' : 'OFF')}
               </button>
             </div>
             <select
@@ -725,12 +741,12 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
               }
               className="w-full text-xs bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 font-bold text-slate-800"
             >
-              <option value="flute">🎵 ขลุ่ย/ฮัมร้อง (Flute)</option>
-              <option value="piano">🎹 เปียโนทำนอง (Lead Piano)</option>
-              <option value="bell">🔔 ระฆังแก้ว (Warm Bell)</option>
+              <option value="flute">{lang === 'th' ? '🎵 ขลุ่ย/ฮัมร้อง (Flute)' : '🎵 Flute Vibrato'}</option>
+              <option value="piano">{lang === 'th' ? '🎹 เปียโนทำนอง (Lead Piano)' : '🎹 Lead Piano'}</option>
+              <option value="bell">{lang === 'th' ? '🔔 ระฆังแก้ว (Warm Bell)' : '🔔 Warm Glass Bell'}</option>
             </select>
             <div className="flex items-center gap-2 text-[11px] text-slate-600">
-              <span>ดัง</span>
+              <span>{lang === 'th' ? 'ดัง' : 'Vol'}</span>
               <input
                 type="range"
                 min="0"
@@ -759,7 +775,9 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
           {/* Track 7: Recorded Vocals */}
           <div className="p-3.5 rounded-2xl border border-rose-200 bg-rose-50/40 space-y-2.5">
             <div className="flex items-center justify-between">
-              <span className="font-bold text-xs text-rose-950">🎙️ 7. เสียงร้องสด (ไมค์)</span>
+              <span className="font-bold text-xs text-rose-950">
+                {lang === 'th' ? '🎙️ 7. เสียงร้องสด (ไมค์)' : '🎙️ 7. Recorded Vocals (Mic)'}
+              </span>
               <button
                 onClick={() =>
                   onUpdateSong((prev) => ({
@@ -779,14 +797,14 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
                     : 'bg-slate-200 text-slate-600'
                 }`}
               >
-                {song.mixer.vocal?.enabled ?? true ? 'เปิด' : 'ปิด'}
+                {song.mixer.vocal?.enabled ?? true ? (lang === 'th' ? 'เปิด' : 'ON') : (lang === 'th' ? 'ปิด' : 'OFF')}
               </button>
             </div>
             <div className="text-[11px] text-rose-800 bg-white border border-rose-200 rounded-xl px-2 py-1.5 font-bold">
-              🎤 คลิปเสียงร้องจากห้องเพลง
+              {lang === 'th' ? '🎤 คลิปเสียงร้องจากห้องเพลง' : '🎤 Bar Vocal Scratchpad'}
             </div>
             <div className="flex items-center gap-2 text-[11px] text-slate-600">
-              <span>ดัง</span>
+              <span>{lang === 'th' ? 'ดัง' : 'Vol'}</span>
               <input
                 type="range"
                 min="0"

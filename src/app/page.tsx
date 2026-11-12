@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { SongProject, MelodyNote } from '@/types/song';
 import { createDefaultSong } from '@/lib/defaultSong';
 import { ProgressionPreset } from '@/lib/chordUtils';
+import { getTiming } from '@/lib/barPlanner';
 import { useAudioEngine } from '@/hooks/useAudioEngine';
 import { getSavedSongs, saveSong, getActiveSongId, setActiveSongId } from '@/lib/storage';
 import { parseSongFromUrl } from '@/lib/shareUrl';
@@ -128,8 +129,7 @@ export default function Home() {
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isLibraryModalOpen, setIsLibraryModalOpen] = useState(false);
 
-  // Beat ticker driven by BPM (UI only — bar timing from engine)
-  const beatsPerBar = song.timeSignature === '3/4' ? 3 : song.timeSignature === '6/8' ? 6 : 4;
+  // Beat ticker driven by bar timing & synced on every bar change
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -138,33 +138,37 @@ export default function Home() {
       setCurrentBeat(1);
       return;
     }
-    const intervalMs = (60 / song.bpm) * 1000;
+    setCurrentBeat(1);
+    const timing = getTiming(song);
+    const intervalMs = (timing.barSec / timing.uiBeatsPerBar) * 1000;
     timerRef.current = setInterval(() => {
-      setCurrentBeat((prev) => (prev < beatsPerBar ? prev + 1 : 1));
+      setCurrentBeat((prev) => (prev < timing.uiBeatsPerBar ? prev + 1 : 1));
     }, intervalMs);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [isPlaying, song.bpm, beatsPerBar]);
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [isPlaying, currentBarIndex, song.bpm, song.timeSignature]);
 
-  const handleTogglePlay = () => {
+  const handleTogglePlay = useCallback(() => {
     if (!isPlaying) {
       setCurrentBeat(1);
       engine.play(0);
     } else {
       engine.stop();
     }
-  };
+  }, [isPlaying, engine]);
 
-  const handleStop = () => {
+  const handleStop = useCallback(() => {
     engine.stop();
     setCurrentBeat(1);
-  };
+  }, [engine]);
 
-  const handleToggleCountIn = () => {
+  const handleToggleCountIn = useCallback(() => {
     setSong((prev) => ({ ...prev, countInEnabled: !prev.countInEnabled }));
-  };
+  }, []);
 
   // Open Chord Picker
-  const handleOpenChordPicker = (
+  const handleOpenChordPicker = useCallback((
     sectionId: string,
     barId: string,
     chordIndex: 0 | 1,
@@ -177,68 +181,72 @@ export default function Home() {
       chordIndex,
       currentChord,
     });
-  };
+  }, []);
 
-  const handleSelectChord = (newChord: string) => {
-    const { sectionId, barId, chordIndex } = chordPickerState;
-    setSong((prev) => ({
-      ...prev,
-      sections: prev.sections.map((sec) => {
-        if (sec.id !== sectionId) return sec;
-        return {
-          ...sec,
-          bars: sec.bars.map((bar) => {
-            if (bar.id !== barId) return bar;
-            const updatedChords = [...bar.chords];
-            updatedChords[chordIndex] = newChord;
-            return { ...bar, chords: updatedChords };
-          }),
-        };
-      }),
-    }));
-    setChordPickerState((prev) => ({ ...prev, isOpen: false }));
-  };
+  const handleSelectChord = useCallback((newChord: string) => {
+    setChordPickerState((pickerState) => {
+      const { sectionId, barId, chordIndex } = pickerState;
+      setSong((prev) => ({
+        ...prev,
+        sections: prev.sections.map((sec) => {
+          if (sec.id !== sectionId) return sec;
+          return {
+            ...sec,
+            bars: sec.bars.map((bar) => {
+              if (bar.id !== barId) return bar;
+              const updatedChords = [...bar.chords];
+              updatedChords[chordIndex] = newChord;
+              return { ...bar, chords: updatedChords };
+            }),
+          };
+        }),
+      }));
+      return { ...pickerState, isOpen: false };
+    });
+  }, []);
 
   // Open Progression Presets Modal
-  const handleOpenPresetsModal = (sectionId: string, sectionName: string) => {
+  const handleOpenPresetsModal = useCallback((sectionId: string, sectionName: string) => {
     setPresetsModalState({
       isOpen: true,
       sectionId,
       sectionName,
     });
-  };
+  }, []);
 
-  const handleApplyPreset = (preset: ProgressionPreset) => {
-    const { sectionId } = presetsModalState;
-    setSong((prev) => ({
-      ...prev,
-      sections: prev.sections.map((sec) => {
-        if (sec.id !== sectionId) return sec;
-        const newBars = preset.chords.map((chord, idx) => ({
-          id: `bar-${Date.now()}-${idx}`,
-          chordsPerBar: 1 as const,
-          chords: [chord] as [string],
-          playStyle: 'normal' as const,
-          lyrics: sec.bars[idx] ? sec.bars[idx].lyrics : '',
-          melodyNotes: [],
-        }));
-        return { ...sec, bars: newBars };
-      }),
-    }));
-    setPresetsModalState((prev) => ({ ...prev, isOpen: false }));
-  };
+  const handleApplyPreset = useCallback((preset: ProgressionPreset) => {
+    setPresetsModalState((presetState) => {
+      const { sectionId } = presetState;
+      setSong((prev) => ({
+        ...prev,
+        sections: prev.sections.map((sec) => {
+          if (sec.id !== sectionId) return sec;
+          const newBars = preset.chords.map((chord, idx) => ({
+            id: `bar-${Date.now()}-${idx}`,
+            chordsPerBar: 1 as const,
+            chords: [chord] as [string],
+            playStyle: 'normal' as const,
+            lyrics: sec.bars[idx] ? sec.bars[idx].lyrics : '',
+            melodyNotes: [],
+          }));
+          return { ...sec, bars: newBars };
+        }),
+      }));
+      return { ...presetState, isOpen: false };
+    });
+  }, []);
 
   // Open Mini Piano Roll Modal
-  const handleOpenMelodyPianoRoll = (sectionId: string, barId: string, globalBarIndex: number) => {
+  const handleOpenMelodyPianoRoll = useCallback((sectionId: string, barId: string, globalBarIndex: number) => {
     setMelodyModalState({
       isOpen: true,
       sectionId,
       barId,
       globalBarIndex,
     });
-  };
+  }, []);
 
-  const handleUpdateBarNotes = (sectionId: string, barId: string, notes: MelodyNote[]) => {
+  const handleUpdateBarNotes = useCallback((sectionId: string, barId: string, notes: MelodyNote[]) => {
     setSong((prev) => ({
       ...prev,
       sections: prev.sections.map((sec) => {
@@ -249,7 +257,7 @@ export default function Home() {
         };
       }),
     }));
-  };
+  }, []);
 
   // Flattened bars for smooth prev/next navigation inside Mini Piano Roll
   const flatBarsList = useMemo(() => {
@@ -266,7 +274,7 @@ export default function Home() {
     (b) => b.sectionId === melodyModalState.sectionId && b.barId === melodyModalState.barId
   );
 
-  const handleNavigateBar = (direction: 'prev' | 'next') => {
+  const handleNavigateBar = useCallback((direction: 'prev' | 'next') => {
     if (currentFlatBarIdx === -1) return;
     const targetIdx = direction === 'prev' ? currentFlatBarIdx - 1 : currentFlatBarIdx + 1;
     if (targetIdx >= 0 && targetIdx < flatBarsList.length) {
@@ -278,19 +286,19 @@ export default function Home() {
         globalBarIndex: target.globalBarIndex,
       });
     }
-  };
+  }, [currentFlatBarIdx, flatBarsList]);
 
   // Open Vocal Recorder Modal
-  const handleOpenVocalRecorder = (sectionId: string, barId: string, globalBarIndex: number) => {
+  const handleOpenVocalRecorder = useCallback((sectionId: string, barId: string, globalBarIndex: number) => {
     setVocalModalState({
       isOpen: true,
       sectionId,
       barId,
       globalBarIndex,
     });
-  };
+  }, []);
 
-  const handleSaveVocal = (sectionId: string, barId: string, vocalAudio: string, latencyOffsetMs: number) => {
+  const handleSaveVocal = useCallback((sectionId: string, barId: string, vocalAudio: string, latencyOffsetMs: number) => {
     setSong((prev) => ({
       ...prev,
       vocalLatencyOffsetMs: latencyOffsetMs,
@@ -302,9 +310,9 @@ export default function Home() {
         };
       }),
     }));
-  };
+  }, []);
 
-  const handleClearVocal = (sectionId: string, barId: string) => {
+  const handleClearVocal = useCallback((sectionId: string, barId: string) => {
     setSong((prev) => ({
       ...prev,
       sections: prev.sections.map((sec) => {
@@ -320,7 +328,7 @@ export default function Home() {
         };
       }),
     }));
-  };
+  }, []);
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-900 pb-20 safe-bottom">

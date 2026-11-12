@@ -99,6 +99,7 @@ export function decompressFromUrlSafe(compressed: string): string {
 
     if (ints.length === 0) return '';
     let w = dict[ints[0]];
+    if (!w) return '';
     const outBytes: number[] = [];
     for (let i = 0; i < w.length; i++) {
       outBytes.push(w.charCodeAt(i));
@@ -138,16 +139,24 @@ export function decompressFromUrlSafe(compressed: string): string {
   }
 }
 
-/** สร้าง Share Link ฉบับสมบูรณ์สำหรับส่ง LINE */
+/** สร้าง Share Link ฉบับสมบูรณ์สำหรับส่ง LINE (ตัด binary vocal ขนาดใหญ่ออกเพื่อป้องกัน URL เกินขนาด) */
 export function generateShareUrl(song: SongProject): string {
-  const jsonStr = JSON.stringify(song);
+  // กรองเฉพาะข้อมูลโครงสร้างเพลง เมโลดี้ คอร์ด และเนื้อร้อง ไม่รวม Base64 vocal data เพื่อให้ลิงก์เปิดใน LINE/มือถือได้ 100%
+  const lightweightSong: SongProject = {
+    ...song,
+    sections: song.sections.map((sec) => ({
+      ...sec,
+      bars: sec.bars.map(({ vocalAudio, ...bar }) => bar),
+    })),
+  };
+  const jsonStr = JSON.stringify(lightweightSong);
   const compressed = compressToUrlSafe(jsonStr);
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
   const pathname = typeof window !== 'undefined' ? window.location.pathname : '/';
   return `${origin}${pathname}?song=${compressed}`;
 }
 
-/** ดึงและแปลงข้อมูลเพลงจาก URL Search Parameters (รองรับทั้ง ?song= และ ?data=) */
+/** ดึงและแปลงข้อมูลเพลงจาก URL Search Parameters (รองรับทั้ง ?song= และ ?data=) พร้อมตรวจสอบความปลอดภัย */
 export function parseSongFromUrl(search: string | URLSearchParams): SongProject | null {
   const params = typeof search === 'string' ? new URLSearchParams(search) : search;
   const payload = params.get('song') || params.get('data');
@@ -156,7 +165,18 @@ export function parseSongFromUrl(search: string | URLSearchParams): SongProject 
   try {
     const jsonStr = decompressFromUrlSafe(payload);
     if (!jsonStr) return null;
-    const parsed = JSON.parse(jsonStr) as SongProject;
+    const rawParsed = JSON.parse(jsonStr);
+
+    // ป้องกัน Prototype Pollution (เฉพาะ own properties)
+    if (!rawParsed || typeof rawParsed !== 'object' || Array.isArray(rawParsed)) {
+      return null;
+    }
+    if (Object.prototype.hasOwnProperty.call(rawParsed, '__proto__')) {
+      console.warn('Blocked potentially malicious payload containing prototype keys');
+      return null;
+    }
+
+    const parsed = rawParsed as Partial<SongProject>;
 
     // ตรวจสอบความถูกต้องเบื้องต้น (Schema Validation Safeguards)
     if (!parsed || !Array.isArray(parsed.sections) || parsed.sections.length === 0) {
@@ -168,8 +188,13 @@ export function parseSongFromUrl(search: string | URLSearchParams): SongProject 
     return {
       ...def,
       ...parsed,
-      id: parsed.id || `shared-${Date.now()}`,
-      title: parsed.title || 'เพลงที่แชร์มา',
+      id: typeof parsed.id === 'string' && parsed.id ? parsed.id : `shared-${Date.now()}`,
+      title: typeof parsed.title === 'string' ? parsed.title.slice(0, 120) : 'เพลงที่แชร์มา',
+      bpm: typeof parsed.bpm === 'number' && parsed.bpm >= 40 && parsed.bpm <= 240 ? parsed.bpm : def.bpm,
+      baseKey: typeof parsed.baseKey === 'string' ? parsed.baseKey : def.baseKey,
+      capoFret: typeof parsed.capoFret === 'number' && parsed.capoFret >= 0 && parsed.capoFret <= 7 ? parsed.capoFret : 0,
+      transposeSemitones: typeof parsed.transposeSemitones === 'number' ? parsed.transposeSemitones : 0,
+      vocalLatencyOffsetMs: typeof parsed.vocalLatencyOffsetMs === 'number' ? parsed.vocalLatencyOffsetMs : (def.vocalLatencyOffsetMs ?? 0),
       mixer: {
         ...def.mixer,
         ...(parsed.mixer || {}),
@@ -180,17 +205,28 @@ export function parseSongFromUrl(search: string | URLSearchParams): SongProject 
       },
       sections: parsed.sections.map((sec, idx) => ({
         ...sec,
+        id: typeof sec.id === 'string' ? sec.id : `sec-${idx}`,
+        name: typeof sec.name === 'string' ? sec.name.slice(0, 50) : `ท่อน ${idx + 1}`,
         instruments: {
           ...(def.sections[idx]?.instruments || def.sections[0].instruments),
           ...(sec.instruments || {}),
         },
-        bars: (sec.bars || []).map((b) => ({
-          ...b,
-          chords: Array.isArray(b.chords) ? b.chords : ['C'],
-          lyrics: b.lyrics || '',
-          playStyle: b.playStyle || 'normal',
-          melodyNotes: b.melodyNotes || [],
-        })),
+        bars: (sec.bars || []).map((b, bIdx) => {
+          // ตรวจสอบ vocalAudio ให้ปลอดภัย (ยอมรับเฉพาะ data:audio/)
+          const safeVocal = typeof b.vocalAudio === 'string' && b.vocalAudio.startsWith('data:audio/')
+            ? b.vocalAudio
+            : undefined;
+
+          return {
+            ...b,
+            id: typeof b.id === 'string' ? b.id : `bar-${idx}-${bIdx}`,
+            chords: Array.isArray(b.chords) && b.chords.length > 0 ? b.chords : ['C'],
+            lyrics: typeof b.lyrics === 'string' ? b.lyrics.slice(0, 500) : '',
+            playStyle: b.playStyle || 'normal',
+            melodyNotes: Array.isArray(b.melodyNotes) ? b.melodyNotes : [],
+            vocalAudio: safeVocal,
+          };
+        }),
       })),
     };
   } catch (err) {

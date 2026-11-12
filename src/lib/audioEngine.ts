@@ -25,8 +25,7 @@ import {
   type PlannedEvent,
   type FlatBar,
 } from './barPlanner';
-import type { SongProject, GuitarModel, LeadGuitarDrive, MelodySound } from '../types/song';
-import { playAudioDataUrl } from './micRecorder';
+import type { SongProject, GuitarModel, LeadGuitarDrive, MelodySound, StringGauge, Ambience3DMode } from '../types/song';
 
 // ─────────────────────────── Types ───────────────────────────
 
@@ -84,12 +83,21 @@ const SCHEDULE_INTERVAL_MS = 50;
 class DrumSynth {
   private ctx: AudioContext;
   private out: GainNode;
+  private noiseBuf: AudioBuffer;
 
   constructor(ctx: AudioContext, destination: AudioNode) {
     this.ctx = ctx;
     this.out = ctx.createGain();
     this.out.gain.value = 1;
     this.out.connect(destination);
+
+    // Pre-allocate shared noise buffer (1.0 sec) to eliminate GC spikes on every drum hit
+    const len = Math.max(1, Math.floor(ctx.sampleRate * 1.0));
+    this.noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const data = this.noiseBuf.getChannelData(0);
+    for (let i = 0; i < len; i++) {
+      data[i] = Math.random() * 2 - 1;
+    }
   }
 
   setVolume(v: number) {
@@ -119,7 +127,7 @@ class DrumSynth {
     }
   }
 
-  private kick(t: number, vel: number, out: AudioNode) {
+  private kick(t: number, vel: number, out: StereoPannerNode) {
     const ctx = this.ctx;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
@@ -129,24 +137,33 @@ class DrumSynth {
     gain.gain.setValueAtTime(vel * 1.4, t);
     gain.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
     osc.connect(gain); gain.connect(out);
+    osc.onended = () => {
+      try { osc.disconnect(); } catch {}
+      try { gain.disconnect(); } catch {}
+      try { out.disconnect(); } catch {}
+    };
     osc.start(t); osc.stop(t + 0.36);
   }
 
-  private snare(t: number, vel: number, out: AudioNode) {
+  private snare(t: number, vel: number, out: StereoPannerNode) {
     const ctx = this.ctx;
-    // noise part
-    const buf = ctx.createBuffer(1, ctx.sampleRate * 0.18, ctx.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
     const noise = ctx.createBufferSource();
-    noise.buffer = buf;
+    noise.buffer = this.noiseBuf;
     const hpf = ctx.createBiquadFilter();
     hpf.type = 'highpass'; hpf.frequency.value = 1800;
     const nGain = ctx.createGain();
     nGain.gain.setValueAtTime(vel * 0.8, t);
     nGain.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
     noise.connect(hpf); hpf.connect(nGain); nGain.connect(out);
+
+    noise.onended = () => {
+      try { noise.disconnect(); } catch {}
+      try { hpf.disconnect(); } catch {}
+      try { nGain.disconnect(); } catch {}
+      try { out.disconnect(); } catch {}
+    };
     noise.start(t); noise.stop(t + 0.19);
+
     // body
     const osc = ctx.createOscillator();
     const oGain = ctx.createGain();
@@ -154,43 +171,53 @@ class DrumSynth {
     oGain.gain.setValueAtTime(vel * 0.4, t);
     oGain.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
     osc.connect(oGain); oGain.connect(out);
+    osc.onended = () => {
+      try { osc.disconnect(); } catch {}
+      try { oGain.disconnect(); } catch {}
+    };
     osc.start(t); osc.stop(t + 0.08);
   }
 
-  private hat(t: number, vel: number, out: AudioNode) {
+  private hat(t: number, vel: number, out: StereoPannerNode) {
     const ctx = this.ctx;
-    const buf = ctx.createBuffer(1, ctx.sampleRate * 0.08, ctx.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
     const noise = ctx.createBufferSource();
-    noise.buffer = buf;
+    noise.buffer = this.noiseBuf;
     const hpf = ctx.createBiquadFilter();
     hpf.type = 'highpass'; hpf.frequency.value = 7000;
     const gain = ctx.createGain();
     gain.gain.setValueAtTime(vel * 0.5, t);
     gain.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
     noise.connect(hpf); hpf.connect(gain); gain.connect(out);
+    noise.onended = () => {
+      try { noise.disconnect(); } catch {}
+      try { hpf.disconnect(); } catch {}
+      try { gain.disconnect(); } catch {}
+      try { out.disconnect(); } catch {}
+    };
     noise.start(t); noise.stop(t + 0.08);
   }
 
-  private crash(t: number, vel: number, out: AudioNode) {
+  private crash(t: number, vel: number, out: StereoPannerNode) {
     const ctx = this.ctx;
     const dur = 0.6;
-    const buf = ctx.createBuffer(1, ctx.sampleRate * dur, ctx.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
     const noise = ctx.createBufferSource();
-    noise.buffer = buf;
+    noise.buffer = this.noiseBuf;
     const hpf = ctx.createBiquadFilter();
     hpf.type = 'highpass'; hpf.frequency.value = 5000;
     const gain = ctx.createGain();
     gain.gain.setValueAtTime(vel * 0.6, t);
     gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
     noise.connect(hpf); hpf.connect(gain); gain.connect(out);
+    noise.onended = () => {
+      try { noise.disconnect(); } catch {}
+      try { hpf.disconnect(); } catch {}
+      try { gain.disconnect(); } catch {}
+      try { out.disconnect(); } catch {}
+    };
     noise.start(t); noise.stop(t + dur + 0.01);
   }
 
-  private cajonThump(t: number, vel: number, out: AudioNode) {
+  private cajonThump(t: number, vel: number, out: StereoPannerNode) {
     const ctx = this.ctx;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
@@ -199,24 +226,32 @@ class DrumSynth {
     gain.gain.setValueAtTime(vel * 1.2, t);
     gain.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
     osc.connect(gain); gain.connect(out);
+    osc.onended = () => {
+      try { osc.disconnect(); } catch {}
+      try { gain.disconnect(); } catch {}
+      try { out.disconnect(); } catch {}
+    };
     osc.start(t); osc.stop(t + 0.29);
   }
 
-  private cajonSlap(t: number, vel: number, out: AudioNode) {
+  private cajonSlap(t: number, vel: number, out: StereoPannerNode) {
     const ctx = this.ctx;
-    // noise transient + mid tone
-    const buf = ctx.createBuffer(1, ctx.sampleRate * 0.12, ctx.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
     const noise = ctx.createBufferSource();
-    noise.buffer = buf;
+    noise.buffer = this.noiseBuf;
     const bpf = ctx.createBiquadFilter();
     bpf.type = 'bandpass'; bpf.frequency.value = 900; bpf.Q.value = 1.4;
     const nGain = ctx.createGain();
     nGain.gain.setValueAtTime(vel * 0.9, t);
     nGain.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
     noise.connect(bpf); bpf.connect(nGain); nGain.connect(out);
+    noise.onended = () => {
+      try { noise.disconnect(); } catch {}
+      try { bpf.disconnect(); } catch {}
+      try { nGain.disconnect(); } catch {}
+      try { out.disconnect(); } catch {}
+    };
     noise.start(t); noise.stop(t + 0.13);
+
     // attack click
     const osc = ctx.createOscillator();
     const oGain = ctx.createGain();
@@ -224,17 +259,18 @@ class DrumSynth {
     oGain.gain.setValueAtTime(vel * 0.3, t);
     oGain.gain.exponentialRampToValueAtTime(0.001, t + 0.03);
     osc.connect(oGain); oGain.connect(out);
+    osc.onended = () => {
+      try { osc.disconnect(); } catch {}
+      try { oGain.disconnect(); } catch {}
+    };
     osc.start(t); osc.stop(t + 0.04);
   }
 
-  private shaker(t: number, vel: number, out: AudioNode) {
+  private shaker(t: number, vel: number, out: StereoPannerNode) {
     const ctx = this.ctx;
     const dur = 0.05;
-    const buf = ctx.createBuffer(1, ctx.sampleRate * dur, ctx.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
     const noise = ctx.createBufferSource();
-    noise.buffer = buf;
+    noise.buffer = this.noiseBuf;
     const hpf = ctx.createBiquadFilter();
     hpf.type = 'highpass'; hpf.frequency.value = 5500;
     const bpf = ctx.createBiquadFilter();
@@ -243,10 +279,17 @@ class DrumSynth {
     gain.gain.setValueAtTime(vel * 0.4, t);
     gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
     noise.connect(hpf); hpf.connect(bpf); bpf.connect(gain); gain.connect(out);
+    noise.onended = () => {
+      try { noise.disconnect(); } catch {}
+      try { hpf.disconnect(); } catch {}
+      try { bpf.disconnect(); } catch {}
+      try { gain.disconnect(); } catch {}
+      try { out.disconnect(); } catch {}
+    };
     noise.start(t); noise.stop(t + dur + 0.01);
   }
 
-  private click(t: number, vel: number, out: AudioNode) {
+  private click(t: number, vel: number, out: StereoPannerNode) {
     const ctx = this.ctx;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
@@ -254,6 +297,11 @@ class DrumSynth {
     gain.gain.setValueAtTime(vel * 0.6, t);
     gain.gain.exponentialRampToValueAtTime(0.001, t + 0.025);
     osc.connect(gain); gain.connect(out);
+    osc.onended = () => {
+      try { osc.disconnect(); } catch {}
+      try { gain.disconnect(); } catch {}
+      try { out.disconnect(); } catch {}
+    };
     osc.start(t); osc.stop(t + 0.03);
   }
 
@@ -342,6 +390,17 @@ class MelodySynth {
         filter.connect(gain);
         gain.connect(this.out);
 
+        osc1.onended = () => {
+          try { osc1.disconnect(); } catch {}
+          try { osc2.disconnect(); } catch {}
+          try { osc1Gain.disconnect(); } catch {}
+          try { osc2Gain.disconnect(); } catch {}
+          try { lfo.disconnect(); } catch {}
+          try { lfoGain.disconnect(); } catch {}
+          try { filter.disconnect(); } catch {}
+          try { gain.disconnect(); } catch {}
+        };
+
         osc1.start(t);
         osc2.start(t);
         osc1.stop(endT + release + 0.05);
@@ -376,6 +435,15 @@ class MelodySynth {
         m1.connect(filter); m2.connect(filter);
         filter.connect(gain); gain.connect(this.out);
 
+        osc1.onended = () => {
+          try { osc1.disconnect(); } catch {}
+          try { osc2.disconnect(); } catch {}
+          try { m1.disconnect(); } catch {}
+          try { m2.disconnect(); } catch {}
+          try { filter.disconnect(); } catch {}
+          try { gain.disconnect(); } catch {}
+        };
+
         osc1.start(t); osc2.start(t);
         osc1.stop(endT + release + 0.05); osc2.stop(endT + release + 0.05);
         break;
@@ -393,6 +461,12 @@ class MelodySynth {
           g.gain.exponentialRampToValueAtTime(0.0001, t + decay);
           osc.connect(g);
           g.connect(this.out);
+
+          osc.onended = () => {
+            try { osc.disconnect(); } catch {}
+            try { g.disconnect(); } catch {}
+          };
+
           osc.start(t);
           osc.stop(t + decay + 0.05);
         });
@@ -412,6 +486,7 @@ class MelodySynth {
 class TrackGainNode {
   protected masterGain: GainNode;
   protected fadeGain: GainNode;
+  protected panner: StereoPannerNode;
   readonly input: GainNode; // ต่อกับ smplr destination หรือ DrumSynth
 
   constructor(ctx: AudioContext, destination: AudioNode, vol: number, pan: number) {
@@ -420,13 +495,13 @@ class TrackGainNode {
     this.input      = ctx.createGain();
 
     // เชื่อม: input → masterGain → fadeGain → panner → destination
-    const panner = ctx.createStereoPanner();
-    panner.pan.value = pan;
+    this.panner = ctx.createStereoPanner();
+    this.panner.pan.value = pan;
 
     this.input.connect(this.masterGain);
     this.masterGain.connect(this.fadeGain);
-    this.fadeGain.connect(panner);
-    panner.connect(destination);
+    this.fadeGain.connect(this.panner);
+    this.panner.connect(destination);
 
     this.setVolume(vol);
   }
@@ -448,9 +523,81 @@ class TrackGainNode {
   }
 
   disconnect() {
-    this.input.disconnect();
-    this.masterGain.disconnect();
-    this.fadeGain.disconnect();
+    try { this.input.disconnect(); } catch {}
+    try { this.masterGain.disconnect(); } catch {}
+    try { this.fadeGain.disconnect(); } catch {}
+    try { this.panner.disconnect(); } catch {}
+  }
+}
+
+/**
+ * GuitarRhythmTrackGainNode — Channel กีตาร์โปร่งริทึ่มพร้อม Body Resonance EQ
+ * จำลองขนาด Body ไม้ และ Soundboard ของกีตาร์แต่ละทรง
+ */
+class GuitarRhythmTrackGainNode extends TrackGainNode {
+  private bodyResonance: BiquadFilterNode;
+  private highAir: BiquadFilterNode;
+
+  constructor(
+    ctx: AudioContext,
+    destination: AudioNode,
+    vol: number,
+    pan: number,
+    model: GuitarModel,
+    gauge: StringGauge = 'standard-010'
+  ) {
+    super(ctx, destination, vol, pan);
+
+    // ปลด input -> masterGain ตรงๆ จาก constructor แม่ เพื่อต่อผ่าน EQ Chain
+    this.input.disconnect(this.masterGain);
+
+    this.bodyResonance = ctx.createBiquadFilter();
+    this.highAir = ctx.createBiquadFilter();
+
+    this.input.connect(this.bodyResonance);
+    this.bodyResonance.connect(this.highAir);
+    this.highAir.connect(this.masterGain);
+
+    this.updateAcoustics(model, gauge);
+  }
+
+  updateAcoustics(model: GuitarModel, gauge: StringGauge) {
+    const isHeavy = gauge === 'heavy-012';
+    if (model === 'classical-nylon') {
+      this.bodyResonance.type = 'peaking';
+      this.bodyResonance.frequency.value = 230;
+      this.bodyResonance.gain.value = 3.2;
+      this.bodyResonance.Q.value = 1.0;
+
+      this.highAir.type = 'lowpass';
+      this.highAir.frequency.value = 6500;
+      this.highAir.Q.value = 0.7;
+    } else if (model === 'ovation-roundback') {
+      this.bodyResonance.type = 'highpass';
+      this.bodyResonance.frequency.value = 90;
+      this.bodyResonance.Q.value = 0.7;
+
+      this.highAir.type = 'peaking';
+      this.highAir.frequency.value = 3800;
+      this.highAir.gain.value = 3.5;
+      this.highAir.Q.value = 1.4;
+    } else {
+      // dreadnought-steel default
+      this.bodyResonance.type = 'peaking';
+      this.bodyResonance.frequency.value = 115;
+      this.bodyResonance.gain.value = isHeavy ? 3.0 : 2.2;
+      this.bodyResonance.Q.value = 1.2;
+
+      this.highAir.type = 'highshelf';
+      this.highAir.frequency.value = 5200;
+      this.highAir.gain.value = isHeavy ? 1.5 : 2.5;
+    }
+  }
+
+  override disconnect() {
+    super.disconnect();
+    try { this.bodyResonance.disconnect(); } catch {}
+    try { this.highAir.disconnect(); } catch {}
   }
 }
 
@@ -664,10 +811,16 @@ class LeadGuitarTrackGainNode extends TrackGainNode {
 
 class AudioEngine {
   private ctx: AudioContext | null = null;
+  private masterCompressor: DynamicsCompressorNode | null = null;
+  private masterBus: GainNode | null = null;
+  private reverbConvolver: ConvolverNode | null = null;
+  private reverbWetGain: GainNode | null = null;
+  private currentAmbience: Ambience3DMode | null = null;
   private instruments: Partial<Record<TrackId, Smplr>> = {};
   private drumSynth: DrumSynth | null = null;
   private melodySynth: MelodySynth | null = null;
   private trackGains: Partial<Record<TrackId, TrackGainNode>> = {};
+  private vocalGain: TrackGainNode | null = null;
 
   private state: EngineState = 'idle';
   private loadProgress = 0;
@@ -677,7 +830,9 @@ class AudioEngine {
   private playbackFlat: FlatBar[] = [];
   private currentBarTimer: ReturnType<typeof setTimeout> | null = null;
   private isPlayingFlag = false;
-  private activeVocalAudio: HTMLAudioElement | null = null;
+  private vocalBufferCache: Map<string, AudioBuffer> = new Map();
+  private activeVocalSource: AudioBufferSourceNode | null = null;
+  private nextBarAudioTime = 0;
 
   private barChangeCbs: Set<BarChangeCb> = new Set();
   private statusChangeCbs: Set<StatusChangeCb> = new Set();
@@ -711,6 +866,37 @@ class AudioEngine {
     return () => this.statusChangeCbs.delete(cb);
   }
 
+  // ─── Helpers ───
+
+  private buildRoomImpulse(ctx: AudioContext, mode: Ambience3DMode): AudioBuffer {
+    const rate = ctx.sampleRate;
+    let decaySec = 1.25;
+    let preDelaySec = 0.015;
+    if (mode === 'living-room') {
+      decaySec = 0.75;
+      preDelaySec = 0.008;
+    } else if (mode === 'unplugged-hall') {
+      decaySec = 2.3;
+      preDelaySec = 0.028;
+    }
+    const length = Math.max(1, Math.floor(rate * decaySec));
+    const impulse = ctx.createBuffer(2, length, rate);
+    const left = impulse.getChannelData(0);
+    const right = impulse.getChannelData(1);
+    for (let i = 0; i < length; i++) {
+      const t = i / rate;
+      if (t < preDelaySec) {
+        left[i] = 0;
+        right[i] = 0;
+      } else {
+        const factor = Math.exp(-(t - preDelaySec) * (3.5 / decaySec));
+        left[i] = (Math.random() * 2 - 1) * factor;
+        right[i] = (Math.random() * 2 - 1) * factor;
+      }
+    }
+    return impulse;
+  }
+
   // ─── Init / Load ───
 
   async init(song: SongProject, onProgress?: (p: number) => void): Promise<void> {
@@ -735,7 +921,31 @@ class AudioEngine {
     this.emitStatus();
 
     const ctx = this.ctx;
-    const dest = ctx.destination;
+
+    // Master Bus & Mastering Compressor (ป้องกันเสียงแตกพร่า พร้อม Glue ความนวลสไตล์แผ่นเสียง)
+    if (!this.masterCompressor) {
+      this.masterCompressor = ctx.createDynamicsCompressor();
+      this.masterCompressor.threshold.setValueAtTime(-12, ctx.currentTime);
+      this.masterCompressor.knee.setValueAtTime(8, ctx.currentTime);
+      this.masterCompressor.ratio.setValueAtTime(3.5, ctx.currentTime);
+      this.masterCompressor.attack.setValueAtTime(0.015, ctx.currentTime);
+      this.masterCompressor.release.setValueAtTime(0.12, ctx.currentTime);
+      this.masterCompressor.connect(ctx.destination);
+    }
+    if (!this.masterBus) {
+      this.masterBus = ctx.createGain();
+      this.masterBus.gain.value = 1.0;
+      this.masterBus.connect(this.masterCompressor);
+    }
+    if (!this.reverbConvolver || !this.reverbWetGain) {
+      this.reverbConvolver = ctx.createConvolver();
+      this.reverbWetGain = ctx.createGain();
+      this.masterBus.connect(this.reverbConvolver);
+      this.reverbConvolver.connect(this.reverbWetGain);
+      this.reverbWetGain.connect(this.masterCompressor);
+    }
+    this.setAmbience3D(song.ambience3D || 'wood-studio');
+    const dest = this.masterBus;
 
     // สร้าง TrackGainNode สำหรับทุก track
     const tracks: TrackId[] = ['guitarRhythm', 'guitarLead', 'bass', 'piano', 'drums', 'melody'];
@@ -752,14 +962,34 @@ class AudioEngine {
         : tr === 'melody'
         ? (song.mixer.melody?.volume ?? 85)
         : song.mixer.guitarRhythm.volume;
+
       if (tr === 'guitarLead') {
         const leadNode = new LeadGuitarTrackGainNode(ctx, dest, mixVol ?? TRACK_DEFAULT_VOL[tr], TRACK_PAN[tr]);
         leadNode.setDrive(song.mixer.guitarLead.drive ?? 'overdrive');
         this.trackGains[tr] = leadNode;
+      } else if (tr === 'guitarRhythm') {
+        this.trackGains[tr] = new GuitarRhythmTrackGainNode(
+          ctx,
+          dest,
+          mixVol ?? TRACK_DEFAULT_VOL[tr],
+          TRACK_PAN[tr],
+          song.guitarModel,
+          song.stringGauge
+        );
       } else {
         this.trackGains[tr] = new TrackGainNode(ctx, dest, mixVol ?? TRACK_DEFAULT_VOL[tr], TRACK_PAN[tr]);
       }
     }
+
+    // Vocal Track Gain Node
+    this.vocalGain?.disconnect();
+    const vocalVol = song.mixer.vocal?.volume ?? 95;
+    this.vocalGain = new TrackGainNode(
+      ctx,
+      dest,
+      (song.mixer.vocal?.enabled ?? true) ? vocalVol : 0,
+      0.0
+    );
 
     // DrumSynth ต่อเข้า drumsGain.input
     this.drumSynth?.dispose();
@@ -819,7 +1049,11 @@ class AudioEngine {
 
   // ─── Mixer volume ───
 
-  setMixerVolume(track: TrackId, vol: number) {
+  setMixerVolume(track: TrackId | 'vocal', vol: number) {
+    if (track === 'vocal') {
+      this.vocalGain?.setVolume(vol);
+      return;
+    }
     this.trackGains[track]?.setVolume(vol);
     if (track === 'drums') {
       this.drumSynth?.setVolume(vol);
@@ -837,6 +1071,29 @@ class AudioEngine {
     this.melodySynth?.setSound(sound);
   }
 
+  setGuitarAcoustics(model: GuitarModel, gauge: StringGauge) {
+    const node = this.trackGains['guitarRhythm'];
+    if (node instanceof GuitarRhythmTrackGainNode) {
+      node.updateAcoustics(model, gauge);
+    }
+  }
+
+  setAmbience3D(mode: Ambience3DMode) {
+    if (!this.ctx || !this.reverbConvolver || !this.reverbWetGain) return;
+    if (this.currentAmbience === mode) return;
+    this.currentAmbience = mode;
+    this.reverbConvolver.buffer = this.buildRoomImpulse(this.ctx, mode);
+    const wet = mode === 'unplugged-hall' ? 0.36 : mode === 'wood-studio' ? 0.22 : 0.12;
+    this.reverbWetGain.gain.setTargetAtTime(wet, this.ctx.currentTime, 0.05);
+  }
+
+  updateSong(song: SongProject) {
+    this._currentSong = song;
+    if (this.isPlayingFlag) {
+      this.playbackFlat = flattenSong(song);
+    }
+  }
+
   /** เล่นเสียงพรีวิวโน้ตเดี่ยวทันที (สำหรับกดคีย์เปียโนใน Mini Piano Roll) */
   previewNote(midiPitch: number, durationSec = 0.45) {
     if (!this.ctx) {
@@ -845,8 +1102,9 @@ class AudioEngine {
     if (this.ctx.state === 'suspended') {
       this.ctx.resume();
     }
+    const dest = this.masterBus || this.ctx.destination;
     if (!this.trackGains['melody']) {
-      this.trackGains['melody'] = new TrackGainNode(this.ctx, this.ctx.destination, 95, 0.0);
+      this.trackGains['melody'] = new TrackGainNode(this.ctx, dest, 95, 0.0);
     }
     if (!this.melodySynth) {
       this.melodySynth = new MelodySynth(this.ctx, this.trackGains['melody'].input);
@@ -930,9 +1188,15 @@ class AudioEngine {
       this.ctx.resume();
     }
 
+    const startAudioTime = (this.ctx?.currentTime ?? 0) + 0.08;
+    this.nextBarAudioTime = startAudioTime;
+
     // Count-in
     if (song.countInEnabled && fromBar === 0) {
-      this._scheduleCountIn(song, () => this._playFromBar(song, fromBar));
+      this._scheduleCountIn(song, () => {
+        this.nextBarAudioTime = Math.max((this.ctx?.currentTime ?? 0) + 0.04, this.nextBarAudioTime);
+        this._playFromBar(song, fromBar);
+      });
     } else {
       this._playFromBar(song, fromBar);
     }
@@ -950,7 +1214,8 @@ class AudioEngine {
       }
     });
 
-    this.currentBarTimer = setTimeout(onDone, timing.barSec * 1000 + 80);
+    this.nextBarAudioTime = now + timing.barSec;
+    this.currentBarTimer = setTimeout(onDone, timing.barSec * 1000 + 40);
   }
 
   seekToBar(index: number) {
@@ -958,13 +1223,69 @@ class AudioEngine {
     const song = this._currentSong;
     if (!song) return;
     this._clearTimer();
+    this.nextBarAudioTime = (this.ctx?.currentTime ?? 0) + 0.05;
     this._playFromBar(song, index);
+  }
+
+  private async getVocalBuffer(dataUrl: string): Promise<AudioBuffer | null> {
+    if (!this.ctx) return null;
+    const cached = this.vocalBufferCache.get(dataUrl);
+    if (cached) return cached;
+
+    try {
+      const base64Part = dataUrl.split(',')[1];
+      if (!base64Part) return null;
+      const binaryStr = atob(base64Part);
+      const bytes = new Uint8Array(binaryStr.length);
+      for (let i = 0; i < binaryStr.length; i++) {
+        bytes[i] = binaryStr.charCodeAt(i);
+      }
+      const buffer = await this.ctx.decodeAudioData(bytes.buffer.slice(0));
+      // Bounded cache ป้องกัน Memory Leaks จากการอัดหลายสิบคลิป
+      if (this.vocalBufferCache.size > 40) {
+        const firstKey = this.vocalBufferCache.keys().next().value;
+        if (firstKey) this.vocalBufferCache.delete(firstKey);
+      }
+      this.vocalBufferCache.set(dataUrl, buffer);
+      return buffer;
+    } catch {
+      return null;
+    }
+  }
+
+  private async playVocalClip(dataUrl: string, barAudioTime: number, offsetMs: number) {
+    if (!this.ctx || !this.vocalGain) return;
+    const buffer = await this.getVocalBuffer(dataUrl);
+    if (!buffer || !this.isPlayingFlag || !this.ctx) return;
+
+    if (this.activeVocalSource) {
+      try {
+        this.activeVocalSource.stop();
+        this.activeVocalSource.disconnect();
+      } catch {}
+      this.activeVocalSource = null;
+    }
+
+    const vocalStartAudioTime = Math.max(this.ctx.currentTime, barAudioTime + (offsetMs / 1000));
+    const src = this.ctx.createBufferSource();
+    src.buffer = buffer;
+    src.connect(this.vocalGain.input);
+    src.onended = () => {
+      try { src.disconnect(); } catch {}
+      if (this.activeVocalSource === src) {
+        this.activeVocalSource = null;
+      }
+    };
+    this.activeVocalSource = src;
+    src.start(vocalStartAudioTime);
   }
 
   private _currentSong: SongProject | null = null;
 
   private _playFromBar(song: SongProject, barIndex: number) {
-    this._currentSong = song;
+    const activeSong = this._currentSong || song;
+    this._currentSong = activeSong;
+    this.playbackFlat = flattenSong(activeSong);
     const ctx = this.ctx!;
     const flat = this.playbackFlat;
 
@@ -982,14 +1303,17 @@ class AudioEngine {
     this.barChangeCbs.forEach((cb) => cb(barIndex));
     this.emitStatus();
 
-    const planned = planBar(song, flat, barIndex);
+    const planned = planBar(activeSong, flat, barIndex);
     const timing = planned.timing;
-    const now = ctx.currentTime + 0.08; // เพิ่ม buffer เล็กน้อยเพื่อป้องกัน underrun
+
+    // ล็อคเวลาบาร์ด้วย AudioContext clock โดยตรง ป้องกัน setTimeout jitter สะสม
+    const now = Math.max(ctx.currentTime + 0.04, this.nextBarAudioTime);
+    this.nextBarAudioTime = now + timing.barSec;
 
     // ปรับเสียงแตกกีตาร์ลีดตามท่อน (Per-Section Drive Override หรือค่าจากมิกเซอร์)
     const leadNode = this.trackGains['guitarLead'];
     if (leadNode instanceof LeadGuitarTrackGainNode) {
-      const secDrive = flat[barIndex].section.instruments.guitarLeadDrive ?? song.mixer.guitarLead.drive ?? 'overdrive';
+      const secDrive = flat[barIndex].section.instruments.guitarLeadDrive ?? activeSong.mixer.guitarLead.drive ?? 'overdrive';
       leadNode.setDrive(secDrive, now);
     }
 
@@ -999,13 +1323,13 @@ class AudioEngine {
       switch (ev.kind) {
         case 'note': {
           if (ev.track === 'melody') {
-            if (!isTrackOn(song, flat[barIndex].section, 'melody')) break;
+            if (!isTrackOn(activeSong, flat[barIndex].section, 'melody')) break;
             this.melodySynth?.playNote(ev.midi, ev.vel, t, ev.dur);
             break;
           }
           const inst = this.instruments[ev.track];
           if (!inst) break;
-          if (!isTrackOn(song, flat[barIndex].section, ev.track)) break;
+          if (!isTrackOn(activeSong, flat[barIndex].section, ev.track)) break;
           inst.start({
             note: ev.midi,
             velocity: ev.vel,
@@ -1016,7 +1340,7 @@ class AudioEngine {
           break;
         }
         case 'drum': {
-          if (!isTrackOn(song, flat[barIndex].section, 'drums')) break;
+          if (!isTrackOn(activeSong, flat[barIndex].section, 'drums')) break;
           this.drumSynth?.hit(ev, t);
           break;
         }
@@ -1033,41 +1357,32 @@ class AudioEngine {
       }
     }
 
-    // เล่นคลิปเสียงร้องสดประจำห้องนี้ (ถ้ามีบันทึกไว้)
+    // เล่นคลิปเสียงร้องสดประจำห้องนี้ (ถ้ามีบันทึกไว้) ด้วย Web Audio Buffer ที่เที่ยงตรงระดับ sample
     const vocalAudio = flat[barIndex].bar.vocalAudio;
-    if (vocalAudio && (song.mixer.vocal?.enabled ?? true)) {
-      const vocalDelayMs = Math.max(0, song.vocalLatencyOffsetMs || 0);
-      const vocalVol = ((song.mixer.vocal?.volume ?? 95) / 100);
-      setTimeout(() => {
-        if (!this.isPlayingFlag) return;
-        this.activeVocalAudio = playAudioDataUrl(vocalAudio, { volume: vocalVol });
-      }, vocalDelayMs);
+    if (vocalAudio && (activeSong.mixer.vocal?.enabled ?? true)) {
+      this.playVocalClip(vocalAudio, now, activeSong.vocalLatencyOffsetMs || 0);
     }
 
-    // กำหนดเวลาเล่นห้องถัดไป
-    const barMs = timing.barSec * 1000;
-    // หาเวลา tail ของห้องนี้ (เสียงที่ยาวที่สุด)
-    let maxEventEnd = timing.barSec;
-    for (const ev of planned.events) {
-      if (ev.kind === 'note') maxEventEnd = Math.max(maxEventEnd, ev.t + ev.dur);
-      if (ev.kind === 'fade') maxEventEnd = Math.max(maxEventEnd, ev.t + ev.dur);
-    }
-
+    // กำหนดเวลาตื่นเพื่อ schedule ห้องถัดไปล่วงหน้า 50ms ก่อนบาร์จบ
+    const msUntilNext = Math.max(20, (this.nextBarAudioTime - ctx.currentTime - 0.05) * 1000);
     this.currentBarTimer = setTimeout(() => {
       if (!this.isPlayingFlag) return;
-      this._playFromBar(song, barIndex + 1);
-    }, barMs - 20); // -20ms ให้ schedule ทันก่อนห้องจริง
+      this._playFromBar(activeSong, barIndex + 1);
+    }, msUntilNext);
   }
 
   stop() {
     this._clearTimer();
     this.isPlayingFlag = false;
+    this.nextBarAudioTime = 0;
+    this._currentSong = null;
 
-    if (this.activeVocalAudio) {
+    if (this.activeVocalSource) {
       try {
-        this.activeVocalAudio.pause();
+        this.activeVocalSource.stop();
+        this.activeVocalSource.disconnect();
       } catch {}
-      this.activeVocalAudio = null;
+      this.activeVocalSource = null;
     }
 
     // หยุดเสียง smplr ทั้งหมด
@@ -1098,6 +1413,18 @@ class AudioEngine {
   dispose() {
     this.stop();
     for (const tg of Object.values(this.trackGains)) tg?.disconnect();
+    this.vocalGain?.disconnect();
+    this.vocalGain = null;
+    this.reverbConvolver?.disconnect();
+    this.reverbConvolver = null;
+    this.reverbWetGain?.disconnect();
+    this.reverbWetGain = null;
+    this.currentAmbience = null;
+    this.masterBus?.disconnect();
+    this.masterBus = null;
+    this.masterCompressor?.disconnect();
+    this.masterCompressor = null;
+    this.vocalBufferCache.clear();
     this.drumSynth?.dispose();
     this.melodySynth?.dispose();
     this.ctx?.close();

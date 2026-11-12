@@ -123,7 +123,14 @@ export async function renderSongToAudioBuffer(
 
   const offlineCtx = new OfflineAudioContext(2, totalFrames, sampleRate);
 
-  // Master Gain & Reverb Bus
+  // Master Gain & Reverb Bus & Mastering Compressor
+  const masterCompressor = offlineCtx.createDynamicsCompressor();
+  masterCompressor.threshold.setValueAtTime(-12, 0);
+  masterCompressor.knee.setValueAtTime(8, 0);
+  masterCompressor.ratio.setValueAtTime(3.5, 0);
+  masterCompressor.attack.setValueAtTime(0.015, 0);
+  masterCompressor.release.setValueAtTime(0.12, 0);
+
   const masterGain = offlineCtx.createGain();
   masterGain.gain.value = 0.95;
 
@@ -131,10 +138,11 @@ export async function renderSongToAudioBuffer(
   const reverbGain = offlineCtx.createGain();
   reverbGain.gain.value = song.ambience3D === 'unplugged-hall' ? 0.35 : song.ambience3D === 'wood-studio' ? 0.22 : 0.12;
 
-  masterGain.connect(offlineCtx.destination);
+  masterGain.connect(masterCompressor);
   masterGain.connect(reverbBus);
   reverbBus.connect(reverbGain);
-  reverbGain.connect(offlineCtx.destination);
+  reverbGain.connect(masterCompressor);
+  masterCompressor.connect(offlineCtx.destination);
 
   // Tracks gain & panning
   const trackGains: Record<string, GainNode> = {};
@@ -165,7 +173,28 @@ export async function renderSongToAudioBuffer(
     else if (tr === 'vocal') vol = song.mixer.vocal?.volume ?? 95;
 
     gain.gain.value = (vol / 127) ** 1.5;
-    gain.connect(panner);
+
+    if (tr === 'guitarRhythm') {
+      const bodyFilter = offlineCtx.createBiquadFilter();
+      if (song.guitarModel === 'classical-nylon') {
+        bodyFilter.type = 'peaking';
+        bodyFilter.frequency.value = 230;
+        bodyFilter.gain.value = 3.2;
+      } else if (song.guitarModel === 'ovation-roundback') {
+        bodyFilter.type = 'peaking';
+        bodyFilter.frequency.value = 3800;
+        bodyFilter.gain.value = 3.5;
+      } else {
+        bodyFilter.type = 'peaking';
+        bodyFilter.frequency.value = 115;
+        bodyFilter.gain.value = song.stringGauge === 'heavy-012' ? 3.0 : 2.2;
+      }
+      gain.connect(bodyFilter);
+      bodyFilter.connect(panner);
+    } else {
+      gain.connect(panner);
+    }
+
     panner.connect(masterGain);
     trackGains[tr] = gain;
   }

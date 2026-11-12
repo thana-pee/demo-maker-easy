@@ -84,7 +84,7 @@ export function getSongById(id: string): SongProject | null {
   return songs.find((s) => s.id === id) || null;
 }
 
-/** บันทึกหรืออัปเดตเพลง */
+/** บันทึกหรืออัปเดตเพลง (พร้อมระบบกู้คืนเมื่อ LocalStorage เต็ม) */
 export function saveSong(song: SongProject): void {
   const storage = getStorage();
   if (!storage) return;
@@ -104,7 +104,33 @@ export function saveSong(song: SongProject): void {
       newSongs = [updatedSong, ...songs];
     }
 
-    storage.setItem(STORAGE_KEY, JSON.stringify(newSongs));
+    try {
+      storage.setItem(STORAGE_KEY, JSON.stringify(newSongs));
+    } catch (writeErr: any) {
+      // ตรวจจับ QuotaExceededError เมื่อมีไฟล์เสียงร้องสะสมหลายเพลง
+      if (writeErr?.name === 'QuotaExceededError' || writeErr?.code === 22 || writeErr?.code === 1014) {
+        console.warn('LocalStorage quota exceeded. Pruning older vocal audio blobs to protect project data...');
+        // ปลดเสียงร้องของเพลงอื่นออก เพื่อให้เพลงปัจจุบันเซฟคอร์ดและเนื้อเพลงได้แน่นอน
+        const pruned = newSongs.map((s) => {
+          if (s.id === song.id) return s;
+          return {
+            ...s,
+            sections: s.sections.map((sec) => ({
+              ...sec,
+              bars: sec.bars.map(({ vocalAudio, ...b }) => b),
+            })),
+          };
+        });
+        try {
+          storage.setItem(STORAGE_KEY, JSON.stringify(pruned));
+        } catch (retryErr) {
+          console.error('Critical: Storage quota full even after pruning older vocals', retryErr);
+        }
+      } else {
+        throw writeErr;
+      }
+    }
+
     setActiveSongId(song.id);
   } catch (err) {
     console.error('Error saving song to localStorage:', err);

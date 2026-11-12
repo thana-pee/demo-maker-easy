@@ -12,6 +12,7 @@ import {
 } from '@/lib/melodyUtils';
 import { transposeChord } from '@/lib/chordUtils';
 import { getAudioEngine } from '@/lib/audioEngine';
+import { useLanguage } from '@/context/LanguageContext';
 
 interface MiniPianoRollModalProps {
   isOpen: boolean;
@@ -38,6 +39,7 @@ export const MiniPianoRollModal: React.FC<MiniPianoRollModalProps> = ({
   canNext = false,
   onClose,
 }) => {
+  const { lang } = useLanguage();
   // Find section & bar
   const section = song.sections.find((s) => s.id === sectionId);
   const bar = section?.bars.find((b) => b.id === barId);
@@ -177,7 +179,7 @@ export const MiniPianoRollModal: React.FC<MiniPianoRollModalProps> = ({
   // Clear all notes in bar
   const handleClear = () => {
     if (draftNotes.length === 0) return;
-    if (confirm('ต้องการล้างโน้ตเมโลดี้ทั้งหมดในห้องนี้ใช่หรือไม่?')) {
+    if (confirm(lang === 'th' ? 'ต้องการล้างโน้ตเมโลดี้ทั้งหมดในห้องนี้ใช่หรือไม่?' : 'Clear all melody notes in this bar?')) {
       setDraftNotes([]);
     }
   };
@@ -198,7 +200,7 @@ export const MiniPianoRollModal: React.FC<MiniPianoRollModalProps> = ({
     if (prevBar && prevBar.melodyNotes.length > 0) {
       setDraftNotes([...prevBar.melodyNotes]);
     } else {
-      alert('ห้องก่อนหน้าไม่มีโน้ตเมโลดี้ครับ');
+      alert(lang === 'th' ? 'ห้องก่อนหน้าไม่มีโน้ตเมโลดี้ครับ' : 'Previous bar has no melody notes.');
     }
   };
 
@@ -214,17 +216,17 @@ export const MiniPianoRollModal: React.FC<MiniPianoRollModalProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="font-black text-base sm:text-lg text-slate-900">
-                  เมโลดี้ไกด์เสียงร้อง (Vocal Melody Guide)
+                  {lang === 'th' ? 'เมโลดี้ไกด์เสียงร้อง (Vocal Melody Guide)' : 'Vocal Melody Guide'}
                 </h3>
                 <span className="px-2.5 py-0.5 rounded-full bg-blue-100 text-[#1A73E8] font-black text-xs">
-                  ห้องที่ {globalBarIndex + 1}
+                  {lang === 'th' ? `ห้องที่ ${globalBarIndex + 1}` : `Bar ${globalBarIndex + 1}`}
                 </span>
               </div>
               <div className="flex items-center gap-2 text-xs text-slate-500 font-medium">
                 <span>{section.name}</span>
                 <span>•</span>
                 <span className="font-bold text-slate-800">
-                  คอร์ด: {chord1} {chord2 ? `→ ${chord2}` : ''}
+                  {lang === 'th' ? 'คอร์ด: ' : 'Chord: '}{chord1} {chord2 ? `→ ${chord2}` : ''}
                 </span>
                 {song.capoFret > 0 && (
                   <span className="text-[11px] text-indigo-700 bg-indigo-50 px-1.5 py-0.2 rounded font-bold">
@@ -247,9 +249,9 @@ export const MiniPianoRollModal: React.FC<MiniPianoRollModalProps> = ({
                     onNavigateBar('prev');
                   }}
                   className="px-2 py-1 rounded-lg hover:bg-white disabled:opacity-30 disabled:hover:bg-transparent transition cursor-pointer"
-                  title="บันทึกแล้วไปห้องก่อนหน้า"
+                  title={lang === 'th' ? 'บันทึกแล้วไปห้องก่อนหน้า' : 'Save & go to previous bar'}
                 >
-                  ◀ ก่อนหน้า
+                  {lang === 'th' ? '◀ ก่อนหน้า' : '◀ Prev'}
                 </button>
                 <button
                   type="button"
@@ -259,9 +261,9 @@ export const MiniPianoRollModal: React.FC<MiniPianoRollModalProps> = ({
                     onNavigateBar('next');
                   }}
                   className="px-2 py-1 rounded-lg hover:bg-white disabled:opacity-30 disabled:hover:bg-transparent transition cursor-pointer"
-                  title="บันทึกแล้วไปห้องถัดไป"
+                  title={lang === 'th' ? 'บันทึกแล้วไปห้องถัดไป' : 'Save & go to next bar'}
                 >
-                  ถัดไป ▶
+                  {lang === 'th' ? 'ถัดไป ▶' : 'Next ▶'}
                 </button>
               </div>
             )}
@@ -289,7 +291,11 @@ export const MiniPianoRollModal: React.FC<MiniPianoRollModalProps> = ({
                   : 'bg-[#1A73E8] hover:bg-blue-700 text-white'
               }`}
             >
-              <span>{isAuditioning ? '⏹ หยุดฟัง' : '▶ ลองฟังเฉพาะห้องนี้'}</span>
+              <span>
+                {isAuditioning
+                  ? (lang === 'th' ? '⏹ หยุดฟัง' : '⏹ Stop')
+                  : (lang === 'th' ? '▶ ลองฟังเฉพาะห้องนี้' : '▶ Audition Bar')}
+              </span>
             </button>
 
             {/* Scale Snap Toggle */}
@@ -301,15 +307,19 @@ export const MiniPianoRollModal: React.FC<MiniPianoRollModalProps> = ({
                   ? 'bg-emerald-50 border-emerald-300 text-emerald-900 shadow-2xs'
                   : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
               }`}
-              title="ซ่อนโน้ตเพี้ยนนอกคีย์ เพื่อให้กดง่ายและกันเพี้ยน"
+              title={lang === 'th' ? 'ซ่อนโน้ตเพี้ยนนอกคีย์ เพื่อให้กดง่ายและกันเพี้ยน' : 'Hide out-of-key notes'}
             >
               <span>🎯</span>
-              <span>{keySnapOnly ? `คีย์ ${effectiveKey} (กันเพี้ยน)` : 'โครมาติก (12 โน้ต)'}</span>
+              <span>
+                {keySnapOnly
+                  ? (lang === 'th' ? `คีย์ ${effectiveKey} (กันเพี้ยน)` : `Key ${effectiveKey} (Snap)`)
+                  : (lang === 'th' ? 'โครมาติก (12 โน้ต)' : 'Chromatic (12)')}
+              </span>
             </button>
 
             {/* Note Duration Selector */}
             <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-xl p-1 text-[11px] font-bold text-slate-700">
-              <span className="text-slate-400 px-1">ความยาว:</span>
+              <span className="text-slate-400 px-1">{lang === 'th' ? 'ความยาว:' : 'Dur:'}</span>
               {[1, 2, 4].map((d) => (
                 <button
                   key={d}
@@ -334,9 +344,9 @@ export const MiniPianoRollModal: React.FC<MiniPianoRollModalProps> = ({
                     ? 'bg-indigo-50 border-indigo-300 text-indigo-900'
                     : 'bg-white border-slate-200 text-slate-600'
                 }`}
-                title="สลับความละเอียดตารางจังหวะ"
+                title={lang === 'th' ? 'สลับความละเอียดตารางจังหวะ' : 'Toggle step resolution'}
               >
-                {resolution16 ? 'ตาราง 16 ช่อง' : 'ตาราง 8 ช่อง'}
+                {resolution16 ? (lang === 'th' ? 'ตาราง 16 ช่อง' : '16th Grid') : (lang === 'th' ? 'ตาราง 8 ช่อง' : '8th Grid')}
               </button>
             )}
           </div>
@@ -347,9 +357,9 @@ export const MiniPianoRollModal: React.FC<MiniPianoRollModalProps> = ({
               type="button"
               onClick={handleCopyPrevNotes}
               className="px-2.5 py-1.5 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold transition cursor-pointer"
-              title="ดึงโน้ตจากห้องก่อนหน้ามาใช้"
+              title={lang === 'th' ? 'ดึงโน้ตจากห้องก่อนหน้ามาใช้' : 'Copy notes from previous bar'}
             >
-              📋 ก็อปจากห้องก่อน
+              {lang === 'th' ? '📋 ก็อปจากห้องก่อน' : '📋 Copy Prev Bar'}
             </button>
 
             <button
@@ -358,7 +368,7 @@ export const MiniPianoRollModal: React.FC<MiniPianoRollModalProps> = ({
               disabled={draftNotes.length === 0}
               className="px-2.5 py-1.5 rounded-xl bg-white border border-slate-200 hover:text-rose-600 disabled:opacity-40 disabled:hover:text-slate-700 text-slate-600 font-bold transition cursor-pointer"
             >
-              🗑️ ล้างโน้ต ({draftNotes.length})
+              {lang === 'th' ? `🗑️ ล้างโน้ต (${draftNotes.length})` : `🗑️ Clear (${draftNotes.length})`}
             </button>
           </div>
         </div>
@@ -368,17 +378,21 @@ export const MiniPianoRollModal: React.FC<MiniPianoRollModalProps> = ({
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1 font-medium">
               <span className="w-2.5 h-2.5 rounded-full bg-amber-400 inline-block"></span>
-              <span>โน้ตในคอร์ด ({chord1})</span>
+              <span>{lang === 'th' ? `โน้ตในคอร์ด (${chord1})` : `Chord Tone (${chord1})`}</span>
             </span>
             <span className="flex items-center gap-1 font-medium">
               <span className="w-2.5 h-2.5 rounded-full bg-blue-500 inline-block"></span>
-              <span>โน้ตร้องไกด์</span>
+              <span>{lang === 'th' ? 'โน้ตร้องไกด์' : 'Melody Guide'}</span>
             </span>
-            <span className="text-slate-400">💡 คลิกเพื่อเพิ่ม/ลบโน้ต • กดคีย์เปียโนซ้ายเพื่อลองฟังเสียง</span>
+            <span className="text-slate-400">
+              {lang === 'th'
+                ? '💡 คลิกเพื่อเพิ่ม/ลบโน้ต • กดคีย์เปียโนซ้ายเพื่อลองฟังเสียง'
+                : '💡 Click cell to toggle note • Click left piano keys to preview'}
+            </span>
           </div>
           {bar.lyrics && (
             <div className="font-bold text-slate-700 truncate max-w-xs sm:max-w-md">
-              เนื้อร้อง: &ldquo;{bar.lyrics}&rdquo;
+              {lang === 'th' ? 'เนื้อร้อง:' : 'Lyrics:'} &ldquo;{bar.lyrics}&rdquo;
             </div>
           )}
         </div>
@@ -529,10 +543,10 @@ export const MiniPianoRollModal: React.FC<MiniPianoRollModalProps> = ({
         {/* Bottom Lyrics Sync Bar */}
         {bar.lyrics && (
           <div className="px-5 py-2 bg-blue-50/50 border-t border-blue-100 flex items-center gap-2 text-xs">
-            <span className="font-bold text-[#1A73E8]">🎤 เนื้อร้อง:</span>
+            <span className="font-bold text-[#1A73E8]">🎤 {lang === 'th' ? 'เนื้อร้อง:' : 'Lyrics:'}</span>
             <span className="font-medium text-slate-800">{bar.lyrics}</span>
             <span className="text-[11px] text-slate-400 ml-auto">
-              (จัดวางตำแหน่งโน้ตให้สอดคล้องกับพยางค์ของเนื้อร้อง)
+              ({lang === 'th' ? 'จัดวางตำแหน่งโน้ตให้สอดคล้องกับพยางค์ของเนื้อร้อง' : 'Align notes to match lyrics'})
             </span>
           </div>
         )}
@@ -540,7 +554,10 @@ export const MiniPianoRollModal: React.FC<MiniPianoRollModalProps> = ({
         {/* Modal Footer Actions */}
         <div className="px-5 py-3.5 border-t border-slate-200 bg-white flex items-center justify-between">
           <div className="text-xs text-slate-500 font-medium">
-            มีโน้ตในห้องนี้: <span className="font-bold text-slate-800">{draftNotes.length} โน้ต</span>
+            {lang === 'th' ? 'มีโน้ตในห้องนี้:' : 'Notes in this bar:'}{' '}
+            <span className="font-bold text-slate-800">
+              {draftNotes.length} {lang === 'th' ? 'โน้ต' : 'notes'}
+            </span>
           </div>
 
           <div className="flex items-center gap-2.5">
@@ -549,14 +566,14 @@ export const MiniPianoRollModal: React.FC<MiniPianoRollModalProps> = ({
               onClick={onClose}
               className="px-4 py-2 rounded-xl border border-slate-200 text-slate-700 font-bold hover:bg-slate-50 transition cursor-pointer text-xs"
             >
-              ยกเลิก
+              {lang === 'th' ? 'ยกเลิก' : 'Cancel'}
             </button>
             <button
               type="button"
               onClick={handleSave}
               className="px-5 py-2 rounded-xl bg-[#1A73E8] hover:bg-blue-700 text-white font-bold transition shadow-sm cursor-pointer text-xs flex items-center gap-1.5"
             >
-              <span>✓ บันทึกโน้ตทำนอง</span>
+              <span>{lang === 'th' ? '✓ บันทึกโน้ตทำนอง' : '✓ Save Melody'}</span>
             </button>
           </div>
         </div>

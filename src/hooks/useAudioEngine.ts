@@ -29,7 +29,7 @@ export interface AudioEngineHookResult {
   stop: () => void;
   seekToBar: (index: number) => void;
   initEngine: () => Promise<void>;
-  setMixerVolume: (track: TrackId, vol: number) => void;
+  setMixerVolume: (track: TrackId | 'vocal', vol: number) => void;
   setLeadDrive: (drive: LeadGuitarDrive) => void;
 }
 
@@ -74,6 +74,25 @@ export function useAudioEngine(song: SongProject): AudioEngineHookResult {
     }
   }, [song.mixer.guitarLead.drive]);
 
+  // ซิงก์มิกเซอร์ มิติห้อง 3D เสียงเมโลดี้ และเนื้อเสียงกีตาร์แบบ Real-time
+  useEffect(() => {
+    const eng = engineRef.current;
+    if (!eng) return;
+    eng.updateSong(song);
+    eng.setMixerVolume('guitarRhythm', song.mixer.guitarRhythm.enabled ? song.mixer.guitarRhythm.volume : 0);
+    eng.setMixerVolume('guitarLead', song.mixer.guitarLead.enabled ? song.mixer.guitarLead.volume : 0);
+    eng.setMixerVolume('bass', song.mixer.bass.enabled ? song.mixer.bass.volume : 0);
+    eng.setMixerVolume('piano', song.mixer.piano.enabled ? song.mixer.piano.volume : 0);
+    eng.setMixerVolume('drums', song.mixer.drums.enabled && song.mixer.drums.style !== 'off' ? song.mixer.drums.volume : 0);
+    eng.setMixerVolume('melody', (song.mixer.melody?.enabled ?? true) ? (song.mixer.melody?.volume ?? 85) : 0);
+    eng.setMixerVolume('vocal', (song.mixer.vocal?.enabled ?? true) ? (song.mixer.vocal?.volume ?? 95) : 0);
+    if (song.mixer.melody?.sound) {
+      eng.setMelodySound(song.mixer.melody.sound);
+    }
+    eng.setGuitarAcoustics(song.guitarModel, song.stringGauge);
+    eng.setAmbience3D(song.ambience3D || 'wood-studio');
+  }, [song]);
+
   const initEngine = useCallback(async () => {
     if (!engineRef.current) {
       const { getAudioEngine } = await import('../lib/audioEngine');
@@ -105,7 +124,7 @@ export function useAudioEngine(song: SongProject): AudioEngineHookResult {
     engineRef.current?.seekToBar(index);
   }, []);
 
-  const setMixerVolume = useCallback((track: TrackId, vol: number) => {
+  const setMixerVolume = useCallback((track: TrackId | 'vocal', vol: number) => {
     engineRef.current?.setMixerVolume(track, vol);
   }, []);
 

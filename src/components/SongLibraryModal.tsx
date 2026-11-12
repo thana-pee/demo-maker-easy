@@ -11,6 +11,7 @@ import {
   exportAllSongsJSON,
   importSongsJSON,
 } from '@/lib/storage';
+import { useLanguage } from '@/context/LanguageContext';
 
 interface SongLibraryModalProps {
   isOpen: boolean;
@@ -25,6 +26,7 @@ export const SongLibraryModal: React.FC<SongLibraryModalProps> = ({
   onSelectSong,
   onClose,
 }) => {
+  const { lang } = useLanguage();
   const [songs, setSongs] = useState<SongProject[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
@@ -46,7 +48,10 @@ export const SongLibraryModal: React.FC<SongLibraryModalProps> = ({
   };
 
   const handleCreateNew = () => {
-    const title = prompt('ตั้งชื่อเพลงใหม่:', 'เพลงใหม่ของฉัน');
+    const title = prompt(
+      lang === 'th' ? 'ตั้งชื่อเพลงใหม่:' : 'Enter new song title:',
+      lang === 'th' ? 'เพลงใหม่ของฉัน' : 'My New Song'
+    );
     if (!title) return;
     const newSong = createDefaultSong();
     newSong.id = `song-${Date.now()}`;
@@ -67,17 +72,21 @@ export const SongLibraryModal: React.FC<SongLibraryModalProps> = ({
     const copy = duplicateSong(id);
     if (copy) {
       setSongs(getSavedSongs());
-      showFeedback(`ทำสำเนาเป็น "${copy.title}" เรียบร้อยแล้ว`);
+      showFeedback(lang === 'th' ? `ทำสำเนาเป็น "${copy.title}" เรียบร้อยแล้ว` : `Duplicated as "${copy.title}"`);
     }
   };
 
   const handleDelete = (id: string, title: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (songs.length <= 1) {
-      alert('ไม่สามารถลบได้ เนื่องจากต้องมีเพลงในระบบอย่างน้อย 1 เพลงครับ');
+      alert(
+        lang === 'th'
+          ? 'ไม่สามารถลบได้ เนื่องจากต้องมีเพลงในระบบอย่างน้อย 1 เพลงครับ'
+          : 'Cannot delete. You must have at least 1 song in your library.'
+      );
       return;
     }
-    if (confirm(`คุณต้องการลบเพลง "${title}" ใช่หรือไม่?`)) {
+    if (confirm(lang === 'th' ? `คุณต้องการลบเพลง "${title}" ใช่หรือไม่?` : `Are you sure you want to delete "${title}"?`)) {
       const ok = deleteSong(id);
       if (ok) {
         const remaining = getSavedSongs();
@@ -85,7 +94,7 @@ export const SongLibraryModal: React.FC<SongLibraryModalProps> = ({
         if (currentSong.id === id && remaining.length > 0) {
           onSelectSong(remaining[0]);
         }
-        showFeedback(`ลบเพลง "${title}" เรียบร้อย`);
+        showFeedback(lang === 'th' ? `ลบเพลง "${title}" เรียบร้อย` : `Deleted "${title}" successfully`);
       }
     }
   };
@@ -123,7 +132,7 @@ export const SongLibraryModal: React.FC<SongLibraryModalProps> = ({
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
-    showFeedback('ดาวน์โหลดไฟล์สำรองข้อมูลเพลงเรียบร้อย');
+    showFeedback(lang === 'th' ? 'ดาวน์โหลดไฟล์สำรองข้อมูลเพลงเรียบร้อย' : 'Backup downloaded successfully');
   };
 
   const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -137,9 +146,9 @@ export const SongLibraryModal: React.FC<SongLibraryModalProps> = ({
         if (imported) {
           setSongs(imported);
           onSelectSong(imported[0]);
-          showFeedback(`นำเข้าเพลงสำเร็จ ${imported.length} เพลง`);
+          showFeedback(lang === 'th' ? `นำเข้าเพลงสำเร็จ ${imported.length} เพลง` : `Imported ${imported.length} songs`);
         } else {
-          alert('ไฟล์ไม่ถูกต้อง หรือโครงสร้างเพลงไม่สมบูรณ์ครับ');
+          alert(lang === 'th' ? 'ไฟล์ไม่ถูกต้อง หรือโครงสร้างเพลงไม่สมบูรณ์ครับ' : 'Invalid backup file or corrupt data.');
         }
       }
     };
@@ -154,9 +163,11 @@ export const SongLibraryModal: React.FC<SongLibraryModalProps> = ({
         <div className="flex items-center justify-between border-b border-slate-100 pb-3 shrink-0">
           <div>
             <h3 className="font-black text-lg text-slate-900 flex items-center gap-2">
-              📂 สมุดเพลงในเครื่อง (My Songs)
+              {lang === 'th' ? '📂 สมุดเพลงในเครื่อง (My Songs)' : '📂 My Songs Library'}
             </h3>
-            <p className="text-xs text-slate-500">บันทึกเพลงของคุณในเครื่อง สลับแต่งหรือทำสำเนาได้หลายเพลง</p>
+            <p className="text-xs text-slate-500">
+              {lang === 'th' ? 'บันทึกเพลงของคุณในเครื่อง สลับแต่งหรือทำสำเนาได้หลายเพลง' : 'Stored in browser. Switch, rename, or duplicate your songs.'}
+            </p>
           </div>
           <button
             onClick={onClose}
@@ -178,7 +189,7 @@ export const SongLibraryModal: React.FC<SongLibraryModalProps> = ({
           {songs.map((s) => {
             const isActive = s.id === currentSong.id;
             const barsCount = (s.sections || []).reduce((acc, sec) => acc + (sec.bars?.length || 0), 0);
-            const dateStr = s.updatedAt ? new Date(s.updatedAt).toLocaleDateString('th-TH') : '';
+            const dateStr = s.updatedAt ? new Date(s.updatedAt).toLocaleDateString(lang === 'th' ? 'th-TH' : 'en-US') : '';
 
             return (
               <div
@@ -198,31 +209,31 @@ export const SongLibraryModal: React.FC<SongLibraryModalProps> = ({
                         value={editTitle}
                         onChange={(e) => setEditTitle(e.target.value)}
                         autoFocus
-                        className="text-sm font-black text-slate-900 px-2 py-0.5 border border-[#1A73E8] rounded-lg bg-white w-full focus:outline-none"
+                        className="text-sm font-black text-slate-900 px-2 py-0.5 border border-[#1A73E8] rounded-lg bg-white w-full focus:outline-hidden"
                       />
                       <button
                         type="submit"
                         className="px-2.5 py-1 bg-[#1A73E8] text-white text-xs font-bold rounded-lg whitespace-nowrap cursor-pointer"
                       >
-                        บันทึก
+                        {lang === 'th' ? 'บันทึก' : 'Save'}
                       </button>
                       <button
                         type="button"
                         onClick={() => setEditingId(null)}
                         className="px-2 py-1 bg-slate-100 text-slate-600 text-xs font-bold rounded-lg cursor-pointer"
                       >
-                        ยกเลิก
+                        {lang === 'th' ? 'ยกเลิก' : 'Cancel'}
                       </button>
                     </form>
                   ) : (
                     <>
                       <div className="flex items-center gap-2">
                         <span className="font-black text-sm text-slate-900 truncate">
-                          {s.title || 'ไม่มีชื่อเพลง'}
+                          {s.title || (lang === 'th' ? 'ไม่มีชื่อเพลง' : 'Untitled Demo')}
                         </span>
                         {isActive && (
                           <span className="px-2 py-0.5 rounded-md bg-[#1A73E8] text-white text-[10px] font-black shrink-0">
-                            เปิดอยู่
+                            {lang === 'th' ? 'เปิดอยู่' : 'Active'}
                           </span>
                         )}
                       </div>
@@ -233,7 +244,7 @@ export const SongLibraryModal: React.FC<SongLibraryModalProps> = ({
                         <span>•</span>
                         <span>{s.timeSignature || '4/4'}</span>
                         <span>•</span>
-                        <span>{barsCount} ห้อง</span>
+                        <span>{barsCount} {lang === 'th' ? 'ห้อง' : 'bars'}</span>
                         {dateStr && (
                           <>
                             <span>•</span>
@@ -249,7 +260,7 @@ export const SongLibraryModal: React.FC<SongLibraryModalProps> = ({
                 <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
                   <button
                     type="button"
-                    title="เปลี่ยนชื่อเพลง"
+                    title={lang === 'th' ? 'เปลี่ยนชื่อเพลง' : 'Rename song'}
                     onClick={(e) => startRename(s.id, s.title, e)}
                     className="p-1.5 rounded-lg hover:bg-slate-200/80 text-slate-600 text-xs font-bold transition cursor-pointer"
                   >
@@ -257,7 +268,7 @@ export const SongLibraryModal: React.FC<SongLibraryModalProps> = ({
                   </button>
                   <button
                     type="button"
-                    title="ทำสำเนาเพลง"
+                    title={lang === 'th' ? 'ทำสำเนาเพลง' : 'Duplicate song'}
                     onClick={(e) => handleDuplicate(s.id, e)}
                     className="p-1.5 rounded-lg hover:bg-slate-200/80 text-slate-600 text-xs font-bold transition cursor-pointer"
                   >
@@ -266,7 +277,7 @@ export const SongLibraryModal: React.FC<SongLibraryModalProps> = ({
                   {songs.length > 1 && (
                     <button
                       type="button"
-                      title="ลบเพลงนี้"
+                      title={lang === 'th' ? 'ลบเพลงนี้' : 'Delete song'}
                       onClick={(e) => handleDelete(s.id, s.title, e)}
                       className="p-1.5 rounded-lg hover:bg-red-100 text-red-600 text-xs font-bold transition cursor-pointer"
                     >
@@ -285,7 +296,7 @@ export const SongLibraryModal: React.FC<SongLibraryModalProps> = ({
             onClick={handleCreateNew}
             className="w-full py-2.5 rounded-2xl bg-[#1A73E8] hover:bg-blue-700 text-white font-black text-sm shadow-sm transition cursor-pointer flex items-center justify-center gap-2"
           >
-            <span>+</span> สร้างเพลงใหม่ (New Demo)
+            <span>+</span> {lang === 'th' ? 'สร้างเพลงใหม่ (New Demo)' : 'Create New Demo'}
           </button>
 
           <div className="flex items-center justify-between gap-2 pt-1">
@@ -293,7 +304,7 @@ export const SongLibraryModal: React.FC<SongLibraryModalProps> = ({
               onClick={() => fileInputRef.current?.click()}
               className="flex-1 py-1.5 px-3 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs transition cursor-pointer text-center"
             >
-              📥 นำเข้าไฟล์ (.JSON)
+              {lang === 'th' ? '📥 นำเข้าไฟล์ (.JSON)' : '📥 Import Backup (.JSON)'}
             </button>
             <input
               type="file"
@@ -306,7 +317,7 @@ export const SongLibraryModal: React.FC<SongLibraryModalProps> = ({
               onClick={handleExportBackup}
               className="flex-1 py-1.5 px-3 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs transition cursor-pointer text-center"
             >
-              💾 สำรองข้อมูลทุกเพลง
+              {lang === 'th' ? '💾 สำรองข้อมูลทุกเพลง' : '💾 Export Backup (.JSON)'}
             </button>
           </div>
         </div>

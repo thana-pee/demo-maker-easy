@@ -83,17 +83,47 @@ export const ExportModal: React.FC<ExportModalProps> = ({ isOpen, song, onClose 
 
   const fullSunoText = `${stylePrompt}\n\n${lyricsMetatags}`;
 
-  const handleCopyLink = () => {
-    const shareUrl = generateShareUrl(song);
-    navigator.clipboard.writeText(shareUrl);
-    setCopiedLink(true);
-    setTimeout(() => setCopiedLink(false), 2500);
+  const copyToClipboard = async (text: string): Promise<boolean> => {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+      throw new Error('Clipboard API unavailable');
+    } catch {
+      try {
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-9999px';
+        textArea.style.top = '-9999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        const successful = document.execCommand('copy');
+        textArea.remove();
+        return successful;
+      } catch {
+        return false;
+      }
+    }
   };
 
-  const handleCopySuno = () => {
-    navigator.clipboard.writeText(fullSunoText);
-    setCopiedSuno(true);
-    setTimeout(() => setCopiedSuno(false), 2500);
+  const handleCopyLink = async () => {
+    const shareUrl = generateShareUrl(song);
+    const ok = await copyToClipboard(shareUrl);
+    if (ok) {
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2500);
+    }
+  };
+
+  const handleCopySuno = async () => {
+    const ok = await copyToClipboard(fullSunoText);
+    if (ok) {
+      setCopiedSuno(true);
+      setTimeout(() => setCopiedSuno(false), 2500);
+    }
   };
 
   const handleDownloadMidi = () => {
