@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef } from 'react';
+import { MicVocal, Music, Radio } from 'lucide-react';
 import { SongProject } from '@/types/song';
 import { transposeChord, getCapoFingeringChord } from '@/lib/chordUtils';
 import { useLanguage } from '@/context/LanguageContext';
@@ -13,240 +14,209 @@ interface KaraokeTeleprompterProps {
   isCountIn: boolean;
 }
 
-export const KaraokeTeleprompter: React.FC<KaraokeTeleprompterProps> = ({
+export function KaraokeTeleprompter({
   song,
   activeGlobalBarIndex,
   currentBeat,
   isPlaying,
   isCountIn,
-}) => {
-  const { lang, t } = useLanguage();
+}: KaraokeTeleprompterProps) {
+  const { t, lang } = useLanguage();
   const activeLineRef = useRef<HTMLDivElement | null>(null);
 
-  // Auto-scroll active line into center of viewport when bar changes
+  const flatBars: {
+    globalIndex: number;
+    sectionName: string;
+    chord1: string;
+    chord2?: string;
+    capoChord1?: string;
+    capoChord2?: string;
+    lyrics: string;
+    hasVocal: boolean;
+  }[] = [];
+
+  let counter = 0;
+  for (const sec of song.sections) {
+    for (const bar of sec.bars) {
+      const c1 = transposeChord(bar.chords[0] || 'C', song.transposeSemitones);
+      const c2 =
+        bar.chordsPerBar === 2
+          ? transposeChord(bar.chords[1] || bar.chords[0] || 'C', song.transposeSemitones)
+          : undefined;
+
+      flatBars.push({
+        globalIndex: counter++,
+        sectionName: sec.name,
+        chord1: c1,
+        chord2: c2,
+        capoChord1:
+          song.capoFret > 0 ? getCapoFingeringChord(c1, song.capoFret) : undefined,
+        capoChord2:
+          song.capoFret > 0 && c2
+            ? getCapoFingeringChord(c2, song.capoFret)
+            : undefined,
+        lyrics: bar.lyrics,
+        hasVocal: Boolean(bar.vocalAudio),
+      });
+    }
+  }
+
   useEffect(() => {
-    if (isPlaying && activeLineRef.current) {
+    if (activeLineRef.current) {
       activeLineRef.current.scrollIntoView({
         behavior: 'smooth',
         block: 'center',
       });
     }
-  }, [activeGlobalBarIndex, isPlaying]);
+  }, [activeGlobalBarIndex]);
 
-  // Flatten all bars across all sections with section context
-  let globalIndex = 0;
-  const flatBars: Array<{
-    globalIdx: number;
-    sectionName: string;
-    sectionType: string;
-    chord1: string;
-    capoChord1: string;
-    chord2: string | null;
-    capoChord2: string | null;
-    lyrics: string;
-    playStyle: string;
-    instruments: {
-      guitarRhythm: boolean;
-      guitarLead: boolean;
-      bass: boolean;
-      piano: boolean;
-      drums: boolean;
-    };
-  }> = [];
+  const beatsPerBar =
+    song.timeSignature === '3/4' ? 3 : song.timeSignature === '6/8' ? 6 : 4;
 
-  song.sections.forEach((sec) => {
-    const inst = sec.instruments || {
-      guitarRhythm: true,
-      guitarLead: false,
-      bass: true,
-      piano: true,
-      drums: true,
-    };
-    sec.bars.forEach((bar) => {
-      const c1 = transposeChord(bar.chords[0] || 'C', song.transposeSemitones);
-      const capo1 = getCapoFingeringChord(c1, song.capoFret);
-
-      let c2: string | null = null;
-      let capo2: string | null = null;
-      if (bar.chordsPerBar === 2 && bar.chords[1]) {
-        c2 = transposeChord(bar.chords[1], song.transposeSemitones);
-        capo2 = getCapoFingeringChord(c2, song.capoFret);
-      }
-
-      flatBars.push({
-        globalIdx: globalIndex++,
-        sectionName: sec.name,
-        sectionType: sec.type,
-        instruments: inst,
-        chord1: c1,
-        capoChord1: capo1,
-        chord2: c2,
-        capoChord2: capo2,
-        lyrics: bar.lyrics,
-        playStyle: bar.playStyle,
-      });
-    });
-  });
+  const statusText = isCountIn
+    ? lang === 'th'
+      ? 'เตรียมนับเข้าจังหวะ...'
+      : 'Count-In Ready...'
+    : isPlaying
+      ? `${t.barLabel} ${Math.max(1, activeGlobalBarIndex + 1)} / ${flatBars.length}`
+      : lang === 'th'
+        ? 'พร้อมร้อง (กด Space หรือ ปุ่มเล่น)'
+        : 'Ready (Press Space or Play)';
 
   return (
-    <div className="space-y-6">
-      {/* Top Prompter Status Card */}
-      <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-5 sm:p-7 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <span className="px-3.5 py-1 rounded-full bg-blue-100 text-[#1A73E8] font-black text-xs">
-            {t.modeKaraoke} (Teleprompter)
-          </span>
-          <h1 className="text-2xl sm:text-3xl font-black text-slate-900 mt-2">
-            {song.title}
-          </h1>
-          <div className="flex flex-wrap items-center gap-3 text-xs sm:text-sm text-slate-600 mt-1">
-            <span>{t.tempo} <strong>{song.bpm} BPM</strong></span>
-            <span>•</span>
-            <span>{t.timeSignature} <strong>{song.timeSignature}</strong></span>
-            {song.capoFret > 0 && (
-              <>
-                <span>•</span>
-                <span className="text-indigo-800 font-bold bg-indigo-50 px-2.5 py-0.5 rounded-lg border border-indigo-200">
-                  {lang === 'th'
-                    ? `🎸 คาด Capo ช่อง ${song.capoFret} (ดูคอร์ดในวงเล็บ)`
-                    : `🎸 Capo Fret ${song.capoFret} (Play shape in brackets)`}
-                </span>
-              </>
-            )}
+    <div className="max-w-3xl mx-auto space-y-5 pb-16">
+      {/* Top Status Card */}
+      <div className="bg-surface-1 rounded-3xl border border-hairline p-5 sm:p-6 shadow-e1 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="space-y-1">
+          <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-accent-text">
+            <MicVocal className="w-3.5 h-3.5" />
+            <span>{t.modeKaraoke}</span>
           </div>
+          <h2 className="text-lg sm:text-xl font-bold text-ink-900 tracking-tight">
+            {song.title}
+          </h2>
+          <p className="text-xs text-ink-400 font-medium">{statusText}</p>
         </div>
 
-        {/* Live Active Status */}
-        <div className="text-right">
-          {isCountIn ? (
-            <div className="px-4 py-2.5 rounded-2xl bg-amber-500 text-white font-black text-base animate-pulse shadow-md">
-              {lang === 'th' ? `🥁 เคาะนับเข้าจังหวะ... (${currentBeat})` : `🥁 Counting in... (${currentBeat})`}
-            </div>
-          ) : (
-            <div className="px-5 py-2.5 rounded-2xl bg-slate-100 text-slate-800 font-bold text-sm">
-              {lang === 'th' ? 'ห้องปัจจุบัน:' : 'Current Bar:'}{' '}
-              <span className="text-[#1A73E8] font-black text-lg">{activeGlobalBarIndex + 1}</span> / {flatBars.length}
-            </div>
-          )}
+        {/* Beat Indicator & Tempo Pill */}
+        <div className="flex items-center gap-3 self-start sm:self-center">
+          <div className="flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-surface-2 border border-hairline">
+            {Array.from({ length: beatsPerBar }).map((_, bIdx) => {
+              const isCurrentBeat =
+                (isPlaying || isCountIn) && currentBeat === bIdx + 1;
+              return (
+                <span
+                  key={bIdx}
+                  className={`w-2.5 h-2.5 rounded-full transition-transform ${
+                    isCurrentBeat
+                      ? isCountIn
+                        ? 'bg-warn-500 scale-125'
+                        : 'bg-accent-500 scale-125'
+                      : 'bg-surface-inset'
+                  }`}
+                />
+              );
+            })}
+          </div>
+          <div className="px-3 py-2 rounded-2xl bg-surface-2 border border-hairline text-xs font-mono-tabular font-semibold text-ink-700">
+            {song.bpm} BPM
+          </div>
         </div>
       </div>
 
       {/* Prompter Lines List */}
-      <div className="space-y-4">
-        {flatBars.map((item) => {
-          const isActive = !isCountIn && item.globalIdx === activeGlobalBarIndex;
-          const isPast = !isCountIn && item.globalIdx < activeGlobalBarIndex;
+      <div className="space-y-3">
+        {flatBars.map((item, idx) => {
+          const isActive = activeGlobalBarIndex === item.globalIndex;
+          const isPast =
+            activeGlobalBarIndex > -1 && item.globalIndex < activeGlobalBarIndex;
+          const showSectionHeader =
+            idx === 0 || flatBars[idx - 1].sectionName !== item.sectionName;
 
           return (
-            <div
-              key={item.globalIdx}
-              ref={isActive ? activeLineRef : null}
-              className={`p-5 sm:p-7 rounded-3xl transition-all duration-200 border-2 ${
-                isActive
-                  ? 'bg-[#E8F0FE] border-[#1A73E8] shadow-lg shadow-blue-500/20 scale-101'
-                  : isPast
-                  ? 'bg-white/60 border-slate-200/60 opacity-60'
-                  : 'bg-white border-slate-200'
-              }`}
-            >
-              {/* Line Meta (Section & Bar number) */}
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <span className="px-2.5 py-0.5 rounded-md bg-slate-100 text-slate-700 text-xs font-bold">
+            <React.Fragment key={item.globalIndex}>
+              {showSectionHeader && (
+                <div className="pt-3 pb-1 px-1 flex items-center gap-2">
+                  <span className="text-[11px] font-mono-tabular font-semibold uppercase tracking-wider text-accent-text bg-accent-50 border border-accent-200 px-2.5 py-0.5 rounded-full">
                     {item.sectionName}
                   </span>
-                  <span className="text-xs font-semibold text-slate-400">
-                    {t.barLabel} {item.globalIdx + 1}
-                  </span>
-                  {item.playStyle === 'let-ring' && (
-                    <span className="text-xs font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-md">
-                      🔔 {t.styleLetRing}
-                    </span>
-                  )}
-                  {item.playStyle === 'break' && (
-                    <span className="text-xs font-bold text-slate-700 bg-slate-200 px-2 py-0.5 rounded-md">
-                      🔇 {t.styleBreak}
-                    </span>
-                  )}
-                  <div className="hidden sm:flex items-center gap-1.5 text-[11px] text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md">
-                    {item.instruments.guitarRhythm && <span title="Rhythm Guitar">🎸 {lang === 'th' ? 'ริทึ่ม' : 'Rhythm'}</span>}
-                    {item.instruments.guitarLead && (
-                      <span title="Lead Guitar (Les Paul)" className="text-purple-700 font-bold">
-                        🎸 {lang === 'th' ? 'ลีด' : 'Lead'}
-                      </span>
-                    )}
-                    {item.instruments.bass && <span title="Bass">🎻</span>}
-                    {item.instruments.piano && <span title="Piano">🎹</span>}
-                    {item.instruments.drums && <span title="Cajon / Drums">🥁</span>}
-                  </div>
+                  <div className="flex-1 border-t border-hairline" />
                 </div>
+              )}
 
-                {isActive && (
-                  <span className="px-3 py-1 rounded-full bg-[#1A73E8] text-white font-black text-xs sm:text-sm animate-pulse">
-                    {lang === 'th' ? `กำลังร้องห้องนี้ • จังหวะที่ ${currentBeat}` : `Singing Bar • Beat ${currentBeat}`}
-                  </span>
-                )}
-              </div>
-
-              {/* Chords Display */}
-              <div className="flex flex-wrap items-baseline gap-4 mb-2">
-                {/* Chord 1 */}
-                <div className="flex items-baseline gap-2">
-                  <span
-                    className={`font-black tracking-tight ${
-                      isActive
-                        ? 'text-3xl sm:text-5xl text-[#1A73E8]'
-                        : 'text-2xl sm:text-4xl text-slate-800'
-                    }`}
-                  >
-                    [ {item.chord1} ]
-                  </span>
-                  {song.capoFret > 0 && (
-                    <span className="text-sm sm:text-lg font-bold text-indigo-700 bg-indigo-100/80 px-2 py-0.5 rounded-lg">
-                      {lang === 'th' ? `จับรูป ${item.capoChord1}` : `Play ${item.capoChord1}`}
-                    </span>
-                  )}
-                </div>
-
-                {/* Chord 2 if present */}
-                {item.chord2 && (
-                  <div className="flex items-baseline gap-2 border-l-2 border-slate-300 pl-4">
-                    <span
-                      className={`font-black tracking-tight ${
-                        isActive
-                          ? 'text-3xl sm:text-5xl text-[#1A73E8]'
-                          : 'text-2xl sm:text-4xl text-slate-800'
-                      }`}
-                    >
-                      [ {item.chord2} ]
-                    </span>
-                    {song.capoFret > 0 && item.capoChord2 && (
-                      <span className="text-sm sm:text-lg font-bold text-indigo-700 bg-indigo-100/80 px-2 py-0.5 rounded-lg">
-                        {lang === 'th' ? `จับรูป ${item.capoChord2}` : `Play ${item.capoChord2}`}
-                      </span>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Lyrics Display */}
-              <p
-                className={`leading-relaxed font-bold ${
+              <div
+                ref={isActive ? activeLineRef : null}
+                className={`rounded-2xl border p-4 sm:p-5 transition-all duration-200 ${
                   isActive
-                    ? 'text-2xl sm:text-4xl text-slate-950 font-black'
-                    : 'text-xl sm:text-2xl text-slate-700 font-semibold'
+                    ? 'bg-accent-50 border-accent-500 ring-2 ring-accent-200 shadow-e2 scale-[1.01]'
+                    : isPast
+                      ? 'bg-surface-2/60 border-hairline opacity-55'
+                      : 'bg-surface-1 border-hairline shadow-2xs'
                 }`}
               >
-                {item.lyrics || (
-                  <span className="text-slate-300 italic">
-                    {lang === 'th' ? '(ไม่มีเนื้อร้องในห้องนี้)' : '(No lyrics in this bar)'}
-                  </span>
-                )}
-              </p>
-            </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span
+                      className={`text-xs font-mono-tabular font-semibold px-2 py-0.5 rounded-md ${
+                        isActive
+                          ? 'bg-accent-500 text-white'
+                          : 'bg-surface-2 text-ink-400'
+                      }`}
+                    >
+                      #{item.globalIndex + 1}
+                    </span>
+
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-surface-2 border border-hairline font-mono-tabular text-sm font-bold text-ink-900">
+                      <span>[ {item.chord1} ]</span>
+                      {item.chord2 && (
+                        <>
+                          <span className="text-ink-400">·</span>
+                          <span>[ {item.chord2} ]</span>
+                        </>
+                      )}
+                    </div>
+
+                    {item.capoChord1 && (
+                      <span className="text-[11px] font-mono-tabular font-medium text-accent-text">
+                        Capo {song.capoFret}: {item.capoChord1}
+                        {item.capoChord2 ? ` · ${item.capoChord2}` : ''}
+                      </span>
+                    )}
+                  </div>
+
+                  {item.hasVocal && (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-medium text-ink-700 bg-surface-2 border border-hairline px-2 py-0.5 rounded-full">
+                      <Radio className="w-3 h-3 text-rec-500" />
+                      <span>{t.vocalHasTrack}</span>
+                    </span>
+                  )}
+                </div>
+
+                <p
+                  className={`leading-relaxed break-words ${
+                    isActive
+                      ? 'text-xl sm:text-2xl font-bold text-ink-900'
+                      : 'text-base sm:text-lg font-medium text-ink-700'
+                  }`}
+                >
+                  {item.lyrics?.trim() ? (
+                    item.lyrics
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 text-sm italic text-ink-400 font-normal">
+                      <Music className="w-3.5 h-3.5" />
+                      {lang === 'th'
+                        ? '(เพลงบรรเลง / เว้นวรรคหายใจ)'
+                        : '(Instrumental / Breath pause)'}
+                    </span>
+                  )}
+                </p>
+              </div>
+            </React.Fragment>
           );
         })}
       </div>
     </div>
   );
-};
+}
+
+export default KaraokeTeleprompter;

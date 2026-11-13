@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { Info, CheckCircle2, X } from 'lucide-react';
 import { SongProject, SongSection, MelodyNote, AppViewMode } from '@/types/song';
 import { createDefaultSong } from '@/lib/defaultSong';
 import { ProgressionPreset } from '@/lib/chordUtils';
@@ -59,6 +60,40 @@ export default function Home() {
   const [currentBeat, setCurrentBeat] = useState(1);
   const [isSoundPanelOpen, setIsSoundPanelOpen] = useState(false);
   const [showIosBanner, setShowIosBanner] = useState(true);
+
+  useEffect(() => {
+    const rafId = requestAnimationFrame(() => {
+      try {
+        if (localStorage.getItem('demo_maker_ios_tip_dismissed') === '1') {
+          setShowIosBanner(false);
+        }
+      } catch {
+        // Ignore storage access errors
+      }
+    });
+    const handleShowTip = () => {
+      setShowIosBanner(true);
+      try {
+        localStorage.removeItem('demo_maker_ios_tip_dismissed');
+      } catch {
+        // Ignore storage access errors
+      }
+    };
+    window.addEventListener('demo-maker:show-ios-tip', handleShowTip);
+    return () => {
+      cancelAnimationFrame(rafId);
+      window.removeEventListener('demo-maker:show-ios-tip', handleShowTip);
+    };
+  }, []);
+
+  const handleDismissIosTip = useCallback(() => {
+    setShowIosBanner(false);
+    try {
+      localStorage.setItem('demo_maker_ios_tip_dismissed', '1');
+    } catch {
+      // Ignore storage access errors
+    }
+  }, []);
   const [shareToastMsg, setShareToastMsg] = useState<string | null>(null);
 
   const selectSongWithVocals = useCallback((nextSong: SongProject) => {
@@ -486,47 +521,55 @@ export default function Home() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 pb-20 safe-bottom">
+    <div className="min-h-screen bg-canvas text-ink-900 pb-28 md:pb-20 safe-bottom transition-colors">
       {/* PWA Home Screen Install Prompt Banner */}
       <PwaInstallPrompt />
 
-      {/* iOS / iPad Audio Advice Banner (hidden in Zen Focus Mode) */}
-      {showIosBanner && !isZenMode && (
-        <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 text-xs text-amber-900 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <span className="inline-block px-2.5 py-0.5 bg-amber-200 text-amber-950 font-black rounded-full text-[10px]">
-              {lang === 'th' ? 'คำแนะนำสำหรับ iPad / iPhone' : 'iPad / iPhone Sound Tip'}
-            </span>
-            <span className="font-medium">
-              {lang === 'th'
-                ? 'หากเปิดบน iPad กรุณาเปิดสวิตช์เสียงด้านข้างตัวเครื่อง (ไม่ปิด Silent Mode) เพื่อให้เสียงจำลองอะคูสติก 3D ดังชัดเจน'
-                : 'On iPad, ensure the side mute switch is OFF (Silent Mode disabled) for full 3D stereo acoustic audio.'}
-            </span>
-          </div>
-          <button
-            onClick={() => setShowIosBanner(false)}
-            className="text-amber-800 hover:text-amber-950 font-bold px-2 py-0.5 hover:bg-amber-100 rounded-md transition cursor-pointer"
-          >
-            ✕ {t.close}
-          </button>
-        </div>
-      )}
+      {/* Floating Studio Toasts (Bottom-Left) */}
+      {(showIosBanner && !isZenMode) || shareToastMsg ? (
+        <div className="fixed left-4 bottom-24 md:bottom-6 z-40 flex flex-col gap-2 max-w-sm pointer-events-none">
+          {shareToastMsg && (
+            <div className="pointer-events-auto bg-surface-1 border border-hairline shadow-e3 rounded-2xl px-3.5 py-2.5 text-xs flex items-start justify-between gap-3">
+              <div className="flex items-start gap-2 text-ink-900">
+                <CheckCircle2 className="w-4 h-4 text-ok-500 shrink-0 mt-0.5" />
+                <span className="font-medium leading-snug">{shareToastMsg}</span>
+              </div>
+              <button
+                onClick={() => setShareToastMsg(null)}
+                className="text-ink-400 hover:text-ink-900 p-0.5 rounded-md transition cursor-pointer shrink-0"
+                aria-label={t.close}
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
 
-      {/* Shared Song Loaded Toast */}
-      {shareToastMsg && (
-        <div className="bg-emerald-600 text-white px-4 py-2 text-xs font-bold flex items-center justify-between gap-3 shadow-sm animate-in slide-in-from-top-2">
-          <div className="flex items-center gap-2">
-            <span>🎉</span>
-            <span>{shareToastMsg}</span>
-          </div>
-          <button
-            onClick={() => setShareToastMsg(null)}
-            className="px-2 py-0.5 hover:bg-emerald-700 rounded-md transition cursor-pointer text-xs"
-          >
-            ✕ {t.close}
-          </button>
+          {showIosBanner && !isZenMode && (
+            <div className="pointer-events-auto bg-surface-1 border border-hairline shadow-e3 rounded-2xl px-3.5 py-2.5 text-xs flex items-start justify-between gap-3">
+              <div className="flex items-start gap-2 text-ink-700">
+                <Info className="w-4 h-4 text-accent-text shrink-0 mt-0.5" />
+                <div className="leading-snug">
+                  <span className="font-semibold text-ink-900 mr-1.5">
+                    {lang === 'th' ? 'คำแนะนำสำหรับ iPad / iPhone:' : 'iPad / iPhone Tip:'}
+                  </span>
+                  <span>
+                    {lang === 'th'
+                      ? 'โปรดปิด Silent Mode ด้านข้างตัวเครื่องเพื่อให้เสียงจำลองอะคูสติก 3D ดังชัดเจน'
+                      : 'Ensure side Silent Mode switch is OFF for full 3D acoustic audio.'}
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={handleDismissIosTip}
+                className="text-ink-400 hover:text-ink-900 p-0.5 rounded-md transition cursor-pointer shrink-0"
+                aria-label={t.close}
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
         </div>
-      )}
+      ) : null}
 
       {/* Top Sticky Transport Bar */}
       <TransportBar
@@ -559,7 +602,7 @@ export default function Home() {
         {/* Collapsible 3D Sound & Instrument Panel */}
         <SoundCustomizerPanel
           song={song}
-          isOpen={isSoundPanelOpen && !isZenMode}
+          isOpen={isSoundPanelOpen}
           onUpdateSong={setSong}
           onClose={() => setIsSoundPanelOpen(false)}
         />

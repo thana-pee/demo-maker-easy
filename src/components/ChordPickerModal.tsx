@@ -43,16 +43,16 @@ export const ChordPickerModal: React.FC<ChordPickerModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-md w-full p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+    <div className="fixed inset-0 z-50 bg-slate-950/45 backdrop-blur-xs flex items-center justify-center p-4">
+      <div className="bg-surface-1 rounded-3xl border border-hairline shadow-e3 max-w-md w-full p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+        <div className="flex items-center justify-between border-b border-hairline pb-3">
           <div>
-            <h3 className="font-bold text-lg text-slate-900">เลือกคอร์ดในคีย์ {baseKey}</h3>
-            <p className="text-xs text-slate-500">คอร์ดมาตรฐานตามสเกล (Diatonic) เล่นแล้วไม่เพี้ยนแน่นอน</p>
+            <h3 className="font-bold text-lg text-ink-900">เลือกคอร์ดในคีย์ {baseKey}</h3>
+            <p className="text-xs text-ink-400">คอร์ดมาตรฐานตามสเกล (Diatonic) เล่นแล้วไม่เพี้ยนแน่นอน</p>
           </div>
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center font-bold transition"
+            className="w-8 h-8 rounded-full bg-surface-2 hover:bg-surface-inset text-ink-700 flex items-center justify-center font-bold transition cursor-pointer"
           >
             ✕
           </button>
@@ -66,10 +66,10 @@ export const ChordPickerModal: React.FC<ChordPickerModalProps> = ({
               <button
                 key={chord}
                 onClick={() => onSelectChord(chord)}
-                className={`py-3 px-2 rounded-2xl font-black text-base transition flex flex-col items-center justify-center gap-0.5 border ${
+                className={`py-3 px-2 rounded-2xl font-bold font-mono-tabular text-base transition flex flex-col items-center justify-center gap-0.5 border cursor-pointer ${
                   isSelected
-                    ? 'bg-[#1A73E8] text-white border-[#1A73E8] shadow-md shadow-blue-500/25 scale-102'
-                    : 'bg-slate-50 hover:bg-blue-50 hover:border-blue-300 text-slate-800 border-slate-200'
+                    ? 'bg-accent-500 text-white border-accent-500 shadow-e2 scale-102'
+                    : 'bg-surface-2 hover:bg-accent-50 hover:border-accent-200 hover:text-accent-text text-ink-900 border-hairline'
                 }`}
               >
                 <span>{chord}</span>
@@ -79,16 +79,16 @@ export const ChordPickerModal: React.FC<ChordPickerModalProps> = ({
         </div>
 
         {/* Slash Bass (/Bass) Quick Attachment Bar */}
-        <div className="pt-2 border-t border-slate-100 space-y-2">
+        <div className="pt-2 border-t border-hairline space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-600">
-              Slash Bass (/Bass) สำหรับ <span className="font-bold text-slate-900">{baseChord}</span>
+            <span className="text-xs font-semibold text-ink-700">
+              Slash Bass (/Bass) สำหรับ <span className="font-bold font-mono-tabular text-ink-900">{baseChord}</span>
             </span>
             {currentBass && (
               <button
                 type="button"
                 onClick={() => handleAttachSlashBass(null)}
-                className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-rose-50 hover:text-rose-600 text-slate-600 transition"
+                className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-surface-2 hover:bg-surface-inset text-rec-500 transition cursor-pointer"
               >
                 Clear Bass ({baseChord})
               </button>
@@ -103,10 +103,10 @@ export const ChordPickerModal: React.FC<ChordPickerModalProps> = ({
                   type="button"
                   onClick={() => handleAttachSlashBass(bassNote)}
                   title={`ใช้คอร์ด ${baseChord}/${bassNote}`}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition ${
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold font-mono-tabular border transition cursor-pointer ${
                     isBassActive
-                      ? 'bg-[#1A73E8] text-white border-[#1A73E8] shadow-sm'
-                      : 'bg-slate-50 hover:bg-blue-50 hover:border-blue-300 text-slate-700 border-slate-200'
+                      ? 'bg-accent-500 text-white border-accent-500 shadow-e1'
+                      : 'bg-surface-2 hover:bg-accent-50 hover:border-accent-200 hover:text-accent-text text-ink-700 border-hairline'
                   }`}
                 >
                   /{bassNote}
@@ -117,19 +117,19 @@ export const ChordPickerModal: React.FC<ChordPickerModalProps> = ({
         </div>
 
         {/* Custom Chord Input */}
-        <form onSubmit={handleCustomSubmit} className="pt-2 border-t border-slate-100 space-y-2">
-          <label className="text-xs font-semibold text-slate-600">หรือพิมพ์คอร์ดอื่นๆ ด้วยตนเอง:</label>
+        <form onSubmit={handleCustomSubmit} className="pt-2 border-t border-hairline space-y-2">
+          <label className="text-xs font-semibold text-ink-700">หรือพิมพ์คอร์ดอื่นๆ ด้วยตนเอง:</label>
           <div className="flex gap-2">
             <input
               type="text"
               value={customInput}
               onChange={(e) => setCustomInput(e.target.value)}
               placeholder="เช่น Cadd9, G7, Bb, F#m, Dm7b5..."
-              className="flex-1 px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:border-[#1A73E8] focus:ring-2 focus:ring-blue-100"
+              className="flex-1 px-3.5 py-2.5 rounded-xl bg-surface-2 border border-hairline text-sm text-ink-900 placeholder:text-ink-400 focus:outline-none focus:border-accent-500 focus:ring-2 focus:ring-accent-200"
             />
             <button
               type="submit"
-              className="px-5 py-2.5 rounded-xl bg-[#1A73E8] hover:bg-blue-700 text-white font-bold text-sm shadow-sm transition"
+              className="px-5 py-2.5 rounded-xl bg-accent-500 hover:bg-accent-hover text-white font-bold text-sm shadow-e1 transition cursor-pointer"
             >
               ตกลง
             </button>

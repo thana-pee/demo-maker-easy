@@ -158,14 +158,14 @@ export const ExportModal: React.FC<ExportModalProps> = ({ isOpen, song, onClose 
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-xl w-full p-6 space-y-5 animate-in fade-in zoom-in-95 duration-150 max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+    <div className="fixed inset-0 z-50 bg-slate-950/45 backdrop-blur-xs flex items-center justify-center p-4">
+      <div className="bg-surface-1 rounded-3xl border border-hairline shadow-e3 max-w-xl w-full p-6 space-y-5 animate-in fade-in zoom-in-95 duration-150 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between border-b border-hairline pb-3">
           <div>
-            <h3 className="font-black text-lg text-slate-900">
+            <h3 className="font-bold text-lg text-ink-900">
               {lang === 'th' ? '📤 แชร์โปรเจกต์ & ส่งออกไฟล์เดโม่' : '📤 Export & Share Demo Project'}
             </h3>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-ink-400">
               {lang === 'th'
                 ? 'ส่งต่อให้เพื่อนร่วมงาน หรือส่งเข้า AI และโปรแกรมทำเพลง'
                 : 'Share with collaborators or export for DAWs & AI'}
@@ -173,7 +173,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({ isOpen, song, onClose 
           </div>
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center font-bold text-xs cursor-pointer"
+            className="w-8 h-8 rounded-full bg-surface-2 hover:bg-surface-inset text-ink-700 flex items-center justify-center font-bold text-xs cursor-pointer"
           >
             ✕
           </button>
@@ -181,12 +181,13 @@ export const ExportModal: React.FC<ExportModalProps> = ({ isOpen, song, onClose 
 
         <div className="space-y-3.5">
           {/* 1. LINE Share Link */}
-          <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="p-4 rounded-2xl bg-surface-2 border border-hairline flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <div>
-              <div className="font-black text-sm text-emerald-950 flex items-center gap-1.5">
-                <span>💬</span> {lang === 'th' ? 'คัดลอกลิงก์แชร์เพลง (ส่งเข้า LINE ได้ทันที)' : 'Copy LINE / Web Share Link'}
+              <div className="font-bold text-sm text-ink-900 flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-ok-500" />
+                {lang === 'th' ? 'คัดลอกลิงก์แชร์เพลง (ส่งเข้า LINE ได้ทันที)' : 'Copy LINE / Web Share Link'}
               </div>
-              <div className="text-xs text-emerald-800 mt-0.5">
+              <div className="text-xs text-ink-700 mt-0.5">
                 {lang === 'th'
                   ? 'ส่งให้เปิดฟังและแก้คอร์ดต่อบน iPad หรือมือถือได้ทันที (บีบอัดข้อมูลลง URL ปลอดภัย)'
                   : 'Plays and edits instantly on iPad or mobile (Lossless URL compression)'}
@@ -194,19 +195,19 @@ export const ExportModal: React.FC<ExportModalProps> = ({ isOpen, song, onClose 
             </div>
             <button
               onClick={handleCopyLink}
-              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm transition whitespace-nowrap self-end sm:self-center cursor-pointer min-h-[38px]"
+              className="px-4 py-2 rounded-xl bg-ok-500 hover:opacity-90 text-white font-semibold text-xs shadow-e1 transition whitespace-nowrap self-end sm:self-center cursor-pointer min-h-[38px]"
             >
               {copiedLink ? (lang === 'th' ? '✓ คัดลอกแล้ว!' : '✓ Copied!') : (lang === 'th' ? 'คัดลอกลิงก์' : 'Copy Link')}
             </button>
           </div>
 
           {/* 2. High-Quality 3D Stereo MP3 Mixdown (Phase 2B) */}
-          <div className="p-4 rounded-2xl bg-blue-50/60 border border-blue-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="p-4 rounded-2xl bg-accent-50 border border-accent-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <div>
-              <div className="font-black text-sm text-blue-950 flex items-center gap-1.5">
+              <div className="font-bold text-sm text-ink-900 flex items-center gap-1.5">
                 <span>🎧</span> {lang === 'th' ? 'ดาวน์โหลดไฟล์เสียง 3D Stereo (.MP3 192 kbps)' : 'Download 3D Stereo .MP3 (192 kbps)'}
               </div>
-              <div className="text-xs text-blue-800 mt-0.5">
+              <div className="text-xs text-accent-text mt-0.5">
                 {lang === 'th'
                   ? 'มิกซ์รวม 7 เครื่องดนตรี + มิติห้อง 3D + เสียงร้องจริงจากไมค์'
                   : 'Mixes 7 instruments + 3D room reverb + recorded vocal clips'}
@@ -216,7 +217,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({ isOpen, song, onClose 
               type="button"
               disabled={isRenderingMp3}
               onClick={handleDownloadMp3}
-              className="px-4 py-2 rounded-xl bg-[#1A73E8] hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-xs shadow-sm transition whitespace-nowrap self-end sm:self-center cursor-pointer flex items-center gap-1.5 min-h-[38px]"
+              className="px-4 py-2 rounded-xl bg-accent-500 hover:bg-accent-hover disabled:opacity-50 text-white font-semibold text-xs shadow-e1 transition whitespace-nowrap self-end sm:self-center cursor-pointer flex items-center gap-1.5 min-h-[38px]"
             >
               {isRenderingMp3 ? (
                 <span>⏳ {lang === 'th' ? `เรนเดอร์ (${mp3Progress}%)...` : `Rendering (${mp3Progress}%)...`}</span>
@@ -227,19 +228,19 @@ export const ExportModal: React.FC<ExportModalProps> = ({ isOpen, song, onClose 
           </div>
 
           {/* 3. Suno AI Prompt Generator */}
-          <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2.5">
+          <div className="p-4 rounded-2xl bg-surface-2 border border-hairline space-y-2.5">
             <div className="flex items-center justify-between">
-              <span className="font-black text-sm text-slate-900 flex items-center gap-1.5">
+              <span className="font-bold text-sm text-ink-900 flex items-center gap-1.5">
                 <span>✨</span> Suno AI Style Prompt & Lyrics Metatags
               </span>
               <button
                 onClick={handleCopySuno}
-                className="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs transition cursor-pointer min-h-[34px]"
+                className="px-3.5 py-1.5 rounded-xl bg-ink-900 hover:opacity-90 text-canvas font-semibold text-xs transition cursor-pointer min-h-[34px]"
               >
                 {copiedSuno ? (lang === 'th' ? '✓ คัดลอกแล้ว!' : '✓ Copied!') : (lang === 'th' ? 'คัดลอกใส่ Suno' : 'Copy Suno Prompt')}
               </button>
             </div>
-            <pre className="text-[11px] font-mono bg-white p-3 rounded-xl border border-slate-200 text-slate-700 overflow-x-auto max-h-40 whitespace-pre-wrap leading-relaxed">
+            <pre className="text-[11px] font-mono-tabular bg-surface-1 p-3 rounded-xl border border-hairline text-ink-700 overflow-x-auto max-h-40 whitespace-pre-wrap leading-relaxed">
               {fullSunoText}
             </pre>
           </div>
@@ -248,13 +249,13 @@ export const ExportModal: React.FC<ExportModalProps> = ({ isOpen, song, onClose 
           <div className="flex flex-wrap items-center gap-2 pt-1">
             <button
               onClick={handleDownloadMidi}
-              className="flex-1 py-2.5 px-3 rounded-xl border border-purple-200 bg-purple-50/60 hover:bg-purple-100 text-xs font-bold text-purple-950 transition cursor-pointer text-center flex items-center justify-center gap-1.5 min-h-[40px]"
+              className="flex-1 py-2.5 px-3 rounded-xl border border-accent-200 bg-accent-50 hover:bg-accent-500 hover:text-white text-xs font-semibold text-accent-text transition cursor-pointer text-center flex items-center justify-center gap-1.5 min-h-[40px]"
             >
               <span>🎹</span> {downloadedMidi ? (lang === 'th' ? '✓ ดาวน์โหลดแล้ว!' : '✓ Downloaded!') : (lang === 'th' ? 'ส่งออกไฟล์ .MID (MIDI)' : 'Export .MID (MIDI)')}
             </button>
             <button
               onClick={handleDownloadJSON}
-              className="flex-1 py-2.5 px-3 rounded-xl border border-slate-200 hover:bg-slate-100 text-xs font-bold text-slate-700 transition cursor-pointer text-center flex items-center justify-center gap-1.5 min-h-[40px]"
+              className="flex-1 py-2.5 px-3 rounded-xl border border-hairline bg-surface-1 hover:bg-surface-2 text-xs font-semibold text-ink-700 transition cursor-pointer text-center flex items-center justify-center gap-1.5 min-h-[40px]"
             >
               <span>💾</span> {lang === 'th' ? 'บันทึกไฟล์โปรเจกต์ (.JSON)' : 'Save Project (.JSON)'}
             </button>

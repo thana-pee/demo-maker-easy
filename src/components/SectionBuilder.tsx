@@ -1,19 +1,41 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
+import {
+  Plus,
+  Sparkles,
+  ListMusic,
+  MoreHorizontal,
+  Copy,
+  ArrowUp,
+  ArrowDown,
+  Trash2,
+  SlidersHorizontal,
+  Layers,
+  Guitar,
+  Music,
+  Piano,
+  Drum,
+  Mic,
+  ChevronDown,
+  ChevronUp,
+  RotateCcw,
+  X,
+  Zap,
+} from 'lucide-react';
 import {
   SongProject,
   SongSection,
   SectionType,
   SectionIntensity,
   BarPlayStyle,
-  SoloMode,
+  SongBar,
 } from '@/types/song';
 import { transposeChord, getCapoFingeringChord } from '@/lib/chordUtils';
 import {
-  countThaiEnglishSyllables,
   duplicateSectionInList,
   generateUniqueId,
+  countThaiEnglishSyllables,
 } from '@/lib/sectionUtils';
 import { useLanguage } from '@/context/LanguageContext';
 
@@ -22,25 +44,104 @@ interface SectionBuilderProps {
   viewMode?: 'songwriter' | 'arranger';
   activeGlobalBarIndex: number;
   onUpdateSong: (updater: (prev: SongProject) => SongProject) => void;
-  onOpenChordPicker: (sectionId: string, barId: string, chordIndex: 0 | 1, currentChord: string) => void;
+  onOpenChordPicker: (
+    sectionId: string,
+    barId: string,
+    chordIndex: 0 | 1,
+    currentChord: string
+  ) => void;
   onOpenPresetsModal: (sectionId: string, sectionName: string) => void;
-  onOpenMelodyPianoRoll: (sectionId: string, barId: string, globalBarIndex: number) => void;
-  onOpenVocalRecorder: (sectionId: string, barId: string, globalBarIndex: number) => void;
+  onOpenMelodyPianoRoll: (
+    sectionId: string,
+    barId: string,
+    globalBarIndex: number
+  ) => void;
+  onOpenVocalRecorder: (
+    sectionId: string,
+    barId: string,
+    globalBarIndex: number
+  ) => void;
   onOpenAdvanceForSection?: (section: SongSection) => void;
   onSwitchToArranger?: () => void;
 }
 
-const SECTION_BADGE_COLORS: Record<SectionType, { bg: string; text: string; border: string }> = {
-  intro: { bg: 'bg-slate-100', text: 'text-slate-800', border: 'border-slate-300' },
-  verse: { bg: 'bg-blue-100', text: 'text-blue-900', border: 'border-blue-200' },
-  'pre-chorus': { bg: 'bg-amber-100', text: 'text-amber-900', border: 'border-amber-300' },
-  chorus: { bg: 'bg-rose-100', text: 'text-rose-900', border: 'border-rose-300' },
-  solo: { bg: 'bg-purple-100', text: 'text-purple-900', border: 'border-purple-300' },
-  bridge: { bg: 'bg-emerald-100', text: 'text-emerald-900', border: 'border-emerald-300' },
-  outro: { bg: 'bg-slate-100', text: 'text-slate-800', border: 'border-slate-300' },
+const SECTION_TYPE_META: Record<
+  SectionType,
+  { tag: string; dotClass: string; badgeClass: string }
+> = {
+  intro: {
+    tag: 'INTRO',
+    dotClass: 'bg-sky-500',
+    badgeClass: 'bg-surface-2 text-ink-700 border-hairline',
+  },
+  verse: {
+    tag: 'VERSE',
+    dotClass: 'bg-accent-500',
+    badgeClass: 'bg-accent-50 text-accent-text border-accent-200',
+  },
+  'pre-chorus': {
+    tag: 'PRE',
+    dotClass: 'bg-amber-500',
+    badgeClass: 'bg-surface-2 text-ink-700 border-hairline',
+  },
+  chorus: {
+    tag: 'CHORUS',
+    dotClass: 'bg-accent-500',
+    badgeClass: 'bg-accent-50 text-accent-text border-accent-200',
+  },
+  solo: {
+    tag: 'SOLO',
+    dotClass: 'bg-violet-500',
+    badgeClass: 'bg-surface-2 text-ink-700 border-hairline',
+  },
+  bridge: {
+    tag: 'BRIDGE',
+    dotClass: 'bg-emerald-500',
+    badgeClass: 'bg-surface-2 text-ink-700 border-hairline',
+  },
+  outro: {
+    tag: 'OUTRO',
+    dotClass: 'bg-slate-400',
+    badgeClass: 'bg-surface-2 text-ink-700 border-hairline',
+  },
 };
 
-export const SectionBuilder: React.FC<SectionBuilderProps> = ({
+function AutoGrowTextarea({
+  value,
+  onChange,
+  placeholder,
+  ariaLabel,
+  className,
+}: {
+  value: string;
+  onChange: (val: string) => void;
+  placeholder?: string;
+  ariaLabel?: string;
+  className?: string;
+}) {
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.max(48, el.scrollHeight)}px`;
+  }, [value]);
+
+  return (
+    <textarea
+      ref={ref}
+      rows={2}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      aria-label={ariaLabel}
+      className={className}
+    />
+  );
+}
+
+export function SectionBuilder({
   song,
   viewMode = 'songwriter',
   activeGlobalBarIndex,
@@ -51,58 +152,208 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
   onOpenVocalRecorder,
   onOpenAdvanceForSection,
   onSwitchToArranger,
-}) => {
-  const { lang, t } = useLanguage();
-  const [expandedInstSections, setExpandedInstSections] = useState<Record<string, boolean>>({});
-  const [openBarControls, setOpenBarControls] = useState<Record<string, boolean>>({});
-  let globalBarCounter = 0;
+}: SectionBuilderProps) {
+  const { t, lang } = useLanguage();
+  const [expandedInstrumentPanels, setExpandedInstrumentPanels] = useState<
+    Record<string, boolean>
+  >({});
+  const [openBarPopoverId, setOpenBarPopoverId] = useState<string | null>(null);
+  const [openSectionMenuId, setOpenSectionMenuId] = useState<string | null>(null);
+  const [addSectionMenuOpen, setAddSectionMenuOpen] = useState(false);
+  const [deletedUndo, setDeletedUndo] = useState<{
+    section: SongSection;
+    index: number;
+  } | null>(null);
+
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeBarRef = useRef<HTMLDivElement | null>(null);
 
   const isArranger = viewMode === 'arranger';
+  let globalBarCounter = 0;
+
+  // Close menus on outside click or Escape
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setOpenBarPopoverId(null);
+        setOpenSectionMenuId(null);
+        setAddSectionMenuOpen(false);
+      }
+    };
+    const handleClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && !target.closest('[data-studio-menu-root]')) {
+        setOpenBarPopoverId(null);
+        setOpenSectionMenuId(null);
+        setAddSectionMenuOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    window.addEventListener('mousedown', handleClick);
+    return () => {
+      window.removeEventListener('keydown', handleKey);
+      window.removeEventListener('mousedown', handleClick);
+    };
+  }, []);
+
+  // Auto-scroll active bar smoothly during playback
+  useEffect(() => {
+    if (activeGlobalBarIndex >= 0 && activeBarRef.current) {
+      activeBarRef.current.scrollIntoView({
+        behavior: 'smooth',
+        block: 'nearest',
+      });
+    }
+  }, [activeGlobalBarIndex]);
+
+  useEffect(() => {
+    return () => {
+      if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    };
+  }, []);
 
   const toggleSectionInstrumentPanel = (sectionId: string) => {
-    setExpandedInstSections((prev) => ({
+    setExpandedInstrumentPanels((prev) => ({
       ...prev,
       [sectionId]: !prev[sectionId],
     }));
   };
 
   const toggleBarControlsPopover = (barId: string) => {
-    setOpenBarControls((prev) => ({
-      ...prev,
-      [barId]: !prev[barId],
-    }));
+    setOpenBarPopoverId((prev) => (prev === barId ? null : barId));
+    setOpenSectionMenuId(null);
   };
 
-  // Add new section
   const handleAddSection = (type: SectionType) => {
-    const id = generateUniqueId('sec');
-    const names: Record<SectionType, string> = {
-      intro: lang === 'th' ? 'Intro (เกริ่นนำ)' : 'Intro',
-      verse: lang === 'th' ? 'Verse (ท่อนร้อง)' : 'Verse',
-      'pre-chorus': lang === 'th' ? 'Pre-Chorus (ท่อนส่ง)' : 'Pre-Chorus',
-      chorus: lang === 'th' ? 'Chorus (ท่อนฮุก)' : 'Chorus',
-      solo: lang === 'th' ? 'Guitar Solo (ท่อนโซโล่)' : 'Guitar Solo',
-      bridge: lang === 'th' ? 'Bridge (ท่อนเชื่อม)' : 'Bridge',
-      outro: lang === 'th' ? 'Outro (จบท้าย)' : 'Outro',
+    const typeConfigs: Record<
+      SectionType,
+      {
+        label: string;
+        intensity: SectionIntensity;
+        chords: string[];
+        instruments: SongSection['instruments'];
+      }
+    > = {
+      intro: {
+        label: 'Intro (เกริ่นนำ)',
+        intensity: 'low',
+        chords: ['C', 'Fmaj7', 'Am7', 'G'],
+        instruments: {
+          guitarRhythm: true,
+          guitarRhythmStyle: 'fingerpicking',
+          guitarLead: false,
+          bass: false,
+          piano: false,
+          drums: false,
+        },
+      },
+      verse: {
+        label: 'Verse (ท่อนร้อง)',
+        intensity: 'low',
+        chords: ['C', 'G/B', 'Am', 'F'],
+        instruments: {
+          guitarRhythm: true,
+          guitarRhythmStyle: 'fingerpicking',
+          guitarLead: false,
+          bass: true,
+          bassStyle: 'root-fifth',
+          piano: false,
+          drums: false,
+        },
+      },
+      'pre-chorus': {
+        label: 'Pre-Chorus (ท่อนส่ง)',
+        intensity: 'medium',
+        chords: ['Dm', 'Em', 'F', 'G'],
+        instruments: {
+          guitarRhythm: true,
+          guitarRhythmStyle: 'soft-strum',
+          guitarLead: false,
+          bass: true,
+          bassStyle: 'root-fifth',
+          piano: true,
+          pianoStyle: 'warm-pad',
+          drums: false,
+        },
+      },
+      chorus: {
+        label: 'Chorus (ท่อนฮุก)',
+        intensity: 'high',
+        chords: ['C', 'G', 'Am', 'F'],
+        instruments: {
+          guitarRhythm: true,
+          guitarRhythmStyle: 'campfire-strum',
+          guitarLead: false,
+          bass: true,
+          bassStyle: 'root-fifth',
+          piano: true,
+          pianoStyle: 'warm-pad',
+          drums: true,
+          drumsStyle: 'shaker-cajon',
+        },
+      },
+      solo: {
+        label: 'Solo (โซโล่)',
+        intensity: 'high',
+        chords: ['F', 'G', 'Em', 'Am'],
+        instruments: {
+          guitarRhythm: true,
+          guitarRhythmStyle: 'campfire-strum',
+          guitarLead: true,
+          guitarLeadStyle: 'melodic-solo',
+          bass: true,
+          bassStyle: 'root-fifth',
+          piano: true,
+          pianoStyle: 'warm-pad',
+          drums: true,
+          drumsStyle: 'simple-kit',
+        },
+      },
+      bridge: {
+        label: 'Bridge (ท่อนแยก)',
+        intensity: 'medium',
+        chords: ['Am', 'F', 'Dm', 'G'],
+        instruments: {
+          guitarRhythm: true,
+          guitarRhythmStyle: 'soft-strum',
+          guitarLead: false,
+          bass: true,
+          bassStyle: 'warm-sustain',
+          piano: true,
+          pianoStyle: 'gentle-arpeggio',
+          drums: true,
+          drumsStyle: 'shaker-cajon',
+        },
+      },
+      outro: {
+        label: 'Outro (ท่อนจบ)',
+        intensity: 'low',
+        chords: ['Fmaj7', 'G', 'C', 'C'],
+        instruments: {
+          guitarRhythm: true,
+          guitarRhythmStyle: 'fingerpicking',
+          guitarLead: false,
+          bass: true,
+          bassStyle: 'warm-sustain',
+          piano: true,
+          pianoStyle: 'warm-pad',
+          drums: false,
+        },
+      },
     };
 
+    const cfg = typeConfigs[type];
     const newSection: SongSection = {
-      id,
-      name: names[type],
+      id: generateUniqueId('sec'),
+      name: cfg.label,
       type,
-      intensity: type === 'chorus' || type === 'solo' ? 'high' : type === 'pre-chorus' ? 'medium' : 'low',
-      soloMode: type === 'solo' ? 'split-slow-fast' : undefined,
-      instruments: {
-        guitarRhythm: true,
-        guitarLead: type === 'solo' || type === 'chorus',
-        bass: type !== 'intro' && type !== 'outro',
-        piano: type === 'chorus' || type === 'solo' || type === 'bridge' || type === 'pre-chorus',
-        drums: type === 'chorus' || type === 'solo',
-      },
-      bars: Array.from({ length: 4 }).map(() => ({
+      intensity: cfg.intensity,
+      ...(type === 'solo' ? { soloMode: 'normal' as const } : {}),
+      instruments: { ...cfg.instruments },
+      bars: cfg.chords.map((ch) => ({
         id: generateUniqueId('bar'),
         chordsPerBar: 1,
-        chords: ['C'],
+        chords: [ch],
         playStyle: 'normal',
         lyrics: '',
         melodyNotes: [],
@@ -113,54 +364,107 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
       ...prev,
       sections: [...prev.sections, newSection],
     }));
+    setAddSectionMenuOpen(false);
   };
 
-  // Duplicate section right after the source section
   const handleDuplicateSection = (sectionId: string) => {
     onUpdateSong((prev) => ({
       ...prev,
       sections: duplicateSectionInList(prev.sections, sectionId),
     }));
+    setOpenSectionMenuId(null);
   };
 
-  // Delete section
   const handleDeleteSection = (sectionId: string) => {
-    if (song.sections.length <= 1) {
-      alert(lang === 'th' ? 'ต้องมีท่อนเพลงอย่างน้อย 1 ท่อนครับ' : 'At least one section is required');
-      return;
-    }
+    if (song.sections.length <= 1) return;
+    const idx = song.sections.findIndex((s) => s.id === sectionId);
+    if (idx === -1) return;
+    const target = song.sections[idx];
+
     onUpdateSong((prev) => ({
       ...prev,
       sections: prev.sections.filter((s) => s.id !== sectionId),
     }));
+    setOpenSectionMenuId(null);
+
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    setDeletedUndo({ section: target, index: idx });
+    undoTimerRef.current = setTimeout(() => {
+      setDeletedUndo(null);
+    }, 6000);
   };
 
-  // Reorder section
-  const handleMoveSection = (index: number, direction: 'up' | 'down') => {
-    const targetIdx = direction === 'up' ? index - 1 : index + 1;
-    if (targetIdx < 0 || targetIdx >= song.sections.length) return;
-
+  const handleUndoDeleteSection = () => {
+    if (!deletedUndo) return;
+    const { section, index } = deletedUndo;
     onUpdateSong((prev) => {
-      const copy = [...prev.sections];
-      const temp = copy[index];
-      copy[index] = copy[targetIdx];
-      copy[targetIdx] = temp;
-      return { ...prev, sections: copy };
+      const next = [...prev.sections];
+      const insertAt = Math.min(index, next.length);
+      next.splice(insertAt, 0, section);
+      return { ...prev, sections: next };
     });
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    setDeletedUndo(null);
   };
 
-  // Add Bar to Section
+  const handleMoveSection = (index: number, direction: 'up' | 'down') => {
+    onUpdateSong((prev) => {
+      const next = [...prev.sections];
+      const targetIdx = direction === 'up' ? index - 1 : index + 1;
+      if (targetIdx < 0 || targetIdx >= next.length) return prev;
+      [next[index], next[targetIdx]] = [next[targetIdx], next[index]];
+      return { ...prev, sections: next };
+    });
+    setOpenSectionMenuId(null);
+  };
+
+  const handleUpdateSectionName = (sectionId: string, name: string) => {
+    onUpdateSong((prev) => ({
+      ...prev,
+      sections: prev.sections.map((sec) =>
+        sec.id === sectionId ? { ...sec, name } : sec
+      ),
+    }));
+  };
+
+  const handleUpdateSectionIntensity = (
+    sectionId: string,
+    intensity: SectionIntensity
+  ) => {
+    onUpdateSong((prev) => ({
+      ...prev,
+      sections: prev.sections.map((sec) =>
+        sec.id === sectionId ? { ...sec, intensity } : sec
+      ),
+    }));
+  };
+
+  const handleToggleSoloMode = (sectionId: string) => {
+    onUpdateSong((prev) => ({
+      ...prev,
+      sections: prev.sections.map((sec) =>
+        sec.id === sectionId
+          ? {
+              ...sec,
+              soloMode: sec.soloMode === 'split-slow-fast' ? 'normal' : 'split-slow-fast',
+            }
+          : sec
+      ),
+    }));
+  };
+
   const handleAddBar = (sectionId: string) => {
     onUpdateSong((prev) => ({
       ...prev,
       sections: prev.sections.map((sec) => {
         if (sec.id !== sectionId) return sec;
         const lastBar = sec.bars[sec.bars.length - 1];
-        const newBar = {
+        const fallbackChord = lastBar?.chords?.[0] || prev.baseKey || 'C';
+        const newBar: SongBar = {
           id: generateUniqueId('bar'),
-          chordsPerBar: lastBar ? lastBar.chordsPerBar : 1,
-          chords: lastBar ? [...lastBar.chords] : (['C'] as [string]),
-          playStyle: 'normal' as BarPlayStyle,
+          chordsPerBar: 1,
+          chords: [fallbackChord],
+          playStyle: 'normal',
           lyrics: '',
           melodyNotes: [],
         };
@@ -169,47 +473,45 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
     }));
   };
 
-  // Toggle section instrument
   const toggleSectionInstrument = (
     sectionId: string,
     inst: 'guitarRhythm' | 'guitarLead' | 'bass' | 'piano' | 'drums'
   ) => {
     onUpdateSong((prev) => ({
       ...prev,
-      sections: prev.sections.map((s) => {
-        if (s.id !== sectionId) return s;
-        const current = s.instruments || {
-          guitarRhythm: true,
-          guitarLead: false,
-          bass: true,
-          piano: true,
-          drums: true,
-        };
+      sections: prev.sections.map((sec) => {
+        if (sec.id !== sectionId) return sec;
+        const current = sec.instruments?.[inst] ?? false;
         return {
-          ...s,
+          ...sec,
           instruments: {
-            ...current,
-            [inst]: !current[inst],
+            ...sec.instruments,
+            [inst]: !current,
           },
         };
       }),
     }));
   };
 
-  // Update section instrument playing style
   const updateSectionInstrumentStyle = (
     sectionId: string,
-    field: 'guitarRhythmStyle' | 'guitarLeadStyle' | 'guitarLeadDrive' | 'bassStyle' | 'pianoStyle' | 'drumsStyle',
+    field:
+      | 'guitarRhythmStyle'
+      | 'guitarLeadStyle'
+      | 'guitarLeadDrive'
+      | 'bassStyle'
+      | 'pianoStyle'
+      | 'drumsStyle',
     style: string
   ) => {
     onUpdateSong((prev) => ({
       ...prev,
-      sections: prev.sections.map((s) => {
-        if (s.id !== sectionId) return s;
+      sections: prev.sections.map((sec) => {
+        if (sec.id !== sectionId) return sec;
         return {
-          ...s,
+          ...sec,
           instruments: {
-            ...s.instruments,
+            ...sec.instruments,
             [field]: style,
           },
         };
@@ -217,22 +519,25 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
     }));
   };
 
-  // Update per-section instrument volume (0–100%)
   const updateSectionInstrumentVolume = (
     sectionId: string,
-    field: 'guitarRhythmVolume' | 'guitarLeadVolume' | 'bassVolume' | 'pianoVolume' | 'drumsVolume',
+    field:
+      | 'guitarRhythmVolume'
+      | 'guitarLeadVolume'
+      | 'bassVolume'
+      | 'pianoVolume'
+      | 'drumsVolume',
     volume: number
   ) => {
-    const clamped = Math.max(0, Math.min(100, Math.round(volume)));
     onUpdateSong((prev) => ({
       ...prev,
-      sections: prev.sections.map((s) => {
-        if (s.id !== sectionId) return s;
+      sections: prev.sections.map((sec) => {
+        if (sec.id !== sectionId) return sec;
         return {
-          ...s,
+          ...sec,
           instruments: {
-            ...s.instruments,
-            [field]: clamped,
+            ...sec.instruments,
+            [field]: Math.max(0, Math.min(100, volume)),
           },
         };
       }),
@@ -241,880 +546,1109 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
 
   const renderSectionVolumeSlider = (
     sectionId: string,
-    field: 'guitarRhythmVolume' | 'guitarLeadVolume' | 'bassVolume' | 'pianoVolume' | 'drumsVolume',
-    currentVol: number | undefined,
-    accentClass: string
+    field:
+      | 'guitarRhythmVolume'
+      | 'guitarLeadVolume'
+      | 'bassVolume'
+      | 'pianoVolume'
+      | 'drumsVolume',
+    currentVal?: number
   ) => {
-    const vol = currentVol ?? 100;
+    const val = currentVal ?? 100;
     return (
-      <div className="flex items-center gap-1.5 pt-1 border-t border-slate-100 mt-auto">
-        <span className="text-[10px] text-slate-400 shrink-0" title={lang === 'th' ? 'ความดังท่อนนี้' : 'Section volume'}>
-          🔊
+      <div className="pt-1.5 mt-1 border-t border-hairline flex items-center gap-2">
+        <span className="text-[10px] font-semibold text-ink-400 shrink-0">
+          {lang === 'th' ? 'ดัง' : 'Vol'}
         </span>
         <input
           type="range"
           min={0}
           max={100}
-          value={vol}
-          onChange={(e) => updateSectionInstrumentVolume(sectionId, field, Number(e.target.value))}
-          aria-label={`${field} ${lang === 'th' ? 'ความดังท่อนนี้' : 'section volume'}`}
-          className={`w-full h-1.5 bg-slate-200 rounded-lg cursor-pointer ${accentClass}`}
+          step={5}
+          value={val}
+          onChange={(e) =>
+            updateSectionInstrumentVolume(sectionId, field, Number(e.target.value))
+          }
+          className="w-full h-1.5 rounded-lg cursor-pointer accent-accent-500"
+          title={lang === 'th' ? 'ความดังเฉพาะท่อนนี้ (0-100%)' : 'Section volume (0-100%)'}
         />
-        <span className="text-[10px] font-bold text-slate-600 w-8 text-right shrink-0 tabular-nums">
-          {vol}%
+        <span className="text-[10px] font-mono-tabular font-semibold text-ink-700 w-8 text-right shrink-0">
+          {val}%
         </span>
       </div>
     );
   };
 
-  // Delete Bar
   const handleDeleteBar = (sectionId: string, barId: string) => {
     onUpdateSong((prev) => ({
       ...prev,
       sections: prev.sections.map((sec) => {
+        if (sec.id !== sectionId || sec.bars.length <= 1) return sec;
+        return {
+          ...sec,
+          bars: sec.bars.filter((b) => b.id !== barId),
+        };
+      }),
+    }));
+    setOpenBarPopoverId(null);
+  };
+
+  const handleToggleChordsPerBar = (sectionId: string, barId: string) => {
+    onUpdateSong((prev) => ({
+      ...prev,
+      sections: prev.sections.map((sec) => {
         if (sec.id !== sectionId) return sec;
-        if (sec.bars.length <= 1) return sec;
-        return { ...sec, bars: sec.bars.filter((b) => b.id !== barId) };
+        return {
+          ...sec,
+          bars: sec.bars.map((b) => {
+            if (b.id !== barId) return b;
+            const nextCount: 1 | 2 = b.chordsPerBar === 2 ? 1 : 2;
+            const first = b.chords[0] || 'C';
+            const second = b.chords[1] || first;
+            return {
+              ...b,
+              chordsPerBar: nextCount,
+              chords: nextCount === 2 ? [first, second] : [first],
+            };
+          }),
+        };
       }),
     }));
   };
 
+  const handleUpdateBarPlayStyle = (
+    sectionId: string,
+    barId: string,
+    playStyle: BarPlayStyle
+  ) => {
+    onUpdateSong((prev) => ({
+      ...prev,
+      sections: prev.sections.map((sec) => {
+        if (sec.id !== sectionId) return sec;
+        return {
+          ...sec,
+          bars: sec.bars.map((b) =>
+            b.id === barId ? { ...b, playStyle } : b
+          ),
+        };
+      }),
+    }));
+  };
+
+  const handleUpdateBarLyrics = (
+    sectionId: string,
+    barId: string,
+    lyrics: string
+  ) => {
+    onUpdateSong((prev) => ({
+      ...prev,
+      sections: prev.sections.map((sec) => {
+        if (sec.id !== sectionId) return sec;
+        return {
+          ...sec,
+          bars: sec.bars.map((b) => (b.id === barId ? { ...b, lyrics } : b)),
+        };
+      }),
+    }));
+  };
+
+  const sectionTypesList: { type: SectionType; label: string }[] = [
+    { type: 'intro', label: t.sectionIntro },
+    { type: 'verse', label: t.sectionVerse },
+    { type: 'pre-chorus', label: t.sectionPreChorus },
+    { type: 'chorus', label: t.sectionChorus },
+    { type: 'solo', label: t.sectionSolo },
+    { type: 'bridge', label: lang === 'th' ? 'Bridge' : 'Bridge' },
+    { type: 'outro', label: lang === 'th' ? 'Outro' : 'Outro' },
+  ];
+
   return (
-    <div className="space-y-6">
-      {/* Top Controls */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="space-y-5">
+      {/* Workspace Header Bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-surface-1 border border-hairline rounded-2xl px-4 py-3.5 shadow-e1">
         <div>
-          <h2 className="font-black text-lg text-slate-900">
-            {isArranger ? t.arrangerTitle : t.songwriterTitle}
+          <h2 className="text-base sm:text-lg font-semibold text-ink-900 tracking-tight flex items-center gap-2">
+            {isArranger ? (
+              <Layers className="w-4 h-4 text-accent-text" />
+            ) : (
+              <Music className="w-4 h-4 text-accent-text" />
+            )}
+            <span>{isArranger ? t.arrangerTitle : t.songwriterTitle}</span>
           </h2>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-ink-400 mt-0.5">
             {isArranger ? t.arrangerSubtitle : t.songwriterSubtitle}
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-semibold text-slate-500 mr-1">{t.addSection}:</span>
-          {(['verse', 'pre-chorus', 'chorus', 'solo', 'bridge', 'outro'] as SectionType[]).map((st) => (
-            <button
-              type="button"
-              key={st}
-              onClick={() => handleAddSection(st)}
-              className="px-2.5 py-1 rounded-xl bg-white border border-slate-200 hover:border-blue-400 hover:bg-blue-50/50 text-slate-700 text-xs font-bold transition cursor-pointer capitalize min-h-[36px]"
-            >
-              + {st}
-            </button>
-          ))}
+        {/* Clean + Add Section Menu */}
+        <div className="relative" data-studio-menu-root>
+          <button
+            type="button"
+            onClick={() => setAddSectionMenuOpen((prev) => !prev)}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-accent-500 hover:bg-accent-hover text-white text-xs font-semibold shadow-e1 transition cursor-pointer"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>{t.addSection}</span>
+            <ChevronDown className="w-3.5 h-3.5 opacity-80" />
+          </button>
+
+          {addSectionMenuOpen && (
+            <div className="absolute right-0 mt-1.5 w-48 rounded-xl bg-surface-1 border border-hairline shadow-e3 p-1.5 z-30">
+              {sectionTypesList.map((item) => {
+                const meta = SECTION_TYPE_META[item.type];
+                return (
+                  <button
+                    key={item.type}
+                    type="button"
+                    onClick={() => handleAddSection(item.type)}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium text-ink-900 hover:bg-surface-2 transition text-left cursor-pointer"
+                  >
+                    <span className={`w-2 h-2 rounded-full ${meta.dotClass}`} />
+                    <span>+ {item.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
 
       {/* Sections List */}
-      <div className="space-y-5">
-        {song.sections.map((section, sIdx) => {
-          const badge = SECTION_BADGE_COLORS[section.type] || SECTION_BADGE_COLORS.verse;
-          const isInstExpanded = isArranger || !!expandedInstSections[section.id];
-          const inst = section.instruments || {
-            guitarRhythm: true,
-            guitarLead: false,
-            bass: true,
-            piano: true,
-            drums: true,
-          };
-          const activeInstPills: string[] = [];
-          if (inst.guitarRhythm) activeInstPills.push(`🎸 ${lang === 'th' ? 'ริทึ่ม' : 'Rhythm'}`);
-          if (inst.guitarLead) activeInstPills.push(`🎸 ${lang === 'th' ? 'ลีด' : 'Lead'}`);
-          if (inst.bass) activeInstPills.push(`🎻 ${lang === 'th' ? 'เบส' : 'Bass'}`);
-          if (inst.piano) activeInstPills.push(`🎹 ${lang === 'th' ? 'เปียโน' : 'Piano'}`);
-          if (inst.drums) activeInstPills.push(`🥁 ${lang === 'th' ? 'กลอง' : 'Drums'}`);
+      <div className="space-y-4">
+        {song.sections.map((section, secIdx) => {
+          const meta = SECTION_TYPE_META[section.type] || SECTION_TYPE_META.verse;
+          const isInstPanelOpen =
+            expandedInstrumentPanels[section.id] ?? false;
+
+          const instChips: {
+            key: 'guitarRhythm' | 'guitarLead' | 'bass' | 'piano' | 'drums';
+            label: string;
+            enabled: boolean;
+            icon: React.ReactNode;
+          }[] = [
+            {
+              key: 'guitarRhythm',
+              label: lang === 'th' ? 'ริทึ่ม' : 'Rhythm',
+              enabled: Boolean(section.instruments?.guitarRhythm),
+              icon: <Guitar className="w-3 h-3" />,
+            },
+            {
+              key: 'guitarLead',
+              label: lang === 'th' ? 'ลีด' : 'Lead',
+              enabled: Boolean(section.instruments?.guitarLead),
+              icon: <Zap className="w-3 h-3" />,
+            },
+            {
+              key: 'bass',
+              label: lang === 'th' ? 'เบส' : 'Bass',
+              enabled: Boolean(section.instruments?.bass),
+              icon: <Music className="w-3 h-3" />,
+            },
+            {
+              key: 'piano',
+              label: lang === 'th' ? 'เปียโน' : 'Piano',
+              enabled: Boolean(section.instruments?.piano),
+              icon: <Piano className="w-3 h-3" />,
+            },
+            {
+              key: 'drums',
+              label: lang === 'th' ? 'กลอง' : 'Drums',
+              enabled: Boolean(section.instruments?.drums),
+              icon: <Drum className="w-3 h-3" />,
+            },
+          ];
 
           return (
             <section
               key={section.id}
-              className="bg-white rounded-3xl border border-slate-200 shadow-xs p-4 sm:p-5 space-y-4 transition"
+              className="bg-surface-1 border border-hairline rounded-2xl shadow-e1 overflow-visible transition-colors"
             >
-              {/* Section Header */}
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
-                <div className="flex flex-wrap items-center gap-2.5">
+              {/* Section Card Header */}
+              <div className="px-4 py-3 border-b border-hairline flex flex-wrap items-center justify-between gap-2.5">
+                <div className="flex items-center gap-2.5 min-w-0 flex-1">
                   <span
-                    className={`px-3 py-1 rounded-full font-black text-xs border ${badge.bg} ${badge.text} ${badge.border}`}
+                    className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border text-[10px] font-mono-tabular font-semibold tracking-wider shrink-0 ${meta.badgeClass}`}
                   >
-                    {section.name}
+                    <span className={`w-1.5 h-1.5 rounded-full ${meta.dotClass}`} />
+                    {meta.tag}
                   </span>
 
-                  {/* Arranger-only: Section Intensity & Solo Mode */}
+                  <input
+                    type="text"
+                    value={section.name}
+                    onChange={(e) =>
+                      handleUpdateSectionName(section.id, e.target.value)
+                    }
+                    className="bg-transparent text-sm sm:text-[15px] font-semibold text-ink-900 focus:outline-none focus:bg-surface-2 px-1.5 py-0.5 rounded-lg min-w-[140px] w-full max-w-xs transition"
+                    aria-label="Section Name"
+                  />
+
+                  <span className="hidden sm:inline-flex text-[11px] font-mono-tabular text-ink-400 shrink-0">
+                    {section.bars.length} {lang === 'th' ? 'ห้อง' : 'bars'}
+                  </span>
+
+                  {/* Intensity & Solo Mode Controls in Arranger Mode */}
                   {isArranger && (
-                    <>
-                      <div className="flex items-center gap-1.5 text-xs text-slate-500">
-                        <span>{t.dynamicIntensity}</span>
-                        <select
-                          value={section.intensity}
-                          onChange={(e) => {
-                            const intensity = e.target.value as SectionIntensity;
-                            onUpdateSong((prev) => ({
-                              ...prev,
-                              sections: prev.sections.map((s) => (s.id === section.id ? { ...s, intensity } : s)),
-                            }));
-                          }}
-                          className="bg-slate-100 border border-slate-200 rounded-lg px-2 py-0.5 font-bold text-slate-800 text-xs min-h-[32px]"
-                        >
-                          <option value="low">{t.intensityLow}</option>
-                          <option value="medium">{t.intensityMedium}</option>
-                          <option value="high">{t.intensityHigh}</option>
-                        </select>
-                      </div>
+                    <div className="hidden md:flex items-center gap-1.5 ml-1">
+                      <select
+                        value={section.intensity}
+                        onChange={(e) =>
+                          handleUpdateSectionIntensity(
+                            section.id,
+                            e.target.value as SectionIntensity
+                          )
+                        }
+                        title={t.dynamicIntensity}
+                        className="text-[11px] bg-surface-2 border border-hairline rounded-lg px-2 py-1 font-medium text-ink-700 focus:outline-none focus:border-accent-500 cursor-pointer"
+                      >
+                        <option value="low">{t.intensityLow}</option>
+                        <option value="medium">{t.intensityMedium}</option>
+                        <option value="high">{t.intensityHigh}</option>
+                      </select>
 
                       {section.type === 'solo' && (
-                        <div className="flex items-center gap-1.5 text-xs text-purple-900 bg-purple-50 px-2 py-0.5 rounded-lg border border-purple-200">
-                          <span>{lang === 'th' ? 'โหมดโซโล่:' : 'Solo Mode:'}</span>
-                          <select
-                            value={section.soloMode || 'split-slow-fast'}
-                            onChange={(e) => {
-                              const soloMode = e.target.value as SoloMode;
-                              onUpdateSong((prev) => ({
-                                ...prev,
-                                sections: prev.sections.map((s) => (s.id === section.id ? { ...s, soloMode } : s)),
-                              }));
-                            }}
-                            className="bg-white rounded font-bold text-xs"
-                          >
-                            <option value="split-slow-fast">{lang === 'th' ? 'Split Slow-Fast (ครึ่งแรกช้า / ครึ่งหลังเร็ว)' : 'Split Slow-Fast'}</option>
-                            <option value="normal">{lang === 'th' ? 'จังหวะปกติทั้งท่อน (Normal)' : 'Normal Pace'}</option>
-                          </select>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleToggleSoloMode(section.id)}
+                          className={`text-[11px] px-2 py-1 rounded-lg border font-medium transition cursor-pointer ${
+                            section.soloMode === 'split-slow-fast'
+                              ? 'bg-accent-50 border-accent-500 text-accent-text'
+                              : 'bg-surface-2 border-hairline text-ink-700'
+                          }`}
+                        >
+                          {section.soloMode === 'split-slow-fast'
+                            ? lang === 'th'
+                              ? 'ช้า → เร็ว'
+                              : 'Slow → Fast'
+                            : lang === 'th'
+                              ? 'โซโล่ปกติ'
+                              : 'Normal Solo'}
+                        </button>
                       )}
-                    </>
+                    </div>
                   )}
                 </div>
 
-                {/* Section Action Buttons */}
-                <div className="flex flex-wrap items-center gap-1.5 text-xs">
-                  {/* Subtle Advance Mode / Thai Rhyme & AI Lyric Co-Pilot Trigger */}
+                {/* Max 3 Primary Ghost Actions + Overflow ⋯ Menu */}
+                <div className="flex items-center gap-1.5 shrink-0" data-studio-menu-root>
                   {onOpenAdvanceForSection && (
                     <button
                       type="button"
                       onClick={() => onOpenAdvanceForSection(section)}
-                      title={lang === 'th' ? 'หาคำสัมผัสไทย (0 เครดิต) & AI ช่วยแต่งเนื้อ (1 เครดิต)' : 'Thai Rhyme (0 Credits) & AI Lyric Co-Pilot (1 Credit)'}
-                      className="px-2.5 py-1.5 rounded-xl bg-violet-50 hover:bg-violet-100 text-violet-900 border border-violet-200 font-bold transition flex items-center gap-1 cursor-pointer min-h-[34px]"
+                      title={`✨ ${
+                        lang === 'th'
+                          ? 'AI ช่วยแต่งเนื้อร้องและคอร์ดท่อนนี้'
+                          : 'AI lyrics & chords for this section'
+                      }`}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-accent-50 hover:bg-accent-500 hover:text-white text-accent-text text-xs font-medium transition cursor-pointer"
                     >
-                      <span>✨</span>
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">AI</span>
                     </button>
                   )}
 
-                  {/* Presets Button */}
                   <button
                     type="button"
                     onClick={() => onOpenPresetsModal(section.id, section.name)}
-                    className="px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 font-bold transition flex items-center gap-1 cursor-pointer min-h-[34px]"
+                    title={t.chordPresets}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-hairline bg-surface-1 hover:bg-surface-2 text-ink-700 text-xs font-medium transition cursor-pointer"
                   >
-                    <span>{t.chordPresets}</span>
+                    <ListMusic className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">{t.chordPresets}</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={() => handleAddBar(section.id)}
-                    className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold transition cursor-pointer min-h-[34px]"
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-hairline bg-surface-1 hover:bg-surface-2 text-ink-900 text-xs font-medium transition cursor-pointer"
                   >
-                    {t.addBar}
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>{t.addBar}</span>
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={() => handleDuplicateSection(section.id)}
-                    className="px-2.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200/80 font-bold transition cursor-pointer min-h-[34px]"
-                    title={t.duplicateSection}
-                  >
-                    {isArranger ? t.duplicateSection : '📋'}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => handleMoveSection(sIdx, 'up')}
-                    disabled={sIdx === 0}
-                    className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold disabled:opacity-30 transition flex items-center justify-center cursor-pointer"
-                    title={lang === 'th' ? 'เลื่อนขึ้น' : 'Move Up'}
-                  >
-                    ▲
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleMoveSection(sIdx, 'down')}
-                    disabled={sIdx === song.sections.length - 1}
-                    className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold disabled:opacity-30 transition flex items-center justify-center cursor-pointer"
-                    title={lang === 'th' ? 'เลื่อนลง' : 'Move Down'}
-                  >
-                    ▼
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteSection(section.id)}
-                    className="w-8 h-8 rounded-xl hover:bg-rose-100 text-rose-600 font-bold transition flex items-center justify-center cursor-pointer"
-                    title={lang === 'th' ? 'ลบท่อนนี้' : 'Delete Section'}
-                  >
-                    ✕
-                  </button>
-                </div>
-              </div>
-
-              {/* Per-Section Instruments: Sleek Summary Row in Songwriter vs Full Grid in Arranger */}
-              {!isInstExpanded ? (
-                <div className="bg-slate-50/90 px-3.5 py-2 rounded-2xl border border-slate-200/80 flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <div className="flex flex-wrap items-center gap-1.5 text-slate-700">
-                    <span className="font-bold text-slate-600 mr-0.5">
-                      🎼 {t.activeInstrumentsLabel}:
-                    </span>
-                    {activeInstPills.length > 0 ? (
-                      activeInstPills.map((pillLabel, idx) => (
-                        <React.Fragment key={pillLabel}>
-                          {idx > 0 && <span className="text-slate-300">•</span>}
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-white border border-slate-200/90 font-semibold text-slate-800 shadow-2xs text-[11px]">
-                            {pillLabel}
-                          </span>
-                        </React.Fragment>
-                      ))
-                    ) : (
-                      <span className="text-slate-400 italic text-[11px]">
-                        {t.noActiveInstruments}
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1.5">
+                  {/* Section Overflow Menu ⋯ (Duplicate, Move Up, Move Down, Delete) */}
+                  <div className="relative">
                     <button
                       type="button"
-                      onClick={() => toggleSectionInstrumentPanel(section.id)}
-                      className="px-2.5 py-1 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 font-bold text-[11px] transition cursor-pointer"
+                      onClick={() => {
+                        setOpenSectionMenuId((prev) =>
+                          prev === section.id ? null : section.id
+                        );
+                        setOpenBarPopoverId(null);
+                      }}
+                      aria-label="Section actions"
+                      className="p-1.5 rounded-lg border border-hairline bg-surface-1 hover:bg-surface-2 text-ink-700 transition cursor-pointer"
                     >
-                      {t.expandInstruments}
+                      <MoreHorizontal className="w-4 h-4" />
                     </button>
-                    {onSwitchToArranger && (
-                      <button
-                        type="button"
-                        onClick={onSwitchToArranger}
-                        className="px-2.5 py-1 rounded-xl bg-blue-50 hover:bg-blue-100 border border-blue-200 text-[#1A73E8] font-bold text-[11px] transition cursor-pointer"
-                        title={t.openArrangerHint}
-                      >
-                        {t.openArrangerBtn}
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ) : (
-              <div className="bg-slate-50/90 p-3.5 rounded-2xl border border-slate-200/80 space-y-2.5">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                    <span>🎼</span>
-                    <span>
-                      {lang === 'th'
-                        ? 'เครื่องดนตรีและวิธีเล่นประจำท่อนนี้:'
-                        : 'Instruments & Playing Styles for this Section:'}
-                    </span>
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-slate-500 italic hidden sm:inline">
-                      {lang === 'th'
-                        ? '*เปิด/ปิดและเลือกสไตล์การเล่นของแต่ละชิ้นได้อิสระในท่อนนี้'
-                        : '*Mute or customize playing styles individually for this section'}
-                    </span>
-                    {!isArranger && (
-                      <button
-                        type="button"
-                        onClick={() => toggleSectionInstrumentPanel(section.id)}
-                        className="px-2.5 py-1 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 font-bold text-[11px] transition cursor-pointer"
-                      >
-                        {t.collapseInstruments}
-                      </button>
-                    )}
-                  </div>
-                </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5 text-xs">
-                  {/* 1. Rhythm Guitar */}
-                  <div
-                    className={`p-2.5 rounded-xl border flex flex-col gap-1.5 transition ${
-                      section.instruments?.guitarRhythm
-                        ? 'bg-white border-blue-300 shadow-2xs'
-                        : 'bg-slate-100/70 border-slate-200 opacity-60'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-slate-800 flex items-center gap-1">
-                        🎸 {lang === 'th' ? 'ริทึ่ม (คอร์ด)' : 'Rhythm Guitar'}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => toggleSectionInstrument(section.id, 'guitarRhythm')}
-                        className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition cursor-pointer ${
-                          section.instruments?.guitarRhythm
-                            ? 'bg-[#1A73E8] text-white'
-                            : 'bg-slate-200 text-slate-600'
-                        }`}
-                      >
-                        {section.instruments?.guitarRhythm ? (lang === 'th' ? 'เปิด' : 'ON') : (lang === 'th' ? 'ปิด' : 'OFF')}
-                      </button>
-                    </div>
-                    {section.instruments?.guitarRhythm ? (
-                      <>
-                        <select
-                          value={section.instruments?.guitarRhythmStyle || 'campfire-strum'}
-                          onChange={(e) =>
-                            updateSectionInstrumentStyle(section.id, 'guitarRhythmStyle', e.target.value)
-                          }
-                          className="w-full text-[11px] bg-blue-50 border border-blue-200 rounded-lg px-2 py-1 font-bold text-blue-950 focus:outline-none"
+                    {openSectionMenuId === section.id && (
+                      <div className="absolute right-0 mt-1.5 w-44 rounded-xl bg-surface-1 border border-hairline shadow-e3 p-1.5 z-30 space-y-0.5">
+                        <button
+                          type="button"
+                          onClick={() => handleDuplicateSection(section.id)}
+                          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium text-ink-900 hover:bg-surface-2 transition text-left cursor-pointer"
                         >
-                          <option value="campfire-strum">{lang === 'th' ? 'ตีคอร์ดแคมป์ไฟ' : 'Campfire Strum'}</option>
-                          <option value="soft-strum">{lang === 'th' ? 'ตีคอร์ดนุ่มนวล' : 'Soft Strum'}</option>
-                          <option value="fingerpicking">{lang === 'th' ? 'เกาสายอะคูสติก' : 'Fingerpicking'}</option>
-                        </select>
-                        {renderSectionVolumeSlider(section.id, 'guitarRhythmVolume', section.instruments?.guitarRhythmVolume, 'accent-[#1A73E8]')}
-                      </>
-                    ) : (
-                      <div className="text-[10px] text-slate-400 py-1 text-center font-medium">
-                        {lang === 'th' ? 'ปิดเสียงในท่อนนี้' : 'Muted in this section'}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* 2. Lead Guitar */}
-                  <div
-                    className={`p-2.5 rounded-xl border flex flex-col gap-1.5 transition ${
-                      section.instruments?.guitarLead
-                        ? 'bg-white border-purple-300 shadow-2xs'
-                        : 'bg-slate-100/70 border-slate-200 opacity-60'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-purple-950 flex items-center gap-1">
-                        🎸 {lang === 'th' ? 'ลีด (Les Paul)' : 'Lead (Les Paul)'}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => toggleSectionInstrument(section.id, 'guitarLead')}
-                        className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition cursor-pointer ${
-                          section.instruments?.guitarLead
-                            ? 'bg-purple-600 text-white'
-                            : 'bg-slate-200 text-slate-600'
-                        }`}
-                      >
-                        {section.instruments?.guitarLead ? (lang === 'th' ? 'เปิด' : 'ON') : (lang === 'th' ? 'ปิด' : 'OFF')}
-                      </button>
-                    </div>
-                    {section.instruments?.guitarLead ? (
-                      <div className="space-y-1 flex-1 flex flex-col">
-                        <select
-                          value={section.instruments?.guitarLeadStyle || 'melodic-solo'}
-                          onChange={(e) =>
-                            updateSectionInstrumentStyle(section.id, 'guitarLeadStyle', e.target.value)
-                          }
-                          className="w-full text-[11px] bg-purple-50 border border-purple-200 rounded-lg px-2 py-1 font-bold text-purple-950 focus:outline-none"
+                          <Copy className="w-3.5 h-3.5 text-ink-400" />
+                          <span>{t.duplicateSection}</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={secIdx === 0}
+                          onClick={() => handleMoveSection(secIdx, 'up')}
+                          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium text-ink-900 hover:bg-surface-2 disabled:opacity-40 disabled:pointer-events-none transition text-left cursor-pointer"
                         >
-                          <option value="melodic-solo">{lang === 'th' ? 'โซโล่ทำนอง (Solo)' : 'Melodic Solo'}</option>
-                          <option value="riff-fills">{lang === 'th' ? 'หยอดลูกส่ง (Riff Fills)' : 'Riff Fills'}</option>
-                          <option value="soft-arpeggio">{lang === 'th' ? 'เกาโน้ตสูงคลอ (Arp)' : 'Soft Arpeggio'}</option>
-                        </select>
-                        <select
-                          value={
-                            (section.instruments?.guitarLeadDrive || song.mixer.guitarLead.drive || 'overdrive') === 'fuzz'
-                              ? 'distortion'
-                              : (section.instruments?.guitarLeadDrive || song.mixer.guitarLead.drive || 'overdrive')
-                          }
-                          onChange={(e) =>
-                            updateSectionInstrumentStyle(section.id, 'guitarLeadDrive', e.target.value)
-                          }
-                          className="w-full text-[10px] bg-amber-50/70 border border-amber-200 rounded-lg px-2 py-0.5 font-bold text-amber-950 focus:outline-none"
-                          title="Overdrive / Tone"
+                          <ArrowUp className="w-3.5 h-3.5 text-ink-400" />
+                          <span>{lang === 'th' ? 'ย้ายขึ้น' : 'Move Up'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={secIdx === song.sections.length - 1}
+                          onClick={() => handleMoveSection(secIdx, 'down')}
+                          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium text-ink-900 hover:bg-surface-2 disabled:opacity-40 disabled:pointer-events-none transition text-left cursor-pointer"
                         >
-                          <option value="clean">{lang === 'th' ? 'คลีนหวาน (Clean)' : 'Clean'}</option>
-                          <option value="crunch">{lang === 'th' ? 'ครันช์เบา (Crunch)' : 'Crunch'}</option>
-                          <option value="overdrive">{lang === 'th' ? 'แตกอุ่น (Warm Overdrive)' : 'Warm Overdrive'}</option>
-                          <option value="distortion">{lang === 'th' ? 'แตกหนัก (Distortion / Fuzz)' : 'Distortion / Fuzz'}</option>
-                        </select>
-                        {renderSectionVolumeSlider(section.id, 'guitarLeadVolume', section.instruments?.guitarLeadVolume, 'accent-purple-600')}
-                      </div>
-                    ) : (
-                      <div className="text-[10px] text-slate-400 py-1 text-center font-medium">
-                        {lang === 'th' ? 'ปิดเสียงในท่อนนี้' : 'Muted in this section'}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* 3. Bass */}
-                  <div
-                    className={`p-2.5 rounded-xl border flex flex-col gap-1.5 transition ${
-                      section.instruments?.bass
-                        ? 'bg-white border-blue-300 shadow-2xs'
-                        : 'bg-slate-100/70 border-slate-200 opacity-60'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-slate-800 flex items-center gap-1">
-                        🎻 {lang === 'th' ? 'เบสโปร่ง' : 'Acoustic Bass'}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => toggleSectionInstrument(section.id, 'bass')}
-                        className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition cursor-pointer ${
-                          section.instruments?.bass
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-slate-200 text-slate-600'
-                        }`}
-                      >
-                        {section.instruments?.bass ? (lang === 'th' ? 'เปิด' : 'ON') : (lang === 'th' ? 'ปิด' : 'OFF')}
-                      </button>
-                    </div>
-                    {section.instruments?.bass ? (
-                      <>
-                        <select
-                          value={section.instruments?.bassStyle || 'root-fifth'}
-                          onChange={(e) =>
-                            updateSectionInstrumentStyle(section.id, 'bassStyle', e.target.value)
-                          }
-                          className="w-full text-[11px] bg-blue-50 border border-blue-200 rounded-lg px-2 py-1 font-bold text-blue-950 focus:outline-none"
+                          <ArrowDown className="w-3.5 h-3.5 text-ink-400" />
+                          <span>{lang === 'th' ? 'ย้ายลง' : 'Move Down'}</span>
+                        </button>
+                        <div className="my-1 border-t border-hairline" />
+                        <button
+                          type="button"
+                          disabled={song.sections.length <= 1}
+                          onClick={() => handleDeleteSection(section.id)}
+                          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium text-rec-500 hover:bg-surface-2 disabled:opacity-40 disabled:pointer-events-none transition text-left cursor-pointer"
                         >
-                          <option value="root-fifth">{lang === 'th' ? 'Root-5th สลับจังหวะ' : 'Root-5th Alternate'}</option>
-                          <option value="warm-sustain">{lang === 'th' ? 'ลากยาวอุ่นๆ (Sustain)' : 'Warm Sustain'}</option>
-                        </select>
-                        {renderSectionVolumeSlider(section.id, 'bassVolume', section.instruments?.bassVolume, 'accent-blue-600')}
-                      </>
-                    ) : (
-                      <div className="text-[10px] text-slate-400 py-1 text-center font-medium">
-                        {lang === 'th' ? 'ปิดเสียงในท่อนนี้' : 'Muted in this section'}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* 4. Piano */}
-                  <div
-                    className={`p-2.5 rounded-xl border flex flex-col gap-1.5 transition ${
-                      section.instruments?.piano
-                        ? 'bg-white border-amber-300 shadow-2xs'
-                        : 'bg-slate-100/70 border-slate-200 opacity-60'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-slate-800 flex items-center gap-1">
-                        🎹 {lang === 'th' ? 'เปียโน' : 'Piano'}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => toggleSectionInstrument(section.id, 'piano')}
-                        className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition cursor-pointer ${
-                          section.instruments?.piano
-                            ? 'bg-amber-600 text-white'
-                            : 'bg-slate-200 text-slate-600'
-                        }`}
-                      >
-                        {section.instruments?.piano ? (lang === 'th' ? 'เปิด' : 'ON') : (lang === 'th' ? 'ปิด' : 'OFF')}
-                      </button>
-                    </div>
-                    {section.instruments?.piano ? (
-                      <>
-                        <select
-                          value={section.instruments?.pianoStyle || 'warm-pad'}
-                          onChange={(e) =>
-                            updateSectionInstrumentStyle(section.id, 'pianoStyle', e.target.value)
-                          }
-                          className="w-full text-[11px] bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 font-bold text-amber-950 focus:outline-none"
-                        >
-                          <option value="warm-pad">{lang === 'th' ? 'คอร์ดปูพื้น (Warm Pad)' : 'Warm Pad'}</option>
-                          <option value="gentle-arpeggio">{lang === 'th' ? 'พรมนิ้วเบาๆ (Arp)' : 'Gentle Arpeggio'}</option>
-                        </select>
-                        {renderSectionVolumeSlider(section.id, 'pianoVolume', section.instruments?.pianoVolume, 'accent-amber-600')}
-                      </>
-                    ) : (
-                      <div className="text-[10px] text-slate-400 py-1 text-center font-medium">
-                        {lang === 'th' ? 'ปิดเสียงในท่อนนี้' : 'Muted in this section'}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* 5. Drums */}
-                  <div
-                    className={`p-2.5 rounded-xl border flex flex-col gap-1.5 transition ${
-                      section.instruments?.drums
-                        ? 'bg-white border-emerald-300 shadow-2xs'
-                        : 'bg-slate-100/70 border-slate-200 opacity-60'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-slate-800 flex items-center gap-1">
-                        🥁 {lang === 'th' ? 'เพอร์คัชชัน' : 'Drums & Cajon'}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => toggleSectionInstrument(section.id, 'drums')}
-                        className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition cursor-pointer ${
-                          section.instruments?.drums
-                            ? 'bg-emerald-600 text-white'
-                            : 'bg-slate-200 text-slate-600'
-                        }`}
-                      >
-                        {section.instruments?.drums ? (lang === 'th' ? 'เปิด' : 'ON') : (lang === 'th' ? 'ปิด' : 'OFF')}
-                      </button>
-                    </div>
-                    {section.instruments?.drums ? (
-                      <>
-                        <select
-                          value={section.instruments?.drumsStyle || 'shaker-cajon'}
-                          onChange={(e) =>
-                            updateSectionInstrumentStyle(section.id, 'drumsStyle', e.target.value)
-                          }
-                          className="w-full text-[11px] bg-emerald-50 border border-emerald-200 rounded-lg px-2 py-1 font-bold text-emerald-950 focus:outline-none"
-                        >
-                          <option value="shaker-cajon">Shaker & Cajon</option>
-                          <option value="simple-kit">{lang === 'th' ? 'กลองชุดเรียบๆ (Kit)' : 'Simple Kit'}</option>
-                        </select>
-                        {renderSectionVolumeSlider(section.id, 'drumsVolume', section.instruments?.drumsVolume, 'accent-emerald-600')}
-                      </>
-                    ) : (
-                      <div className="text-[10px] text-slate-400 py-1 text-center font-medium">
-                        {lang === 'th' ? 'ปิดเสียงในท่อนนี้' : 'Muted in this section'}
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>{t.delete}</span>
+                        </button>
                       </div>
                     )}
                   </div>
                 </div>
               </div>
+
+              {/* Instrument Summary & Toggle Strip */}
+              <div className="px-4 py-2 bg-surface-2/60 border-b border-hairline flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] font-medium text-ink-400 mr-1">
+                    {t.activeInstrumentsLabel}
+                  </span>
+                  {instChips.map((chip) => (
+                    <button
+                      key={chip.key}
+                      type="button"
+                      onClick={() => toggleSectionInstrument(section.id, chip.key)}
+                      title={
+                        chip.enabled
+                          ? lang === 'th'
+                            ? 'คลิกเพื่อปิดเสียงในท่อนนี้'
+                            : 'Click to mute in section'
+                          : lang === 'th'
+                            ? 'คลิกเพื่อเปิดเสียงในท่อนนี้'
+                            : 'Click to enable in section'
+                      }
+                      className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] font-medium border transition cursor-pointer ${
+                        chip.enabled
+                          ? 'bg-accent-50 border-accent-200 text-accent-text'
+                          : 'bg-surface-1 border-hairline text-ink-400 opacity-70 hover:opacity-100'
+                      }`}
+                    >
+                      {chip.icon}
+                      <span>{chip.label}</span>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => toggleSectionInstrumentPanel(section.id)}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition cursor-pointer ${
+                      isInstPanelOpen
+                        ? 'bg-accent-50 border-accent-500 text-accent-text'
+                        : 'bg-surface-1 border-hairline text-ink-700 hover:bg-surface-2'
+                    }`}
+                  >
+                    <SlidersHorizontal className="w-3 h-3" />
+                    <span>
+                      {isInstPanelOpen ? t.collapseInstruments : t.expandInstruments}
+                    </span>
+                    {isInstPanelOpen ? (
+                      <ChevronUp className="w-3 h-3" />
+                    ) : (
+                      <ChevronDown className="w-3 h-3" />
+                    )}
+                  </button>
+
+                  {!isArranger && onSwitchToArranger && (
+                    <button
+                      type="button"
+                      onClick={onSwitchToArranger}
+                      title={t.openArrangerHint}
+                      className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium bg-surface-1 border border-hairline text-ink-700 hover:text-accent-text hover:bg-surface-2 transition cursor-pointer"
+                    >
+                      <Layers className="w-3 h-3" />
+                      <span>{t.openArrangerBtn}</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Expanded Per-Section 5-Instrument Arranger Panel */}
+              {isInstPanelOpen && (
+                <div className="p-3.5 bg-surface-2/80 border-b border-hairline">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
+                    {/* 1. Rhythm Guitar */}
+                    <div
+                      className={`p-2.5 rounded-xl border flex flex-col gap-1.5 transition ${
+                        section.instruments?.guitarRhythm
+                          ? 'bg-surface-1 border-hairline shadow-e1'
+                          : 'bg-surface-2/50 border-hairline opacity-65'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-ink-900 flex items-center gap-1.5">
+                          <Guitar className="w-3.5 h-3.5 text-accent-text" />
+                          {lang === 'th' ? 'ริทึ่ม (คอร์ด)' : 'Rhythm Guitar'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            toggleSectionInstrument(section.id, 'guitarRhythm')
+                          }
+                          className={`px-2 py-0.5 rounded-md text-[10px] font-semibold transition cursor-pointer ${
+                            section.instruments?.guitarRhythm
+                              ? 'bg-accent-500 text-white'
+                              : 'bg-surface-inset text-ink-400'
+                          }`}
+                        >
+                          {section.instruments?.guitarRhythm
+                            ? lang === 'th'
+                              ? 'เปิด'
+                              : 'ON'
+                            : lang === 'th'
+                              ? 'ปิด'
+                              : 'OFF'}
+                        </button>
+                      </div>
+                      {section.instruments?.guitarRhythm ? (
+                        <>
+                          <select
+                            value={
+                              section.instruments?.guitarRhythmStyle ||
+                              song.mixer.guitarRhythm.style ||
+                              'campfire-strum'
+                            }
+                            onChange={(e) =>
+                              updateSectionInstrumentStyle(
+                                section.id,
+                                'guitarRhythmStyle',
+                                e.target.value
+                              )
+                            }
+                            className="w-full text-[11px] bg-surface-2 border border-hairline rounded-lg px-2 py-1 font-medium text-ink-900 focus:outline-none focus:border-accent-500"
+                          >
+                            <option value="campfire-strum">
+                              {lang === 'th' ? 'ตีคอร์ดแคมป์ไฟ' : 'Campfire Strum'}
+                            </option>
+                            <option value="soft-strum">
+                              {lang === 'th' ? 'ตีคอร์ดนุ่มนวล' : 'Soft Strum'}
+                            </option>
+                            <option value="fingerpicking">
+                              {lang === 'th' ? 'เกาสายอะคูสติก' : 'Fingerpicking'}
+                            </option>
+                          </select>
+                          {renderSectionVolumeSlider(
+                            section.id,
+                            'guitarRhythmVolume',
+                            section.instruments?.guitarRhythmVolume
+                          )}
+                        </>
+                      ) : (
+                        <div className="text-[10px] text-ink-400 py-1 text-center font-medium">
+                          {lang === 'th' ? 'ปิดเสียงในท่อนนี้' : 'Muted in this section'}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 2. Lead Guitar */}
+                    <div
+                      className={`p-2.5 rounded-xl border flex flex-col gap-1.5 transition ${
+                        section.instruments?.guitarLead
+                          ? 'bg-surface-1 border-hairline shadow-e1'
+                          : 'bg-surface-2/50 border-hairline opacity-65'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-ink-900 flex items-center gap-1.5">
+                          <Zap className="w-3.5 h-3.5 text-accent-text" />
+                          {lang === 'th' ? 'ลีด (Les Paul)' : 'Lead (Les Paul)'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            toggleSectionInstrument(section.id, 'guitarLead')
+                          }
+                          className={`px-2 py-0.5 rounded-md text-[10px] font-semibold transition cursor-pointer ${
+                            section.instruments?.guitarLead
+                              ? 'bg-accent-500 text-white'
+                              : 'bg-surface-inset text-ink-400'
+                          }`}
+                        >
+                          {section.instruments?.guitarLead
+                            ? lang === 'th'
+                              ? 'เปิด'
+                              : 'ON'
+                            : lang === 'th'
+                              ? 'ปิด'
+                              : 'OFF'}
+                        </button>
+                      </div>
+                      {section.instruments?.guitarLead ? (
+                        <div className="space-y-1 flex-1 flex flex-col">
+                          <select
+                            value={
+                              section.instruments?.guitarLeadStyle || 'melodic-solo'
+                            }
+                            onChange={(e) =>
+                              updateSectionInstrumentStyle(
+                                section.id,
+                                'guitarLeadStyle',
+                                e.target.value
+                              )
+                            }
+                            className="w-full text-[11px] bg-surface-2 border border-hairline rounded-lg px-2 py-1 font-medium text-ink-900 focus:outline-none focus:border-accent-500"
+                          >
+                            <option value="melodic-solo">
+                              {lang === 'th' ? 'โซโล่ทำนอง (Solo)' : 'Melodic Solo'}
+                            </option>
+                            <option value="riff-fills">
+                              {lang === 'th' ? 'หยอดลูกส่ง (Riff Fills)' : 'Riff Fills'}
+                            </option>
+                            <option value="soft-arpeggio">
+                              {lang === 'th' ? 'เกาโน้ตสูงคลอ (Arp)' : 'Soft Arpeggio'}
+                            </option>
+                          </select>
+                          <select
+                            value={
+                              (section.instruments?.guitarLeadDrive ||
+                                song.mixer.guitarLead.drive ||
+                                'overdrive') === 'fuzz'
+                                ? 'distortion'
+                                : section.instruments?.guitarLeadDrive ||
+                                  song.mixer.guitarLead.drive ||
+                                  'overdrive'
+                            }
+                            onChange={(e) =>
+                              updateSectionInstrumentStyle(
+                                section.id,
+                                'guitarLeadDrive',
+                                e.target.value
+                              )
+                            }
+                            className="w-full text-[10px] bg-surface-2 border border-hairline rounded-lg px-2 py-0.5 font-medium text-ink-700 focus:outline-none focus:border-accent-500"
+                            title="Overdrive / Tone"
+                          >
+                            <option value="clean">
+                              {lang === 'th' ? 'คลีนหวาน (Clean)' : 'Clean'}
+                            </option>
+                            <option value="crunch">
+                              {lang === 'th' ? 'ครันช์เบา (Crunch)' : 'Crunch'}
+                            </option>
+                            <option value="overdrive">
+                              {lang === 'th'
+                                ? 'แตกอุ่น (Warm Overdrive)'
+                                : 'Warm Overdrive'}
+                            </option>
+                            <option value="distortion">
+                              {lang === 'th'
+                                ? 'แตกหนัก (Distortion / Fuzz)'
+                                : 'Distortion / Fuzz'}
+                            </option>
+                          </select>
+                          {renderSectionVolumeSlider(
+                            section.id,
+                            'guitarLeadVolume',
+                            section.instruments?.guitarLeadVolume
+                          )}
+                        </div>
+                      ) : (
+                        <div className="text-[10px] text-ink-400 py-1 text-center font-medium">
+                          {lang === 'th' ? 'ปิดเสียงในท่อนนี้' : 'Muted in this section'}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 3. Bass */}
+                    <div
+                      className={`p-2.5 rounded-xl border flex flex-col gap-1.5 transition ${
+                        section.instruments?.bass
+                          ? 'bg-surface-1 border-hairline shadow-e1'
+                          : 'bg-surface-2/50 border-hairline opacity-65'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-ink-900 flex items-center gap-1.5">
+                          <Music className="w-3.5 h-3.5 text-accent-text" />
+                          {lang === 'th' ? 'เบสโปร่ง' : 'Acoustic Bass'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => toggleSectionInstrument(section.id, 'bass')}
+                          className={`px-2 py-0.5 rounded-md text-[10px] font-semibold transition cursor-pointer ${
+                            section.instruments?.bass
+                              ? 'bg-accent-500 text-white'
+                              : 'bg-surface-inset text-ink-400'
+                          }`}
+                        >
+                          {section.instruments?.bass
+                            ? lang === 'th'
+                              ? 'เปิด'
+                              : 'ON'
+                            : lang === 'th'
+                              ? 'ปิด'
+                              : 'OFF'}
+                        </button>
+                      </div>
+                      {section.instruments?.bass ? (
+                        <>
+                          <select
+                            value={section.instruments?.bassStyle || 'root-fifth'}
+                            onChange={(e) =>
+                              updateSectionInstrumentStyle(
+                                section.id,
+                                'bassStyle',
+                                e.target.value
+                              )
+                            }
+                            className="w-full text-[11px] bg-surface-2 border border-hairline rounded-lg px-2 py-1 font-medium text-ink-900 focus:outline-none focus:border-accent-500"
+                          >
+                            <option value="root-fifth">
+                              {lang === 'th'
+                                ? 'Root-5th สลับจังหวะ'
+                                : 'Root-5th Alternate'}
+                            </option>
+                            <option value="warm-sustain">
+                              {lang === 'th'
+                                ? 'ลากยาวอุ่นๆ (Sustain)'
+                                : 'Warm Sustain'}
+                            </option>
+                          </select>
+                          {renderSectionVolumeSlider(
+                            section.id,
+                            'bassVolume',
+                            section.instruments?.bassVolume
+                          )}
+                        </>
+                      ) : (
+                        <div className="text-[10px] text-ink-400 py-1 text-center font-medium">
+                          {lang === 'th' ? 'ปิดเสียงในท่อนนี้' : 'Muted in this section'}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 4. Piano */}
+                    <div
+                      className={`p-2.5 rounded-xl border flex flex-col gap-1.5 transition ${
+                        section.instruments?.piano
+                          ? 'bg-surface-1 border-hairline shadow-e1'
+                          : 'bg-surface-2/50 border-hairline opacity-65'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-ink-900 flex items-center gap-1.5">
+                          <Piano className="w-3.5 h-3.5 text-accent-text" />
+                          {lang === 'th' ? 'เปียโน' : 'Piano'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => toggleSectionInstrument(section.id, 'piano')}
+                          className={`px-2 py-0.5 rounded-md text-[10px] font-semibold transition cursor-pointer ${
+                            section.instruments?.piano
+                              ? 'bg-accent-500 text-white'
+                              : 'bg-surface-inset text-ink-400'
+                          }`}
+                        >
+                          {section.instruments?.piano
+                            ? lang === 'th'
+                              ? 'เปิด'
+                              : 'ON'
+                            : lang === 'th'
+                              ? 'ปิด'
+                              : 'OFF'}
+                        </button>
+                      </div>
+                      {section.instruments?.piano ? (
+                        <>
+                          <select
+                            value={section.instruments?.pianoStyle || 'warm-pad'}
+                            onChange={(e) =>
+                              updateSectionInstrumentStyle(
+                                section.id,
+                                'pianoStyle',
+                                e.target.value
+                              )
+                            }
+                            className="w-full text-[11px] bg-surface-2 border border-hairline rounded-lg px-2 py-1 font-medium text-ink-900 focus:outline-none focus:border-accent-500"
+                          >
+                            <option value="warm-pad">
+                              {lang === 'th'
+                                ? 'คอร์ดปูพื้น (Warm Pad)'
+                                : 'Warm Pad'}
+                            </option>
+                            <option value="gentle-arpeggio">
+                              {lang === 'th'
+                                ? 'พรมนิ้วเบาๆ (Arp)'
+                                : 'Gentle Arpeggio'}
+                            </option>
+                          </select>
+                          {renderSectionVolumeSlider(
+                            section.id,
+                            'pianoVolume',
+                            section.instruments?.pianoVolume
+                          )}
+                        </>
+                      ) : (
+                        <div className="text-[10px] text-ink-400 py-1 text-center font-medium">
+                          {lang === 'th' ? 'ปิดเสียงในท่อนนี้' : 'Muted in this section'}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 5. Drums */}
+                    <div
+                      className={`p-2.5 rounded-xl border flex flex-col gap-1.5 transition ${
+                        section.instruments?.drums
+                          ? 'bg-surface-1 border-hairline shadow-e1'
+                          : 'bg-surface-2/50 border-hairline opacity-65'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-ink-900 flex items-center gap-1.5">
+                          <Drum className="w-3.5 h-3.5 text-accent-text" />
+                          {lang === 'th' ? 'เพอร์คัชชัน' : 'Drums & Cajon'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => toggleSectionInstrument(section.id, 'drums')}
+                          className={`px-2 py-0.5 rounded-md text-[10px] font-semibold transition cursor-pointer ${
+                            section.instruments?.drums
+                              ? 'bg-accent-500 text-white'
+                              : 'bg-surface-inset text-ink-400'
+                          }`}
+                        >
+                          {section.instruments?.drums
+                            ? lang === 'th'
+                              ? 'เปิด'
+                              : 'ON'
+                            : lang === 'th'
+                              ? 'ปิด'
+                              : 'OFF'}
+                        </button>
+                      </div>
+                      {section.instruments?.drums ? (
+                        <>
+                          <select
+                            value={section.instruments?.drumsStyle || 'shaker-cajon'}
+                            onChange={(e) =>
+                              updateSectionInstrumentStyle(
+                                section.id,
+                                'drumsStyle',
+                                e.target.value
+                              )
+                            }
+                            className="w-full text-[11px] bg-surface-2 border border-hairline rounded-lg px-2 py-1 font-medium text-ink-900 focus:outline-none focus:border-accent-500"
+                          >
+                            <option value="shaker-cajon">Shaker & Cajon</option>
+                            <option value="simple-kit">
+                              {lang === 'th' ? 'กลองชุดเรียบๆ (Kit)' : 'Simple Kit'}
+                            </option>
+                          </select>
+                          {renderSectionVolumeSlider(
+                            section.id,
+                            'drumsVolume',
+                            section.instruments?.drumsVolume
+                          )}
+                        </>
+                      ) : (
+                        <div className="text-[10px] text-ink-400 py-1 text-center font-medium">
+                          {lang === 'th' ? 'ปิดเสียงในท่อนนี้' : 'Muted in this section'}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
               )}
 
               {/* Bars Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3.5">
+              <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3.5">
                 {section.bars.map((bar) => {
                   const thisGlobalIndex = globalBarCounter++;
-                  const isCurrentActive = thisGlobalIndex === activeGlobalBarIndex;
-                  const isBarControlsOpen = isArranger || !!openBarControls[bar.id];
+                  const isActive = activeGlobalBarIndex === thisGlobalIndex;
                   const syllableCount = countThaiEnglishSyllables(bar.lyrics);
-
-                  // Transposed Sounding Chords
-                  const chord1 = transposeChord(bar.chords[0] || 'C', song.transposeSemitones);
-                  const capoChord1 = getCapoFingeringChord(chord1, song.capoFret);
-
-                  const chord2 =
-                    bar.chordsPerBar === 2 && bar.chords[1]
-                      ? transposeChord(bar.chords[1], song.transposeSemitones)
-                      : null;
-                  const capoChord2 = chord2 ? getCapoFingeringChord(chord2, song.capoFret) : null;
+                  const noteCount = bar.melodyNotes?.length || 0;
+                  const hasVocal = Boolean(bar.vocalAudio);
+                  const isBarPopoverOpen = openBarPopoverId === bar.id;
 
                   return (
                     <div
                       key={bar.id}
-                      className={`rounded-2xl p-3.5 space-y-3 transition border-2 ${
-                        isCurrentActive
-                          ? 'bg-[#E8F0FE] border-[#1A73E8] shadow-md shadow-blue-500/15'
-                          : bar.playStyle === 'let-ring'
-                          ? 'bg-amber-50/50 border-amber-200'
-                          : bar.playStyle === 'break'
-                          ? 'bg-slate-100 border-slate-300'
-                          : 'bg-slate-50/70 border-slate-200'
+                      ref={isActive ? activeBarRef : null}
+                      className={`group relative rounded-2xl border p-3.5 flex flex-col gap-2.5 transition-all ${
+                        isActive
+                          ? 'bg-accent-50/70 border-accent-500 ring-2 ring-accent-200 shadow-e2'
+                          : 'bg-surface-2/40 hover:bg-surface-1 border-hairline shadow-2xs'
                       }`}
                     >
-                      {/* Bar Top Header */}
-                      <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
-                        <div className="flex items-center gap-1.5 flex-wrap">
+                      {/* Bar Header */}
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
                           <span
-                            className={`font-black ${
-                              isCurrentActive ? 'text-[#1A73E8]' : 'text-slate-700'
+                            className={`text-xs font-mono-tabular font-semibold ${
+                              isActive ? 'text-accent-text' : 'text-ink-400'
                             }`}
                           >
                             {t.barLabel} {thisGlobalIndex + 1}
                           </span>
-                          {isCurrentActive && (
-                            <span className="px-1.5 py-0.2 bg-[#1A73E8] text-white font-bold rounded text-[10px]">
-                              {lang === 'th' ? 'เล่นอยู่' : 'Playing'}
-                            </span>
-                          )}
-                          {!isArranger && bar.playStyle === 'let-ring' && (
-                            <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-bold">
-                              🔔
-                            </span>
-                          )}
-                          {!isArranger && bar.playStyle === 'break' && (
-                            <span className="px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 text-[10px] font-bold">
-                              🔇
-                            </span>
-                          )}
-                          {!isArranger && bar.melodyNotes.length > 0 && (
-                            <span className="px-1.5 py-0.5 rounded bg-blue-100 text-[#1A73E8] text-[10px] font-bold">
-                              🎵 {bar.melodyNotes.length}
+                          {bar.playStyle !== 'normal' && (
+                            <span className="px-1.5 py-0.5 rounded bg-surface-2 border border-hairline text-[10px] font-medium text-ink-700">
+                              {bar.playStyle === 'let-ring'
+                                ? t.styleLetRing
+                                : t.styleBreak}
                             </span>
                           )}
                         </div>
 
-                        {/* Arranger shows full inline controls; Songwriter shows compact popover toggle */}
                         {isArranger ? (
                           <div className="flex items-center gap-1">
-                            <select
-                              value={bar.playStyle}
-                              onChange={(e) => {
-                                const playStyle = e.target.value as BarPlayStyle;
-                                onUpdateSong((prev) => ({
-                                  ...prev,
-                                  sections: prev.sections.map((s) => ({
-                                    ...s,
-                                    bars: s.bars.map((b) => (b.id === bar.id ? { ...b, playStyle } : b)),
-                                  })),
-                                }));
-                              }}
-                              className="bg-white border border-slate-200 rounded-md px-1.5 py-0.5 text-[10px] font-bold text-slate-800"
-                            >
-                              <option value="normal">🎵 {t.styleNormal}</option>
-                              <option value="let-ring">🔔 {t.styleLetRing}</option>
-                              <option value="break">🔇 {t.styleBreak}</option>
-                            </select>
-
-                            <select
-                              value={bar.chordsPerBar}
-                              onChange={(e) => {
-                                const count = parseInt(e.target.value, 10) as 1 | 2;
-                                onUpdateSong((prev) => ({
-                                  ...prev,
-                                  sections: prev.sections.map((s) => {
-                                    if (s.id !== section.id) return s;
-                                    return {
-                                      ...s,
-                                      bars: s.bars.map((b) => {
-                                        if (b.id !== bar.id) return b;
-                                        const chords: string[] =
-                                          count === 2
-                                            ? [b.chords[0] || 'C', b.chords[1] || 'G']
-                                            : [b.chords[0] || 'C'];
-                                        return { ...b, chordsPerBar: count, chords };
-                                      }),
-                                    };
-                                  }),
-                                }));
-                              }}
-                              className="bg-white border border-slate-200 rounded-md px-1.5 py-0.5 text-[10px] font-bold text-slate-800"
-                            >
-                              <option value={1}>{t.chordsPerBar1}</option>
-                              <option value={2}>{t.chordsPerBar2}</option>
-                            </select>
-
-                            {section.bars.length > 1 && (
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteBar(section.id, bar.id)}
-                                className="text-slate-400 hover:text-rose-600 px-1 font-bold text-xs cursor-pointer"
-                                title={lang === 'th' ? 'ลบห้องนี้' : 'Delete Bar'}
-                              >
-                                ✕
-                              </button>
-                            )}
-                          </div>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => toggleBarControlsPopover(bar.id)}
-                            aria-expanded={isBarControlsOpen}
-                            title={t.barOptionsBtn}
-                            className={`px-2 py-0.5 rounded-lg border text-xs font-bold transition cursor-pointer ${
-                              isBarControlsOpen
-                                ? 'bg-slate-800 text-white border-slate-800'
-                                : 'bg-white hover:bg-slate-100 text-slate-600 border-slate-200'
-                            }`}
-                          >
-                            ⋯
-                          </button>
-                        )}
-                      </div>
-
-                      {/* Songwriter Secondary Bar Controls Popover/Drawer */}
-                      {!isArranger && isBarControlsOpen && (
-                        <div className="bg-white border border-slate-200 rounded-xl p-2.5 space-y-2 shadow-xs">
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <select
-                              value={bar.playStyle}
-                              onChange={(e) => {
-                                const playStyle = e.target.value as BarPlayStyle;
-                                onUpdateSong((prev) => ({
-                                  ...prev,
-                                  sections: prev.sections.map((s) => ({
-                                    ...s,
-                                    bars: s.bars.map((b) => (b.id === bar.id ? { ...b, playStyle } : b)),
-                                  })),
-                                }));
-                              }}
-                              className="flex-1 min-w-[110px] bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-[11px] font-bold text-slate-800"
-                            >
-                              <option value="normal">🎵 {t.styleNormal}</option>
-                              <option value="let-ring">🔔 {t.styleLetRing}</option>
-                              <option value="break">🔇 {t.styleBreak}</option>
-                            </select>
-
-                            <select
-                              value={bar.chordsPerBar}
-                              onChange={(e) => {
-                                const count = parseInt(e.target.value, 10) as 1 | 2;
-                                onUpdateSong((prev) => ({
-                                  ...prev,
-                                  sections: prev.sections.map((s) => {
-                                    if (s.id !== section.id) return s;
-                                    return {
-                                      ...s,
-                                      bars: s.bars.map((b) => {
-                                        if (b.id !== bar.id) return b;
-                                        const chords: string[] =
-                                          count === 2
-                                            ? [b.chords[0] || 'C', b.chords[1] || 'G']
-                                            : [b.chords[0] || 'C'];
-                                        return { ...b, chordsPerBar: count, chords };
-                                      }),
-                                    };
-                                  }),
-                                }));
-                              }}
-                              className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-[11px] font-bold text-slate-800"
-                            >
-                              <option value={1}>{t.chordsPerBar1}</option>
-                              <option value={2}>{t.chordsPerBar2}</option>
-                            </select>
-                          </div>
-
-                          <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100 text-[11px]">
                             <button
                               type="button"
-                              onClick={() => onOpenMelodyPianoRoll(section.id, bar.id, thisGlobalIndex)}
-                              className="px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-[#1A73E8] font-bold transition flex items-center gap-1 cursor-pointer"
+                              onClick={() =>
+                                handleToggleChordsPerBar(section.id, bar.id)
+                              }
+                              className="px-1.5 py-0.5 rounded border border-hairline bg-surface-1 text-[10px] font-mono-tabular font-semibold text-ink-700 hover:bg-surface-2 cursor-pointer"
                             >
-                              <span>🎹 {t.melodyNotesBtn}</span>
-                              {bar.melodyNotes.length > 0 && (
-                                <span className="px-1.5 bg-blue-200/70 rounded-full text-[10px] font-black">
-                                  {bar.melodyNotes.length}
-                                </span>
-                              )}
+                              {bar.chordsPerBar}C
+                            </button>
+                            <select
+                              value={bar.playStyle}
+                              onChange={(e) =>
+                                handleUpdateBarPlayStyle(
+                                  section.id,
+                                  bar.id,
+                                  e.target.value as BarPlayStyle
+                                )
+                              }
+                              className="text-[10px] bg-surface-1 border border-hairline rounded px-1.5 py-0.5 text-ink-700 focus:outline-none cursor-pointer"
+                            >
+                              <option value="normal">{t.styleNormal}</option>
+                              <option value="let-ring">{t.styleLetRing}</option>
+                              <option value="break">{t.styleBreak}</option>
+                            </select>
+                            <button
+                              type="button"
+                              disabled={section.bars.length <= 1}
+                              onClick={() => handleDeleteBar(section.id, bar.id)}
+                              className="p-1 rounded text-ink-400 hover:text-rec-500 disabled:opacity-30 cursor-pointer"
+                              title={t.delete}
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="relative" data-studio-menu-root>
+                            <button
+                              type="button"
+                              onClick={() => toggleBarControlsPopover(bar.id)}
+                              aria-label={t.barOptionsBtn}
+                              className="p-1 rounded-lg text-ink-400 hover:text-ink-900 hover:bg-surface-2 transition cursor-pointer"
+                            >
+                              <MoreHorizontal className="w-4 h-4" />
                             </button>
 
-                            {section.bars.length > 1 && (
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteBar(section.id, bar.id)}
-                                className="px-2 py-1 rounded-lg hover:bg-rose-50 text-rose-600 font-bold transition cursor-pointer"
-                              >
-                                ✕ {t.delete}
-                              </button>
+                            {isBarPopoverOpen && (
+                              <div className="absolute right-0 top-7 w-44 rounded-xl bg-surface-1 border border-hairline shadow-e3 p-2 z-30 space-y-2">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleToggleChordsPerBar(section.id, bar.id)
+                                  }
+                                  className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium text-ink-900 hover:bg-surface-2 transition cursor-pointer"
+                                >
+                                  <span>
+                                    {lang === 'th' ? 'จำนวนคอร์ด' : 'Chords'}
+                                  </span>
+                                  <span className="font-mono-tabular text-accent-text font-semibold">
+                                    {bar.chordsPerBar === 2
+                                      ? t.chordsPerBar2
+                                      : t.chordsPerBar1}
+                                  </span>
+                                </button>
+
+                                <div className="space-y-1 px-1">
+                                  <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-400">
+                                    {lang === 'th' ? 'สำเนียงห้อง' : 'Feel'}
+                                  </span>
+                                  <div className="grid grid-cols-3 gap-1">
+                                    {(['normal', 'let-ring', 'break'] as BarPlayStyle[]).map(
+                                      (st) => (
+                                        <button
+                                          key={st}
+                                          type="button"
+                                          onClick={() =>
+                                            handleUpdateBarPlayStyle(
+                                              section.id,
+                                              bar.id,
+                                              st
+                                            )
+                                          }
+                                          className={`px-1.5 py-1 rounded text-[10px] font-medium border transition cursor-pointer ${
+                                            bar.playStyle === st
+                                              ? 'bg-accent-50 border-accent-500 text-accent-text'
+                                              : 'bg-surface-2 border-hairline text-ink-700'
+                                          }`}
+                                        >
+                                          {st === 'normal'
+                                            ? t.styleNormal
+                                            : st === 'let-ring'
+                                              ? t.styleLetRing
+                                              : t.styleBreak}
+                                        </button>
+                                      )
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div className="border-t border-hairline pt-1">
+                                  <button
+                                    type="button"
+                                    disabled={section.bars.length <= 1}
+                                    onClick={() =>
+                                      handleDeleteBar(section.id, bar.id)
+                                    }
+                                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium text-rec-500 hover:bg-surface-2 disabled:opacity-40 cursor-pointer"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                    <span>{t.delete}</span>
+                                  </button>
+                                </div>
+                              </div>
                             )}
                           </div>
-                        </div>
-                      )}
-
-                      {/* Chord Buttons */}
-                      <div className="flex gap-2">
-                        {/* Chord 1 */}
-                        <button
-                          type="button"
-                          onClick={() => onOpenChordPicker(section.id, bar.id, 0, bar.chords[0] || 'C')}
-                          className={`flex-1 px-3 rounded-xl bg-white border border-slate-200 hover:border-[#1A73E8] text-left flex items-center justify-between shadow-2xs group transition cursor-pointer ${
-                            isArranger ? 'py-2 min-h-[44px]' : 'py-2.5 min-h-[50px]'
-                          }`}
-                        >
-                          <div>
-                            <span
-                              className={`font-black text-slate-900 group-hover:text-[#1A73E8] ${
-                                isArranger ? 'text-lg' : 'text-xl'
-                              }`}
-                            >
-                              {chord1}
-                            </span>
-                            {song.capoFret > 0 && (
-                              <span className="ml-1 text-[11px] font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded-md">
-                                {lang === 'th' ? `จับ ${capoChord1}` : `Play ${capoChord1}`}
-                              </span>
-                            )}
-                          </div>
-                          <span className="text-[10px] text-slate-400">
-                            {bar.chordsPerBar === 2 ? (lang === 'th' ? 'จังหวะ 1-2' : 'Beat 1-2') : (lang === 'th' ? 'เปลี่ยน ▾' : 'Edit ▾')}
-                          </span>
-                        </button>
-
-                        {/* Chord 2 if 2 chords */}
-                        {bar.chordsPerBar === 2 && chord2 && (
-                          <button
-                            type="button"
-                            onClick={() => onOpenChordPicker(section.id, bar.id, 1, bar.chords[1] || 'G')}
-                            className={`flex-1 px-3 rounded-xl bg-white border border-slate-200 hover:border-[#1A73E8] text-left flex items-center justify-between shadow-2xs group transition cursor-pointer ${
-                              isArranger ? 'py-2 min-h-[44px]' : 'py-2.5 min-h-[50px]'
-                            }`}
-                          >
-                            <div>
-                              <span
-                                className={`font-black text-slate-900 group-hover:text-[#1A73E8] ${
-                                  isArranger ? 'text-lg' : 'text-xl'
-                                }`}
-                              >
-                                {chord2}
-                              </span>
-                              {song.capoFret > 0 && capoChord2 && (
-                                <span className="ml-1 text-[11px] font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded-md">
-                                  {lang === 'th' ? `จับ ${capoChord2}` : `Play ${capoChord2}`}
-                                </span>
-                              )}
-                            </div>
-                            <span className="text-[10px] text-slate-400">
-                              {lang === 'th' ? 'จังหวะ 3-4' : 'Beat 3-4'}
-                            </span>
-                          </button>
                         )}
                       </div>
 
-                      {/* Lyrics Input with Live Thai/English Syllable Count Badge */}
-                      <div className="flex items-center gap-1.5 w-full px-3 rounded-xl bg-white border border-slate-200 focus-within:border-[#1A73E8] focus-within:ring-2 focus-within:ring-blue-100 min-h-[42px]">
-                        <input
-                          type="text"
-                          value={bar.lyrics}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            onUpdateSong((prev) => ({
-                              ...prev,
-                              sections: prev.sections.map((s) => ({
-                                ...s,
-                                bars: s.bars.map((b) => (b.id === bar.id ? { ...b, lyrics: val } : b)),
-                              })),
-                            }));
-                          }}
-                          placeholder={t.lyricsPlaceholder}
-                          className="flex-1 min-w-0 py-2 bg-transparent text-sm font-medium text-slate-900 focus:outline-none placeholder:text-slate-400"
-                        />
-                        {syllableCount > 0 && (
-                          <span
-                            className="shrink-0 px-2 py-0.5 rounded-lg bg-slate-100 text-slate-600 border border-slate-200/80 text-[10px] font-bold select-none"
-                            title={`${syllableCount} ${t.syllablesCount}`}
-                          >
-                            {syllableCount} {t.syllablesCount}
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Bar Footer: Full Melody+Mic in Arranger, Clean Quick Mic in Songwriter */}
+                      {/* Chord Slot(s) */}
                       <div
-                        className={`flex items-center pt-1 text-[11px] text-slate-500 ${
-                          isArranger ? 'justify-between' : 'justify-end'
+                        className={`grid gap-1.5 ${
+                          bar.chordsPerBar === 2 ? 'grid-cols-2' : 'grid-cols-1'
                         }`}
                       >
-                        {isArranger && (
+                        {(bar.chordsPerBar === 2
+                          ? [bar.chords[0] || 'C', bar.chords[1] || bar.chords[0] || 'C']
+                          : [bar.chords[0] || 'C']
+                        ).map((rawChord, chordIdx) => {
+                          const soundingChord = transposeChord(
+                            rawChord,
+                            song.transposeSemitones
+                          );
+                          const capoChord =
+                            song.capoFret > 0
+                              ? getCapoFingeringChord(soundingChord, song.capoFret)
+                              : null;
+                          return (
+                            <button
+                              key={chordIdx}
+                              type="button"
+                              onClick={() =>
+                                onOpenChordPicker(
+                                  section.id,
+                                  bar.id,
+                                  chordIdx as 0 | 1,
+                                  rawChord
+                                )
+                              }
+                              className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-surface-1 border border-hairline hover:border-accent-500 transition text-left cursor-pointer group/chord"
+                            >
+                              <div className="min-w-0">
+                                <span className="text-base font-bold font-mono-tabular text-ink-900 group-hover/chord:text-accent-text transition block truncate">
+                                  {soundingChord}
+                                </span>
+                                {capoChord && (
+                                  <span className="text-[10px] font-mono-tabular text-accent-text font-medium block">
+                                    Capo {song.capoFret}: {capoChord}
+                                  </span>
+                                )}
+                              </div>
+                              <ChevronDown className="w-3.5 h-3.5 text-ink-400 group-hover/chord:text-accent-text shrink-0 ml-1" />
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Auto-Grow Full Multi-Line Lyrics Box (Zero Truncation) */}
+                      <AutoGrowTextarea
+                        value={bar.lyrics}
+                        onChange={(val) =>
+                          handleUpdateBarLyrics(section.id, bar.id, val)
+                        }
+                        placeholder={t.lyricsPlaceholder}
+                        ariaLabel={`${t.barLabel} ${thisGlobalIndex + 1} Lyrics`}
+                        className="w-full bg-surface-1 border border-hairline rounded-xl px-3 py-2 text-[15px] leading-relaxed text-ink-900 placeholder:text-ink-400 focus:outline-none focus:border-accent-500 focus:ring-2 focus:ring-accent-200 resize-none overflow-hidden transition"
+                      />
+
+                      {/* Bar Footer: Syllable Badge + Melody / Vocal Tools */}
+                      <div className="flex items-center justify-between gap-2 pt-0.5">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-surface-2 text-[11px] font-mono-tabular font-medium text-ink-400">
+                          {syllableCount} {t.syllablesCount}
+                        </span>
+
+                        <div className="flex items-center gap-1.5">
                           <button
                             type="button"
-                            onClick={() => onOpenMelodyPianoRoll(section.id, bar.id, thisGlobalIndex)}
-                            className="hover:text-[#1A73E8] font-bold transition flex items-center gap-1 cursor-pointer min-h-[30px]"
-                            title={lang === 'th' ? 'เปิด Mini Piano Roll แต่งโน้ตร้องไกด์' : 'Open Mini Piano Roll'}
+                            onClick={() =>
+                              onOpenMelodyPianoRoll(
+                                section.id,
+                                bar.id,
+                                thisGlobalIndex
+                              )
+                            }
+                            className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium border transition cursor-pointer ${
+                              noteCount > 0
+                                ? 'bg-accent-50 border-accent-200 text-accent-text'
+                                : 'bg-surface-1 border-hairline text-ink-700 hover:bg-surface-2'
+                            }`}
                           >
-                            <span>🎹 {t.melodyNotesBtn}</span>
-                            {bar.melodyNotes.length > 0 && (
-                              <span className="px-1.5 py-0.2 bg-blue-100 text-[#1A73E8] rounded-full text-[10px] font-black">
-                                {bar.melodyNotes.length}
-                              </span>
-                            )}
+                            <Music className="w-3 h-3" />
+                            <span>
+                              {noteCount > 0 ? noteCount : t.melodyNotesBtn}
+                            </span>
                           </button>
-                        )}
 
-                        <button
-                          type="button"
-                          onClick={() => onOpenVocalRecorder(section.id, bar.id, thisGlobalIndex)}
-                          className={`font-bold transition flex items-center gap-1 cursor-pointer min-h-[30px] ${
-                            bar.vocalAudio ? 'text-rose-600 hover:text-rose-700' : 'text-slate-500 hover:text-rose-600'
-                          }`}
-                          title={lang === 'th' ? 'อัดเสียงร้องสด / ฮัมทำนองในห้องนี้' : 'Record vocal scratchpad in this bar'}
-                        >
-                          <span>{bar.vocalAudio ? t.vocalHasTrack : t.vocalRecordBtn}</span>
-                          {bar.vocalAudio && (
-                            <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" title="Recorded vocal available"></span>
-                          )}
-                        </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onOpenVocalRecorder(
+                                section.id,
+                                bar.id,
+                                thisGlobalIndex
+                              )
+                            }
+                            className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium border transition cursor-pointer ${
+                              hasVocal
+                                ? 'bg-accent-50 border-accent-200 text-accent-text'
+                                : 'bg-surface-1 border-hairline text-ink-700 hover:bg-surface-2'
+                            }`}
+                          >
+                            {hasVocal ? (
+                              <span className="w-2 h-2 rounded-full bg-rec-500" />
+                            ) : (
+                              <Mic className="w-3 h-3" />
+                            )}
+                            <span>
+                              {hasVocal ? t.vocalHasTrack : t.vocalRecordBtn}
+                            </span>
+                          </button>
+                        </div>
                       </div>
                     </div>
                   );
@@ -1124,6 +1658,59 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
           );
         })}
       </div>
+
+      {/* Bottom Dashed Add Verse/Chorus Quick Trigger */}
+      <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+        <button
+          type="button"
+          onClick={() => handleAddSection('verse')}
+          className="flex-1 min-w-[200px] border border-dashed border-hairline hover:border-accent-500 bg-surface-1/60 hover:bg-surface-1 text-ink-700 hover:text-accent-text rounded-2xl py-3 px-4 text-xs font-medium inline-flex items-center justify-center gap-1.5 transition cursor-pointer"
+        >
+          <Plus className="w-4 h-4" />
+          <span>
+            {lang === 'th' ? 'เพิ่มท่อน Verse' : 'Add Verse Section'}
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => handleAddSection('chorus')}
+          className="flex-1 min-w-[200px] border border-dashed border-hairline hover:border-accent-500 bg-surface-1/60 hover:bg-surface-1 text-ink-700 hover:text-accent-text rounded-2xl py-3 px-4 text-xs font-medium inline-flex items-center justify-center gap-1.5 transition cursor-pointer"
+        >
+          <Plus className="w-4 h-4" />
+          <span>
+            {lang === 'th' ? 'เพิ่มท่อน Chorus' : 'Add Chorus Section'}
+          </span>
+        </button>
+      </div>
+
+      {/* 6-Second Undo Delete Section Banner */}
+      {deletedUndo && (
+        <div className="fixed bottom-24 md:bottom-6 right-4 z-50 flex items-center gap-3 px-4 py-2.5 rounded-2xl bg-ink-900 text-canvas shadow-e3 text-xs font-medium">
+          <span>
+            {lang === 'th'
+              ? `ลบท่อน "${deletedUndo.section.name}" แล้ว`
+              : `Deleted "${deletedUndo.section.name}"`}
+          </span>
+          <button
+            type="button"
+            onClick={handleUndoDeleteSection}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-accent-500 hover:bg-accent-hover text-white font-semibold cursor-pointer"
+          >
+            <RotateCcw className="w-3 h-3" />
+            <span>{lang === 'th' ? 'เลิกทำ' : 'Undo'}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setDeletedUndo(null)}
+            className="opacity-70 hover:opacity-100 p-0.5 cursor-pointer"
+            aria-label={t.close}
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
     </div>
   );
-};
+}
+
+export default SectionBuilder;

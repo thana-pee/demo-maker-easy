@@ -1,10 +1,26 @@
 import type { Metadata, Viewport } from "next";
+import { IBM_Plex_Sans_Thai, IBM_Plex_Mono } from "next/font/google";
 import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
 import { LanguageProvider } from "@/context/LanguageContext";
+import { ThemeProvider } from "@/context/ThemeContext";
 import "./globals.css";
 
+const ibmPlexSansThai = IBM_Plex_Sans_Thai({
+  weight: ["400", "500", "600", "700"],
+  subsets: ["thai", "latin"],
+  variable: "--font-ibm-sans",
+  display: "swap",
+});
+
+const ibmPlexMono = IBM_Plex_Mono({
+  weight: ["500", "600"],
+  subsets: ["latin"],
+  variable: "--font-ibm-mono",
+  display: "swap",
+});
+
 export const viewport: Viewport = {
-  themeColor: "#1A73E8",
+  themeColor: "#5B61EE",
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
@@ -33,12 +49,18 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="th" className="light">
-      <body className="bg-[#F8FAFC] text-slate-900 min-h-screen antialiased selection:bg-blue-200">
-        <LanguageProvider>
-          <ServiceWorkerRegister />
-          {children}
-        </LanguageProvider>
+    <html
+      lang="th"
+      data-theme="light"
+      className={`${ibmPlexSansThai.variable} ${ibmPlexMono.variable} light`}
+    >
+      <body className="bg-canvas text-ink-900 min-h-screen antialiased selection:bg-accent-200">
+        <ThemeProvider>
+          <LanguageProvider>
+            <ServiceWorkerRegister />
+            {children}
+          </LanguageProvider>
+        </ThemeProvider>
       </body>
     </html>
   );
