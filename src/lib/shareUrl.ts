@@ -139,16 +139,22 @@ export function decompressFromUrlSafe(compressed: string): string {
   }
 }
 
-/** สร้าง Share Link ฉบับสมบูรณ์สำหรับส่ง LINE (ตัด binary vocal ขนาดใหญ่ออกเพื่อป้องกัน URL เกินขนาด) */
+/** สร้าง Share Link ฉบับสมบูรณ์สำหรับส่ง LINE (ตัด binary vocal ขนาดใหญ่และ snapshots ออกเพื่อป้องกัน URL เกินขนาด) */
 export function generateShareUrl(song: SongProject): string {
-  // กรองเฉพาะข้อมูลโครงสร้างเพลง เมโลดี้ คอร์ด และเนื้อร้อง ไม่รวม Base64 vocal data เพื่อให้ลิงก์เปิดใน LINE/มือถือได้ 100%
+  // กรองเฉพาะข้อมูลโครงสร้างเพลง เมโลดี้ คอร์ด และเนื้อร้อง ไม่รวม Base64 vocal data และไม่รวมประวัติ snapshots เพื่อให้ลิงก์เปิดใน LINE/มือถือได้ 100%
   const lightweightSong: SongProject = {
     ...song,
     sections: song.sections.map((sec) => ({
       ...sec,
-      bars: sec.bars.map(({ vocalAudio, ...bar }) => bar),
+      bars: sec.bars.map((bar) => {
+        if (!('vocalAudio' in bar) || bar.vocalAudio === undefined) return bar;
+        const copy = { ...bar };
+        delete copy.vocalAudio;
+        return copy;
+      }),
     })),
   };
+  delete lightweightSong.snapshots;
   const jsonStr = JSON.stringify(lightweightSong);
   const compressed = compressToUrlSafe(jsonStr);
   const origin = typeof window !== 'undefined' ? window.location.origin : '';

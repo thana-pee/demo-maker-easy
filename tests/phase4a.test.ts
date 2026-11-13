@@ -12,7 +12,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { AppViewMode, SongSection } from '../src/types/song';
+import type { AppViewMode } from '../src/types/song';
 import {
   cloneSongSection,
   duplicateSectionInList,

@@ -29,7 +29,7 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
   onUpdateSong,
   onClose,
 }) => {
-  const { lang, t } = useLanguage();
+  const { lang } = useLanguage();
   if (!isOpen) return null;
 
   const setGuitarModel = (model: GuitarModel) => {

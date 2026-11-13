@@ -17,8 +17,9 @@ test('i18n: translations.th และ translations.en มี key ครบถ้
   );
 
   for (const key of thKeys) {
-    const thVal = (translations.th as any)[key];
-    const enVal = (translations.en as any)[key];
+    const k = key as keyof typeof translations.th;
+    const thVal = translations.th[k];
+    const enVal = translations.en[k];
     assert.ok(typeof thVal === 'string' && thVal.trim().length > 0, `translations.th.${key} ต้องไม่เป็นค่าว่าง`);
     assert.ok(typeof enVal === 'string' && enVal.trim().length > 0, `translations.en.${key} ต้องไม่เป็นค่าว่าง`);
   }
@@ -43,7 +44,7 @@ test('PWA: manifest.json ถูกต้องตามมาตรฐาน PWA
   assert.strictEqual(manifest.start_url, '/', 'start_url ต้องเป็น /');
   assert.ok(Array.isArray(manifest.icons) && manifest.icons.length >= 2, 'ต้องมี icons อย่างน้อย 2 ขนาด');
 
-  const sizes = manifest.icons.map((i: any) => i.sizes);
+  const sizes = (manifest.icons as Array<{ sizes?: string }>).map((i) => i.sizes);
   assert.ok(sizes.includes('192x192'), 'ต้องมีไอคอนขนาด 192x192');
   assert.ok(sizes.includes('512x512'), 'ต้องมีไอคอนขนาด 512x512');
 });

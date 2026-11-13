@@ -56,21 +56,23 @@ export const VocalRecorderModal: React.FC<VocalRecorderModalProps> = ({
     getAudioEngine().stop();
     setIsPlayingVocalOnly(false);
     setIsPlayingWithBacking(false);
-  }, []);
+  }, [setIsPlayingVocalOnly, setIsPlayingWithBacking]);
 
   // Sync initial state when bar changes
   useEffect(() => {
-    if (bar) {
-      setRecordedDataUrl(bar.vocalAudio || null);
-    }
-    setLatencyOffsetMs(song.vocalLatencyOffsetMs ?? 0);
-    setErrorMessage(null);
-  }, [bar?.id, bar?.vocalAudio, song.vocalLatencyOffsetMs]);
+    const rafId = requestAnimationFrame(() => {
+      if (bar) {
+        setRecordedDataUrl(bar.vocalAudio || null);
+      }
+      setLatencyOffsetMs(song.vocalLatencyOffsetMs ?? 0);
+      setErrorMessage(null);
+    });
+    return () => cancelAnimationFrame(rafId);
+  }, [bar, song.vocalLatencyOffsetMs]);
 
   // Clean up when closing
   useEffect(() => {
     if (!isOpen) {
-      handleStopAllPlayback();
       if (recorderRef.current) {
         recorderRef.current.cancel();
       }
@@ -82,8 +84,12 @@ export const VocalRecorderModal: React.FC<VocalRecorderModalProps> = ({
         clearInterval(countdownTimerRef.current);
         countdownTimerRef.current = null;
       }
-      setIsRecording(false);
-      setCountdownNum(null);
+      const rafId = requestAnimationFrame(() => {
+        handleStopAllPlayback();
+        setIsRecording(false);
+        setCountdownNum(null);
+      });
+      return () => cancelAnimationFrame(rafId);
     }
   }, [isOpen, handleStopAllPlayback]);
 
@@ -134,9 +140,10 @@ export const VocalRecorderModal: React.FC<VocalRecorderModalProps> = ({
       timerRef.current = setInterval(() => {
         setRecordDurationSec((prev) => prev + 0.1);
       }, 100);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : '';
       setErrorMessage(
-        err.message ||
+        msg ||
           (lang === 'th'
             ? 'ไม่สามารถเปิดไมโครโฟนได้ กรุณาอนุญาตการเข้าถึงไมค์ในเบราว์เซอร์'
             : 'Cannot access microphone. Please grant mic permission in your browser.')
@@ -159,9 +166,10 @@ export const VocalRecorderModal: React.FC<VocalRecorderModalProps> = ({
       try {
         const result = await recorderRef.current.stop();
         setRecordedDataUrl(result.dataUrl);
-      } catch (err: any) {
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : '';
         setErrorMessage(
-          err.message || (lang === 'th' ? 'เกิดข้อผิดพลาดในการบันทึกเสียง' : 'Error saving vocal recording.')
+          msg || (lang === 'th' ? 'เกิดข้อผิดพลาดในการบันทึกเสียง' : 'Error saving vocal recording.')
         );
       }
     }

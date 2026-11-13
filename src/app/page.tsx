@@ -4,7 +4,6 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { SongProject, SongSection, MelodyNote, AppViewMode } from '@/types/song';
 import { createDefaultSong } from '@/lib/defaultSong';
 import { ProgressionPreset } from '@/lib/chordUtils';
-import { getTiming } from '@/lib/barPlanner';
 import { useAudioEngine } from '@/hooks/useAudioEngine';
 import {
   getSavedSongs,
@@ -74,28 +73,30 @@ export default function Home() {
   // 1. ตรวจสอบเพลงจาก URL หรือจาก localStorage เมื่อเปิดเว็บครั้งแรก
   useEffect(() => {
     if (typeof window === 'undefined') return;
-
-    // ตรวจสอบ query string (?song= หรือ ?data=)
-    if (window.location.search) {
-      const shared = parseSongFromUrl(window.location.search);
-      if (shared) {
-        setSong(shared);
-        saveSong(shared);
-        setActiveSongId(shared.id);
-        setShareToastMsg(`📥 โหลดเพลง "${shared.title}" จากลิงก์แชร์เรียบร้อยแล้ว! พร้อมเล่นและแต่งต่อได้ทันที`);
-        // ล้าง query string ออกเพื่อไม่ให้ค้างในช่อง URL
-        window.history.replaceState({}, document.title, window.location.pathname);
-        return;
+    const rafId = requestAnimationFrame(() => {
+      // ตรวจสอบ query string (?song= หรือ ?data=)
+      if (window.location.search) {
+        const shared = parseSongFromUrl(window.location.search);
+        if (shared) {
+          setSong(shared);
+          saveSong(shared);
+          setActiveSongId(shared.id);
+          setShareToastMsg(`📥 โหลดเพลง "${shared.title}" จากลิงก์แชร์เรียบร้อยแล้ว! พร้อมเล่นและแต่งต่อได้ทันที`);
+          // ล้าง query string ออกเพื่อไม่ให้ค้างในช่อง URL
+          window.history.replaceState({}, document.title, window.location.pathname);
+          return;
+        }
       }
-    }
 
-    // ถ้าไม่มีใน URL ให้โหลดเพลงล่าสุดที่บันทึกไว้ใน localStorage (และ hydrate เสียงร้องจาก IndexedDB)
-    const saved = getSavedSongs();
-    const activeId = getActiveSongId();
-    const target = saved.find((s) => s.id === activeId) || saved[0];
-    if (target) {
-      selectSongWithVocals(target);
-    }
+      // ถ้าไม่มีใน URL ให้โหลดเพลงล่าสุดที่บันทึกไว้ใน localStorage (และ hydrate เสียงร้องจาก IndexedDB)
+      const saved = getSavedSongs();
+      const activeId = getActiveSongId();
+      const target = saved.find((s) => s.id === activeId) || saved[0];
+      if (target) {
+        selectSongWithVocals(target);
+      }
+    });
+    return () => cancelAnimationFrame(rafId);
   }, [selectSongWithVocals]);
 
   // 2. Auto-save เพลงลง localStorage เมื่อมีการเปลี่ยนแปลง (Debounce 600ms)
@@ -239,16 +240,18 @@ export default function Home() {
   useEffect(() => {
     if (!isPlaying) {
       if (timerRef.current) clearInterval(timerRef.current);
-      setCurrentBeat(1);
-      return;
+      const rafId = requestAnimationFrame(() => setCurrentBeat(1));
+      return () => cancelAnimationFrame(rafId);
     }
-    setCurrentBeat(1);
-    const timing = getTiming(song);
-    const intervalMs = (timing.barSec / timing.uiBeatsPerBar) * 1000;
+    const rafId = requestAnimationFrame(() => setCurrentBeat(1));
+    const barSec = (60 / song.bpm) * (song.timeSignature === '3/4' ? 3 : song.timeSignature === '6/8' ? 3 : 4);
+    const uiBeatsPerBar = song.timeSignature === '3/4' ? 3 : song.timeSignature === '6/8' ? 6 : 4;
+    const intervalMs = (barSec / uiBeatsPerBar) * 1000;
     timerRef.current = setInterval(() => {
-      setCurrentBeat((prev) => (prev < timing.uiBeatsPerBar ? prev + 1 : 1));
+      setCurrentBeat((prev) => (prev < uiBeatsPerBar ? prev + 1 : 1));
     }, intervalMs);
     return () => {
+      cancelAnimationFrame(rafId);
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, [isPlaying, currentBarIndex, song.bpm, song.timeSignature]);
@@ -631,6 +634,7 @@ export default function Home() {
 
       {melodyModalState.isOpen && (
         <MiniPianoRollModal
+          key={`${melodyModalState.sectionId}-${melodyModalState.barId}`}
           isOpen={melodyModalState.isOpen}
           song={song}
           sectionId={melodyModalState.sectionId}
@@ -646,6 +650,7 @@ export default function Home() {
 
       {vocalModalState.isOpen && (
         <VocalRecorderModal
+          key={`${vocalModalState.sectionId}-${vocalModalState.barId}`}
           isOpen={vocalModalState.isOpen}
           song={song}
           sectionId={vocalModalState.sectionId}

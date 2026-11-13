@@ -11,22 +11,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createDefaultSong } from '../src/lib/defaultSong';
-import { planBar, flattenSong, getTiming, isTrackOn } from '../src/lib/barPlanner';
+import { planBar, flattenSong, isTrackOn } from '../src/lib/barPlanner';
 import {
   midiToNoteName,
   isBlackKey,
   getScalePitchClasses,
   getChordPitchClasses,
-  getPitchRange,
   getRootPitchClass,
 } from '../src/lib/melodyUtils';
 import { generateMidiFile } from '../src/lib/midiExport';
 import { generateShareUrl, parseSongFromUrl } from '../src/lib/shareUrl';
-import { SongProject, MelodyNote } from '../src/types/song';
 
 // Mock localStorage for Node.js test environment
 const mockStorage: Record<string, string> = {};
-(globalThis as any).window = {
+(globalThis as Record<string, unknown>).window = {
   location: {
     origin: 'http://localhost:3000',
     pathname: '/',

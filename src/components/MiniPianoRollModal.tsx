@@ -45,7 +45,9 @@ export const MiniPianoRollModal: React.FC<MiniPianoRollModalProps> = ({
   const bar = section?.bars.find((b) => b.id === barId);
 
   // Local draft of notes so user can cancel or commit
-  const [draftNotes, setDraftNotes] = useState<MelodyNote[]>([]);
+  const [draftNotes, setDraftNotes] = useState<MelodyNote[]>(() =>
+    bar ? [...bar.melodyNotes] : []
+  );
   const [keySnapOnly, setKeySnapOnly] = useState<boolean>(true); // Default to in-key for fast folk/pop writing
   const [resolution16, setResolution16] = useState<boolean>(false); // 8 steps (false) or 16 steps (true)
   const [defaultDuration, setDefaultDuration] = useState<number>(2); // 2 steps default (quarter/eighth depending on grid)
@@ -73,16 +75,21 @@ export const MiniPianoRollModal: React.FC<MiniPianoRollModalProps> = ({
 
   // Sync draftNotes whenever bar changes
   useEffect(() => {
-    if (bar) {
+    if (!bar) return;
+    const rafId = requestAnimationFrame(() => {
       setDraftNotes([...bar.melodyNotes]);
-    }
-  }, [bar?.id, bar?.melodyNotes]);
+    });
+    return () => cancelAnimationFrame(rafId);
+  }, [bar]);
 
   // Stop auditioning when closing
   useEffect(() => {
     if (!isOpen && isAuditioning) {
       getAudioEngine().stop();
-      setIsAuditioning(false);
+      const rafId = requestAnimationFrame(() => {
+        setIsAuditioning(false);
+      });
+      return () => cancelAnimationFrame(rafId);
     }
   }, [isOpen, isAuditioning]);
 

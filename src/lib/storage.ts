@@ -113,7 +113,7 @@ export function getSongById(id: string): SongProject | null {
 }
 
 /** บันทึกหรืออัปเดตเพลง (offload vocalAudio ไปยัง IndexedDB ในเบราว์เซอร์ + มีระบบกู้คืนเมื่อ LocalStorage เต็ม) */
-export function saveSong(song: SongProject): void {
+export function saveSong(song: SongProject, options?: { setActive?: boolean }): void {
   const storage = getStorage();
   const updatedSong: SongProject = {
     ...song,
@@ -158,7 +158,9 @@ export function saveSong(song: SongProject): void {
       }
     }
 
-    setActiveSongId(song.id);
+    if (options?.setActive !== false) {
+      setActiveSongId(song.id);
+    }
   } catch (err) {
     console.error('Error saving song to localStorage:', err);
   }
@@ -196,20 +198,21 @@ export function duplicateSong(id: string): SongProject | null {
 
   const copy: SongProject = {
     ...original,
-    id: `song-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    id: generateUniqueId('song'),
     title: `${original.title} (สำเนา)`,
     updatedAt: new Date().toISOString(),
+    snapshots: [],
     sections: original.sections.map((sec) => ({
       ...sec,
-      id: `sec-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      id: generateUniqueId('sec'),
       bars: sec.bars.map((b) => ({
         ...b,
-        id: `bar-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        id: generateUniqueId('bar'),
       })),
     })),
   };
 
-  saveSong(copy);
+  saveSong(copy, { setActive: false });
   return copy;
 }
 
@@ -247,7 +250,7 @@ export function importSongsJSON(jsonStr: string): SongProject[] | null {
     // หลีกเลี่ยง ID ซ้ำ
     const toAdd = list.map((s) => ({
       ...s,
-      id: existingIds.has(s.id) ? `imported-${Date.now()}-${Math.floor(Math.random() * 1000)}` : s.id,
+      id: existingIds.has(s.id) ? generateUniqueId('imported') : s.id,
       updatedAt: new Date().toISOString(),
     }));
 
@@ -373,7 +376,7 @@ export function addSnapshotToSong(
     ...song,
     snapshots: nextSnapshots,
   };
-  saveSong(updated);
+  saveSong(updated, { setActive: false });
   return { song: updated, snapshot };
 }
 
@@ -383,7 +386,7 @@ export function removeSnapshotFromSong(song: SongProject, snapshotId: string): S
     ...song,
     snapshots: (song.snapshots || []).filter((snap) => snap.id !== snapshotId),
   };
-  saveSong(updated);
+  saveSong(updated, { setActive: false });
   return updated;
 }
 
@@ -401,6 +404,6 @@ export function updateSongLibraryMeta(
   if (patch.statusTag !== undefined) {
     updated.statusTag = patch.statusTag;
   }
-  saveSong(updated);
+  saveSong(updated, { setActive: false });
   return updated;
 }

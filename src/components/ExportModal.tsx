@@ -15,7 +15,7 @@ interface ExportModalProps {
 }
 
 export const ExportModal: React.FC<ExportModalProps> = ({ isOpen, song, onClose }) => {
-  const { lang, t } = useLanguage();
+  const { lang } = useLanguage();
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedSuno, setCopiedSuno] = useState(false);
   const [downloadedMidi, setDownloadedMidi] = useState(false);
@@ -137,8 +137,9 @@ export const ExportModal: React.FC<ExportModalProps> = ({ isOpen, song, onClose 
       setIsRenderingMp3(true);
       setMp3Progress(5);
       await downloadSongMp3(song, (pct) => setMp3Progress(pct));
-    } catch (err: any) {
-      alert((lang === 'th' ? 'เกิดข้อผิดพลาดในการเรนเดอร์ MP3: ' : 'Error rendering MP3: ') + err.message);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      alert((lang === 'th' ? 'เกิดข้อผิดพลาดในการเรนเดอร์ MP3: ' : 'Error rendering MP3: ') + msg);
     } finally {
       setIsRenderingMp3(false);
       setMp3Progress(0);

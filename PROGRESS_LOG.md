@@ -224,3 +224,22 @@ Tests:
 - `npx eslint src/lib/thaiRhymeHelper.ts src/lib/creditManager.ts src/app/api/advance/lyrics/route.ts src/components/AdvanceModeModal.tsx src/components/TransportBar.tsx src/components/SectionBuilder.tsx tests/phase4e.test.ts` → 0 errors, 0 warnings
 - `npx tsx --test tests/*.test.ts` → 78/78 passing (100%)
 - `npm run build` → Next.js 16.4.6 (Turbopack) + TypeScript checks exited with code 0 (`/api/advance/lyrics` + `/` rendered cleanly)
+
+---
+
+### [Phase 4 QA Audit & Bug Fixes] Cross-Phase Regression Suite & Full-Repo Lint Cleanup
+Status: PASS (Completed & Verified)
+Timestamp: 2026-11-13T09:03:00+07:00
+
+Bugs fixed:
+- `src/lib/shareUrl.ts`: Stripped `snapshots` array alongside `vocalAudio` in `generateShareUrl` so LINE share links stay compact regardless of snapshot count
+- `src/lib/storage.ts`: Switched `duplicateSong` and `importSongsJSON` to collision-free `generateUniqueId`, cleared inherited `snapshots` on song duplication, and added `{ setActive?: boolean }` to `saveSong` so background library edits/duplication/metadata updates do not hijack `ACTIVE_SONG_KEY`
+- `src/components/SongLibraryModal.tsx`: Wired interactive `statusFilter` pills to `filterLibrarySongs` and ensured `submitRename` uses live `currentSong` data when renaming the active song
+- `src/lib/thaiRhymeHelper.ts`: Removed non-rhyming `'สายลม'` from `-าย` group and moved direct dictionary lookup ahead of regex heuristics so irregular Thai spellings (`'อัศจรรย์'`, `'ถวิล'`, `'ชัวร์'`) match accurately
+- Repo-wide ESLint cleanup: Resolved all `react-hooks/set-state-in-effect`, `react-hooks/preserve-manual-memoization`, `react-hooks/exhaustive-deps`, `react/no-unescaped-entities`, `@typescript-eslint/no-explicit-any`, and unused variable issues across `page.tsx`, `MiniPianoRollModal.tsx`, `VocalRecorderModal.tsx`, `PwaInstallPrompt.tsx`, `ExportModal.tsx`, `SoundCustomizerPanel.tsx`, `LanguageContext.tsx`, `audioEngine.ts`, `mp3Exporter.ts`, and `tests/phase1c–4a.test.ts`
+- `tests/phase4_qa.test.ts`: Added 5 QA regression and cross-phase end-to-end tests covering Bugs #1–#4 and Phase 4A–4E integration
+
+Tests:
+- `npx eslint .` → 0 errors, 0 warnings across the entire repository
+- `npx tsx --test tests/*.test.ts` → 83/83 passing (100%)
+- `npm run build` → Next.js 16.4.6 (Turbopack) + TypeScript checks exited with code 0

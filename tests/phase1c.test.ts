@@ -20,7 +20,7 @@ import { generateMidiFile } from '../src/lib/midiExport';
 
 // Mock localStorage for Node.js test environment
 const mockStorage: Record<string, string> = {};
-(globalThis as any).window = {
+(globalThis as Record<string, unknown>).window = {
   location: {
     origin: 'http://localhost:3000',
     pathname: '/',

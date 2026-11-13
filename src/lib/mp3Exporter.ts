@@ -37,7 +37,6 @@ export async function audioBufferToMp3(
 
   const sampleBlockSize = 1152;
   const mp3Data: Uint8Array[] = [];
-  const totalBlocks = Math.ceil(left.length / sampleBlockSize);
 
   for (let i = 0; i < left.length; i += sampleBlockSize) {
     const leftChunk = left.subarray(i, i + sampleBlockSize);
@@ -234,7 +233,6 @@ export async function renderSongToAudioBuffer(
       if (ev.kind === 'drum') {
         if (!isTrackOn(song, fb.section, 'drums')) continue;
         const vel = ev.vel / 127;
-        const pan = ev.pan;
         const dest = trackGains['drums'];
 
         // Drum synth (Kick, Snare, Cajon, Shaker, Hat, Crash)

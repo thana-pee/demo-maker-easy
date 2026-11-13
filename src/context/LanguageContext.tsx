@@ -21,8 +21,11 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [lang, setLangState] = useState<Language>('th');
 
   useEffect(() => {
-    const saved = getSavedLanguage();
-    setLangState(saved);
+    const rafId = requestAnimationFrame(() => {
+      const saved = getSavedLanguage();
+      setLangState(saved);
+    });
+    return () => cancelAnimationFrame(rafId);
   }, []);
 
   const setLang = (newLang: Language) => {

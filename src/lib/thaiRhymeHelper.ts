@@ -37,7 +37,7 @@ export const THAI_RHYME_GROUPS: RhymeGroupDef[] = [
     examples: ['หาย', 'สุดท้าย', 'มากมาย'],
     words: [
       'ใจหาย', 'เสียดาย', 'สุดท้าย', 'เดียวดาย', 'มากมาย', 'มลาย',
-      'จางหาย', 'ความหมาย', 'ง่ายดาย', 'ข้างกาย', 'สายลม', 'ทักทาย', 'วุ่นวาย',
+      'จางหาย', 'ความหมาย', 'ง่ายดาย', 'ข้างกาย', 'โปรยปราย', 'ทักทาย', 'วุ่นวาย',
     ],
   },
   {
@@ -136,8 +136,8 @@ export const THAI_RHYME_GROUPS: RhymeGroupDef[] = [
     examples: ['หัวใจ', 'ไกล', 'ไหว'],
     words: [
       'หัวใจ', 'ข้างใน', 'ห่างไกล', 'เมื่อไหร่', 'เชื่อใจ', 'หวั่นไหว',
-      'อ่อนไหว', 'เข้าใจ', 'เสียใจ', 'ลืมไป', 'เป็นไป', 'สดใส', 'ข้างกาย? -> ข้างในใจ',
-    ].filter((w) => !w.includes('?')),
+      'อ่อนไหว', 'เข้าใจ', 'เสียใจ', 'ลืมไป', 'เป็นไป', 'สดใส', 'ข้างในใจ',
+    ],
   },
   {
     id: 'ee',
@@ -184,8 +184,13 @@ function normalizeLastSyllable(rawWord: string): string {
 }
 
 function classifyRhymeGroupId(word: string): string {
+  const trimmed = word.trim();
   const syl = normalizeLastSyllable(word);
   if (!syl) return 'ai';
+
+  // ตรวจสอบพจนานุกรมก่อน (รองรับคำสะกดพิเศษ เช่น อัศจรรย์, ถวิล, ชัวร์)
+  const direct = THAI_RHYME_GROUPS.find((g) => g.words.includes(trimmed) || g.words.includes(syl));
+  if (direct) return direct.id;
 
   // จัดลำดับการจับรูปแบบจากจำเพาะที่สุดไปยังสระเดี่ยว
   if (/[ไใ][\u0E01-\u0E2E]{1,2}$/.test(syl) || /ัย$/.test(syl)) return 'ai';
@@ -203,11 +208,6 @@ function classifyRhymeGroupId(word: string): string {
   if (/า$/.test(syl)) return 'aa';
   if (/ี$/.test(syl)) return 'ee';
   if (/อ$/.test(syl)) return 'or';
-
-  // ตรวจสอบว่าอยู่ในพจนานุกรมคำตรงกันหรือไม่ (กรณีคำหลายพยางค์หรือรูปเขียนพิเศษ)
-  const trimmed = word.trim();
-  const direct = THAI_RHYME_GROUPS.find((g) => g.words.includes(trimmed) || g.words.includes(syl));
-  if (direct) return direct.id;
 
   return 'aa';
 }

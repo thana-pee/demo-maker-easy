@@ -88,6 +88,7 @@ export const SongLibraryModal: React.FC<SongLibraryModalProps> = ({
   // Phase 4C: Search, Folders, Status Tags, Snapshots
   const [searchQuery, setSearchQuery] = useState('');
   const [folderFilter, setFolderFilter] = useState<string>('ALL');
+  const [statusFilter, setStatusFilter] = useState<SongStatusTag | 'ALL'>('ALL');
   const [customFolders, setCustomFolders] = useState<string[]>([]);
   const [showNewFolderInput, setShowNewFolderInput] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
@@ -113,8 +114,8 @@ export const SongLibraryModal: React.FC<SongLibraryModalProps> = ({
   }, [songs, customFolders]);
 
   const filteredSongs = useMemo(
-    () => filterLibrarySongs(songs, searchQuery, folderFilter),
-    [songs, searchQuery, folderFilter]
+    () => filterLibrarySongs(songs, searchQuery, folderFilter, statusFilter),
+    [songs, searchQuery, folderFilter, statusFilter]
   );
 
   if (!isOpen) return null;
@@ -197,8 +198,9 @@ export const SongLibraryModal: React.FC<SongLibraryModalProps> = ({
     if (!editTitle.trim()) return;
     const target = songs.find((s) => s.id === id);
     if (target) {
-      const updated = { ...target, title: editTitle.trim() };
-      saveSong(updated);
+      const base = id === currentSong.id ? currentSong : target;
+      const updated = { ...base, title: editTitle.trim() };
+      saveSong(updated, { setActive: id === currentSong.id });
       syncAfterUpdate(updated);
       showFeedback(lang === 'th' ? `เปลี่ยนชื่อเป็น "${editTitle.trim()}" เรียบร้อย` : `Renamed to "${editTitle.trim()}"`);
     }
@@ -407,6 +409,34 @@ export const SongLibraryModal: React.FC<SongLibraryModalProps> = ({
             >
               + {lang === 'th' ? 'โฟลเดอร์' : 'Folder'}
             </button>
+          </div>
+
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+            <button
+              type="button"
+              onClick={() => setStatusFilter('ALL')}
+              className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold whitespace-nowrap transition cursor-pointer border ${
+                statusFilter === 'ALL'
+                  ? 'bg-slate-800 text-white border-slate-800'
+                  : 'bg-white hover:bg-slate-100 text-slate-600 border-slate-200'
+              }`}
+            >
+              {lang === 'th' ? 'ทุกสถานะ' : 'All Status'}
+            </button>
+            {(Object.keys(STATUS_TAG_META) as SongStatusTag[]).map((st) => (
+              <button
+                key={st}
+                type="button"
+                onClick={() => setStatusFilter(st)}
+                className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold whitespace-nowrap transition cursor-pointer border ${
+                  statusFilter === st
+                    ? 'bg-slate-800 text-white border-slate-800'
+                    : `${STATUS_TAG_META[st].className} opacity-80 hover:opacity-100`
+                }`}
+              >
+                {lang === 'th' ? STATUS_TAG_META[st].labelTh : STATUS_TAG_META[st].labelEn}
+              </button>
+            ))}
           </div>
 
           {showNewFolderInput && (

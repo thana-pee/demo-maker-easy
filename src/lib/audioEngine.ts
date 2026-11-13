@@ -71,9 +71,6 @@ const TRACK_DEFAULT_VOL: Record<TrackId, number> = {
   melody:        90,
 };
 
-const LOOKAHEAD_MS = 200;      // smplr Scheduler lookahead
-const SCHEDULE_INTERVAL_MS = 50;
-
 // ─────────────────────────── Drum Synthesis ───────────────────────────
 
 /**
