@@ -27,7 +27,10 @@ export interface Translations {
   countInBadge: string;
   barLabel: string;
   modeSongwriting: string;
+  modeArranger: string;
   modeKaraoke: string;
+  zenMode: string;
+  zenModeHint: string;
   exportShare: string;
   timeSignature: string;
   tempo: string;
@@ -56,6 +59,19 @@ export interface Translations {
   // Section Builder
   addSection: string;
   addBar: string;
+  duplicateSection: string;
+  syllablesCount: string;
+  activeInstrumentsLabel: string;
+  noActiveInstruments: string;
+  expandInstruments: string;
+  collapseInstruments: string;
+  openArrangerBtn: string;
+  openArrangerHint: string;
+  barOptionsBtn: string;
+  songwriterTitle: string;
+  songwriterSubtitle: string;
+  arrangerTitle: string;
+  arrangerSubtitle: string;
   chordPresets: string;
   dynamicIntensity: string;
   intensityLow: string;
@@ -125,8 +141,11 @@ export const translations: Record<Language, Translations> = {
     countInOff: '🥁 นับเข้า: ปิด',
     countInBadge: 'นับเข้า',
     barLabel: 'ห้องที่',
-    modeSongwriting: '🎛️ โหมดแต่งเพลง',
-    modeKaraoke: '🎤 โหมดคาราโอเกะ',
+    modeSongwriting: '✍️ แต่งเพลง',
+    modeArranger: '🎛️ เรียบเรียง',
+    modeKaraoke: '🎤 คาราโอเกะ',
+    zenMode: '✨ Zen',
+    zenModeHint: 'โหมดโฟกัส: ซ่อนแถบตั้งค่าด้านบนเพื่อเพิ่มพื้นที่หน้าจอ',
     exportShare: '📤 แชร์ / ส่งออก',
     timeSignature: 'จังหวะ:',
     tempo: 'ความเร็ว:',
@@ -153,6 +172,19 @@ export const translations: Record<Language, Translations> = {
 
     addSection: '+ เพิ่มท่อนเพลง',
     addBar: '+ เพิ่ม 1 ห้อง',
+    duplicateSection: '📋 คัดลอกท่อน',
+    syllablesCount: 'พยางค์',
+    activeInstrumentsLabel: 'เปิดใช้',
+    noActiveInstruments: 'ปิดเสียงเครื่องดนตรีทั้งหมดในท่อนนี้',
+    expandInstruments: '▾ ปรับเครื่องดนตรี',
+    collapseInstruments: '▲ ซ่อนเครื่องดนตรี',
+    openArrangerBtn: '🎛️ เรียบเรียง',
+    openArrangerHint: 'สลับไปแท็บเรียบเรียงเพื่อปรับสไตล์เครื่องดนตรีและ Piano Roll',
+    barOptionsBtn: 'ตัวเลือกห้อง',
+    songwriterTitle: 'โครงสร้างเพลงและเนื้อร้อง (Songwriter)',
+    songwriterSubtitle: 'เน้นคอร์ด เนื้อร้อง นับพยางค์ และอัดฮัมทำนองแบบคลีนไร้สิ่งรบกวน',
+    arrangerTitle: 'เรียบเรียงดนตรีและรายละเอียด (Arranger)',
+    arrangerSubtitle: 'ปรับเครื่องดนตรีประจำท่อน สไตล์การเล่น Let-Ring/Break และโน้ตเมโลดี้ไกด์',
     chordPresets: '⚡ สูตรคอร์ดฮิต',
     dynamicIntensity: 'ความหนักแน่น:',
     intensityLow: 'เบา (Intro/Verse)',
@@ -216,8 +248,11 @@ export const translations: Record<Language, Translations> = {
     countInOff: '🥁 Count-in: OFF',
     countInBadge: 'COUNT-IN',
     barLabel: 'Bar',
-    modeSongwriting: '🎛️ Studio Mode',
-    modeKaraoke: '🎤 Karaoke Mode',
+    modeSongwriting: '✍️ Songwriter',
+    modeArranger: '🎛️ Arranger',
+    modeKaraoke: '🎤 Stage',
+    zenMode: '✨ Zen',
+    zenModeHint: 'Zen Focus Mode: hide top parameter bar for distraction-free writing',
     exportShare: '📤 Export / Share',
     timeSignature: 'Meter:',
     tempo: 'Tempo:',
@@ -244,6 +279,19 @@ export const translations: Record<Language, Translations> = {
 
     addSection: '+ Add Section',
     addBar: '+ Add 1 Bar',
+    duplicateSection: '📋 Duplicate',
+    syllablesCount: 'syl',
+    activeInstrumentsLabel: 'Active',
+    noActiveInstruments: 'All instruments muted',
+    expandInstruments: '▾ Instruments',
+    collapseInstruments: '▲ Hide',
+    openArrangerBtn: '🎛️ Arranger',
+    openArrangerHint: 'Switch to Arranger tab for instrument styles & Piano Roll',
+    barOptionsBtn: 'Bar options',
+    songwriterTitle: 'Songwriting Sheet & Chords',
+    songwriterSubtitle: 'Distraction-free chords, lyrics, syllable counter, and vocal scratchpad',
+    arrangerTitle: 'Arrangement, Instruments & Piano Roll',
+    arrangerSubtitle: 'Per-section instruments, playing styles, bar dynamics, and melody piano roll',
     chordPresets: '⚡ Chord Formulas',
     dynamicIntensity: 'Dynamic:',
     intensityLow: 'Low (Intro/Verse)',

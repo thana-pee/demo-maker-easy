@@ -1,22 +1,24 @@
 'use client';
 
 import React from 'react';
-import { SongProject, TimeSignature } from '@/types/song';
+import { SongProject, TimeSignature, AppViewMode } from '@/types/song';
 import { useLanguage } from '@/context/LanguageContext';
 
 interface TransportBarProps {
   song: SongProject;
-  activeMode: 'edit' | 'karaoke';
+  activeMode: AppViewMode;
   isPlaying: boolean;
   currentBarIndex: number;
   currentBeat: number;
   isCountIn: boolean;
   isSoundPanelOpen: boolean;
+  isZenMode?: boolean;
   onTogglePlay: () => void;
   onStop: () => void;
   onToggleCountIn: () => void;
-  onSwitchMode: (mode: 'edit' | 'karaoke') => void;
+  onSwitchMode: (mode: AppViewMode) => void;
   onToggleSoundPanel: () => void;
+  onToggleZenMode?: () => void;
   onOpenExportModal: () => void;
   onOpenLibraryModal: () => void;
   onUpdateSong: (updater: (prev: SongProject) => SongProject) => void;
@@ -32,11 +34,13 @@ export const TransportBar: React.FC<TransportBarProps> = ({
   currentBeat,
   isCountIn,
   isSoundPanelOpen,
+  isZenMode = false,
   onTogglePlay,
   onStop,
   onToggleCountIn,
   onSwitchMode,
   onToggleSoundPanel,
+  onToggleZenMode,
   onOpenExportModal,
   onOpenLibraryModal,
   onUpdateSong,
@@ -59,7 +63,11 @@ export const TransportBar: React.FC<TransportBarProps> = ({
   };
 
   return (
-    <header className="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200 shadow-xs px-3 sm:px-6 py-2.5 sm:py-3 safe-top">
+    <header
+      className={`sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200 shadow-xs px-3 sm:px-6 safe-top transition-all ${
+        isZenMode ? 'py-2' : 'py-2.5 sm:py-3'
+      }`}
+    >
       <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2.5 sm:gap-3">
         {/* Left: Song Library & Editable Title */}
         <div className="flex items-center gap-2 sm:gap-2.5">
@@ -149,10 +157,11 @@ export const TransportBar: React.FC<TransportBarProps> = ({
           </div>
         </div>
 
-        {/* Right: Clean Mode Switcher, Language Toggle & Export */}
-        <div className="flex items-center gap-2">
+        {/* Right: Clean 3-Tab Mode Switcher, Language Toggle, Zen & Export */}
+        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
           {/* Language Toggle (🇹🇭 / 🇬🇧) */}
           <button
+            type="button"
             onClick={toggleLang}
             className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200/80 text-slate-800 font-bold text-xs sm:text-sm transition cursor-pointer min-h-[38px]"
             title={lang === 'th' ? 'Switch to English' : 'เปลี่ยนเป็นภาษาไทย'}
@@ -160,12 +169,19 @@ export const TransportBar: React.FC<TransportBarProps> = ({
             <span>{lang === 'th' ? '🇹🇭 ไทย' : '🇬🇧 EN'}</span>
           </button>
 
-          {/* Mode Switcher */}
-          <div className="bg-slate-100 p-1 rounded-2xl flex items-center border border-slate-200">
+          {/* 3-Tab Mode Switcher */}
+          <div
+            className="bg-slate-100 p-1 rounded-2xl flex items-center border border-slate-200"
+            role="tablist"
+            aria-label="Workspace modes"
+          >
             <button
-              onClick={() => onSwitchMode('edit')}
-              className={`px-2.5 sm:px-3 py-1.5 rounded-xl font-bold text-xs sm:text-sm transition cursor-pointer min-h-[36px] ${
-                activeMode === 'edit'
+              type="button"
+              role="tab"
+              aria-selected={activeMode === 'songwriter'}
+              onClick={() => onSwitchMode('songwriter')}
+              className={`px-2.5 sm:px-3 py-1.5 rounded-xl font-bold text-xs sm:text-sm transition cursor-pointer min-h-[36px] whitespace-nowrap ${
+                activeMode === 'songwriter'
                   ? 'bg-white text-[#1A73E8] shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
@@ -173,8 +189,24 @@ export const TransportBar: React.FC<TransportBarProps> = ({
               {t.modeSongwriting}
             </button>
             <button
+              type="button"
+              role="tab"
+              aria-selected={activeMode === 'arranger'}
+              onClick={() => onSwitchMode('arranger')}
+              className={`px-2.5 sm:px-3 py-1.5 rounded-xl font-bold text-xs sm:text-sm transition cursor-pointer min-h-[36px] whitespace-nowrap ${
+                activeMode === 'arranger'
+                  ? 'bg-white text-[#1A73E8] shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              {t.modeArranger}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeMode === 'karaoke'}
               onClick={() => onSwitchMode('karaoke')}
-              className={`px-2.5 sm:px-3 py-1.5 rounded-xl font-bold text-xs sm:text-sm transition cursor-pointer min-h-[36px] ${
+              className={`px-2.5 sm:px-3 py-1.5 rounded-xl font-bold text-xs sm:text-sm transition cursor-pointer min-h-[36px] whitespace-nowrap ${
                 activeMode === 'karaoke'
                   ? 'bg-white text-[#1A73E8] shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
@@ -184,17 +216,36 @@ export const TransportBar: React.FC<TransportBarProps> = ({
             </button>
           </div>
 
+          {/* Zen Focus Mode Toggle */}
+          {onToggleZenMode && (
+            <button
+              type="button"
+              aria-pressed={isZenMode}
+              onClick={onToggleZenMode}
+              className={`flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-xl font-bold text-xs sm:text-sm border transition cursor-pointer min-h-[38px] whitespace-nowrap ${
+                isZenMode
+                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200/80'
+              }`}
+              title={t.zenModeHint}
+            >
+              <span>{t.zenMode}</span>
+            </button>
+          )}
+
           <button
+            type="button"
             onClick={onOpenExportModal}
-            className="px-3 sm:px-3.5 py-2 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm shadow-xs transition cursor-pointer min-h-[40px]"
+            className="px-3 sm:px-3.5 py-2 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm shadow-xs transition cursor-pointer min-h-[40px] whitespace-nowrap"
           >
             {t.exportShare}
           </button>
         </div>
       </div>
 
-      {/* SECOND ROW: Musical Parameters Bar */}
-      <div className="max-w-7xl mx-auto mt-2 sm:mt-2.5 pt-2 sm:pt-2.5 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2.5 sm:gap-3 text-xs sm:text-sm">
+      {/* SECOND ROW: Musical Parameters Bar (hidden in Zen Focus Mode) */}
+      {!isZenMode && (
+        <div className="max-w-7xl mx-auto mt-2 sm:mt-2.5 pt-2 sm:pt-2.5 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2.5 sm:gap-3 text-xs sm:text-sm">
         <div className="flex flex-wrap items-center gap-2.5 sm:gap-4">
           {/* Time Signature */}
           <div className="flex items-center gap-1.5">
@@ -287,6 +338,7 @@ export const TransportBar: React.FC<TransportBarProps> = ({
           <span className="text-xs">{isSoundPanelOpen ? '▲' : '▼'}</span>
         </button>
       </div>
+      )}
     </header>
   );
 };

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { SongProject, MelodyNote } from '@/types/song';
+import { SongProject, MelodyNote, AppViewMode } from '@/types/song';
 import { createDefaultSong } from '@/lib/defaultSong';
 import { ProgressionPreset } from '@/lib/chordUtils';
 import { getTiming } from '@/lib/barPlanner';
@@ -25,7 +25,8 @@ import { useLanguage } from '@/context/LanguageContext';
 export default function Home() {
   const { lang, t } = useLanguage();
   const [song, setSong] = useState<SongProject>(() => createDefaultSong());
-  const [activeMode, setActiveMode] = useState<'edit' | 'karaoke'>('edit');
+  const [activeMode, setActiveMode] = useState<AppViewMode>('songwriter');
+  const [isZenMode, setIsZenMode] = useState(false);
   const [currentBeat, setCurrentBeat] = useState(1);
   const [isSoundPanelOpen, setIsSoundPanelOpen] = useState(false);
   const [showIosBanner, setShowIosBanner] = useState(true);
@@ -335,8 +336,8 @@ export default function Home() {
       {/* PWA Home Screen Install Prompt Banner */}
       <PwaInstallPrompt />
 
-      {/* iOS / iPad Audio Advice Banner */}
-      {showIosBanner && (
+      {/* iOS / iPad Audio Advice Banner (hidden in Zen Focus Mode) */}
+      {showIosBanner && !isZenMode && (
         <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 text-xs text-amber-900 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <span className="inline-block px-2.5 py-0.5 bg-amber-200 text-amber-950 font-black rounded-full text-[10px]">
@@ -382,36 +383,40 @@ export default function Home() {
         currentBeat={currentBeat}
         isCountIn={isCountIn}
         isSoundPanelOpen={isSoundPanelOpen}
+        isZenMode={isZenMode}
         onTogglePlay={handleTogglePlay}
         onStop={handleStop}
         onToggleCountIn={handleToggleCountIn}
         onSwitchMode={(mode) => setActiveMode(mode)}
         onToggleSoundPanel={() => setIsSoundPanelOpen((prev) => !prev)}
+        onToggleZenMode={() => setIsZenMode((prev) => !prev)}
         onOpenExportModal={() => setIsExportModalOpen(true)}
         onOpenLibraryModal={() => setIsLibraryModalOpen(true)}
         onUpdateSong={setSong}
       />
 
       {/* Main Content Area */}
-      <main className="max-w-7xl mx-auto px-3 sm:px-6 mt-5 space-y-6">
+      <main className={`max-w-7xl mx-auto px-3 sm:px-6 space-y-6 ${isZenMode ? 'mt-3' : 'mt-5'}`}>
         {/* Collapsible 3D Sound & Instrument Panel */}
         <SoundCustomizerPanel
           song={song}
-          isOpen={isSoundPanelOpen}
+          isOpen={isSoundPanelOpen && !isZenMode}
           onUpdateSong={setSong}
           onClose={() => setIsSoundPanelOpen(false)}
         />
 
-        {/* View Switching */}
-        {activeMode === 'edit' ? (
+        {/* View Switching: Songwriter / Arranger / Stage (Karaoke) */}
+        {activeMode !== 'karaoke' ? (
           <SectionBuilder
             song={song}
+            viewMode={activeMode === 'arranger' ? 'arranger' : 'songwriter'}
             activeGlobalBarIndex={isPlaying ? currentBarIndex : -1}
             onUpdateSong={setSong}
             onOpenChordPicker={handleOpenChordPicker}
             onOpenPresetsModal={handleOpenPresetsModal}
             onOpenMelodyPianoRoll={handleOpenMelodyPianoRoll}
             onOpenVocalRecorder={handleOpenVocalRecorder}
+            onSwitchToArranger={() => setActiveMode('arranger')}
           />
         ) : (
           <KaraokeTeleprompter

@@ -10,6 +10,7 @@
 | **2A** | ✅ APPROVED | 2026-11-12 | Mini Piano Roll & Vocal Melody Guide Editor |
 | **2B** | ✅ APPROVED | 2026-11-12 | Mic Audio Scratchpad & 3D MP3 Mixdown |
 | **3A** | ✅ APPROVED | 2026-11-12 | PWA, Mobile/iPad Polish & Bilingual (TH/EN) |
+| **4A** | ✅ DONE | 2026-11-13 | UI Decluttering, 3-Tab Workflow & Zen Focus Mode |
 
 ---
 
@@ -124,3 +125,22 @@ Tests:
 - `npm run build` executed and exited with code 0 (Compiled successfully in 561ms, 4/4 static pages prerendered)
 - Full automated test suite: `npx tsx --test tests/*.test.ts` → 49/49 passing (100%)
 - Dev server running on `http://localhost:3000` responding HTTP 200 OK
+
+---
+
+### [Phase 4A] UI Decluttering, 3-Tab Workflow & Zen Focus Mode
+Status: PASS (Completed & Verified)
+Timestamp: 2026-11-13T08:05:00+07:00
+
+Files changed:
+- `src/types/song.ts`: Exported `AppViewMode = 'songwriter' | 'arranger' | 'karaoke'`
+- `src/lib/sectionUtils.ts`: Added `generateUniqueId`, `cloneSongSection`, `duplicateSectionInList` (deep-clone section with unique IDs and `" (Copy)"` suffix), and `countThaiEnglishSyllables` (Thai vowel cluster + English vowel group syllable estimator)
+- `src/lib/i18n.ts`: Added symmetrical `th`/`en` keys for 3-tab workflow (`modeSongwriting`, `modeArranger`, `modeKaraoke`), Zen Mode (`zenMode`, `zenModeHint`), Duplicate Section (`duplicateSection`), Syllable Counter (`syllablesCount`), and progressive disclosure controls
+- `src/components/TransportBar.tsx`: Updated mode switcher to 3 workspace tabs (`Songwriter` / `Arranger` / `Stage`), added `✨ Zen` toggle button, and collapsed Row 2 Musical Parameters Bar when `isZenMode` is active
+- `src/components/SectionBuilder.tsx`: Added `viewMode?: 'songwriter' | 'arranger'` progressive disclosure (sleek single-line instrument summary pill row, simplified Bar Cards with large chords, live syllable badge, quick vocal mic, and compact `⋯` bar options popover in `songwriter` mode; full 5-instrument arrangement grid, `PlayStyle`, `ChordsPerBar`, `Melody Piano Roll`, and `📋 Duplicate` section button in `arranger` mode)
+- `src/app/page.tsx`: Migrated `activeMode` to `AppViewMode` (default `'songwriter'`), added `isZenMode` state, and wired `TransportBar` & `SectionBuilder` view props
+- `tests/phase4a.test.ts`: Added 7 unit tests covering `AppViewMode`, section deep-clone & duplication ordering, unique ID generation, Thai/English/mixed syllable counting, and Phase 4A i18n symmetry
+
+Tests:
+- `npx tsx --test tests/*.test.ts` → 56/56 passing (100%)
+- `npm run build` → Next.js 16.4.6 (Turbopack) + TypeScript checks exited with code 0 (4/4 static pages prerendered)

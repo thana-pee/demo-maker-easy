@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
   SongProject,
   SongSection,
@@ -10,16 +10,23 @@ import {
   SoloMode,
 } from '@/types/song';
 import { transposeChord, getCapoFingeringChord } from '@/lib/chordUtils';
+import {
+  countThaiEnglishSyllables,
+  duplicateSectionInList,
+  generateUniqueId,
+} from '@/lib/sectionUtils';
 import { useLanguage } from '@/context/LanguageContext';
 
 interface SectionBuilderProps {
   song: SongProject;
+  viewMode?: 'songwriter' | 'arranger';
   activeGlobalBarIndex: number;
   onUpdateSong: (updater: (prev: SongProject) => SongProject) => void;
   onOpenChordPicker: (sectionId: string, barId: string, chordIndex: 0 | 1, currentChord: string) => void;
   onOpenPresetsModal: (sectionId: string, sectionName: string) => void;
   onOpenMelodyPianoRoll: (sectionId: string, barId: string, globalBarIndex: number) => void;
   onOpenVocalRecorder: (sectionId: string, barId: string, globalBarIndex: number) => void;
+  onSwitchToArranger?: () => void;
 }
 
 const SECTION_BADGE_COLORS: Record<SectionType, { bg: string; text: string; border: string }> = {
@@ -34,19 +41,39 @@ const SECTION_BADGE_COLORS: Record<SectionType, { bg: string; text: string; bord
 
 export const SectionBuilder: React.FC<SectionBuilderProps> = ({
   song,
+  viewMode = 'songwriter',
   activeGlobalBarIndex,
   onUpdateSong,
   onOpenChordPicker,
   onOpenPresetsModal,
   onOpenMelodyPianoRoll,
   onOpenVocalRecorder,
+  onSwitchToArranger,
 }) => {
   const { lang, t } = useLanguage();
+  const [expandedInstSections, setExpandedInstSections] = useState<Record<string, boolean>>({});
+  const [openBarControls, setOpenBarControls] = useState<Record<string, boolean>>({});
   let globalBarCounter = 0;
+
+  const isArranger = viewMode === 'arranger';
+
+  const toggleSectionInstrumentPanel = (sectionId: string) => {
+    setExpandedInstSections((prev) => ({
+      ...prev,
+      [sectionId]: !prev[sectionId],
+    }));
+  };
+
+  const toggleBarControlsPopover = (barId: string) => {
+    setOpenBarControls((prev) => ({
+      ...prev,
+      [barId]: !prev[barId],
+    }));
+  };
 
   // Add new section
   const handleAddSection = (type: SectionType) => {
-    const id = `sec-${Date.now()}`;
+    const id = generateUniqueId('sec');
     const names: Record<SectionType, string> = {
       intro: lang === 'th' ? 'Intro (เกริ่นนำ)' : 'Intro',
       verse: lang === 'th' ? 'Verse (ท่อนร้อง)' : 'Verse',
@@ -70,8 +97,8 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
         piano: type === 'chorus' || type === 'solo' || type === 'bridge' || type === 'pre-chorus',
         drums: type === 'chorus' || type === 'solo',
       },
-      bars: Array.from({ length: 4 }).map((_, i) => ({
-        id: `bar-${Date.now()}-${i}`,
+      bars: Array.from({ length: 4 }).map(() => ({
+        id: generateUniqueId('bar'),
         chordsPerBar: 1,
         chords: ['C'],
         playStyle: 'normal',
@@ -83,6 +110,14 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
     onUpdateSong((prev) => ({
       ...prev,
       sections: [...prev.sections, newSection],
+    }));
+  };
+
+  // Duplicate section right after the source section
+  const handleDuplicateSection = (sectionId: string) => {
+    onUpdateSong((prev) => ({
+      ...prev,
+      sections: duplicateSectionInList(prev.sections, sectionId),
     }));
   };
 
@@ -120,7 +155,7 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
         if (sec.id !== sectionId) return sec;
         const lastBar = sec.bars[sec.bars.length - 1];
         const newBar = {
-          id: `bar-${Date.now()}`,
+          id: generateUniqueId('bar'),
           chordsPerBar: lastBar ? lastBar.chordsPerBar : 1,
           chords: lastBar ? [...lastBar.chords] : (['C'] as [string]),
           playStyle: 'normal' as BarPlayStyle,
@@ -198,12 +233,10 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="font-black text-lg text-slate-900">
-            {lang === 'th' ? 'โครงสร้างและท่อนเพลง (Song Sections)' : 'Song Structure & Sections'}
+            {isArranger ? t.arrangerTitle : t.songwriterTitle}
           </h2>
           <p className="text-xs text-slate-500">
-            {lang === 'th'
-              ? 'ปรับแต่งคอร์ด เนื้อร้อง รูปแบบการตีคอร์ด และสูตรคอร์ดสำเร็จรูปในแต่ละห้องได้อิสระ'
-              : 'Customize chords, lyrics, strumming styles, and presets for each bar independently'}
+            {isArranger ? t.arrangerSubtitle : t.songwriterSubtitle}
           </p>
         </div>
 
@@ -211,6 +244,7 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
           <span className="text-xs font-semibold text-slate-500 mr-1">{t.addSection}:</span>
           {(['verse', 'pre-chorus', 'chorus', 'solo', 'bridge', 'outro'] as SectionType[]).map((st) => (
             <button
+              type="button"
               key={st}
               onClick={() => handleAddSection(st)}
               className="px-2.5 py-1 rounded-xl bg-white border border-slate-200 hover:border-blue-400 hover:bg-blue-50/50 text-slate-700 text-xs font-bold transition cursor-pointer capitalize min-h-[36px]"
@@ -225,6 +259,20 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
       <div className="space-y-5">
         {song.sections.map((section, sIdx) => {
           const badge = SECTION_BADGE_COLORS[section.type] || SECTION_BADGE_COLORS.verse;
+          const isInstExpanded = isArranger || !!expandedInstSections[section.id];
+          const inst = section.instruments || {
+            guitarRhythm: true,
+            guitarLead: false,
+            bass: true,
+            piano: true,
+            drums: true,
+          };
+          const activeInstPills: string[] = [];
+          if (inst.guitarRhythm) activeInstPills.push(`🎸 ${lang === 'th' ? 'ริทึ่ม' : 'Rhythm'}`);
+          if (inst.guitarLead) activeInstPills.push(`🎸 ${lang === 'th' ? 'ลีด' : 'Lead'}`);
+          if (inst.bass) activeInstPills.push(`🎻 ${lang === 'th' ? 'เบส' : 'Bass'}`);
+          if (inst.piano) activeInstPills.push(`🎹 ${lang === 'th' ? 'เปียโน' : 'Piano'}`);
+          if (inst.drums) activeInstPills.push(`🥁 ${lang === 'th' ? 'กลอง' : 'Drums'}`);
 
           return (
             <section
@@ -240,52 +288,56 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
                     {section.name}
                   </span>
 
-                  {/* Section Intensity */}
-                  <div className="flex items-center gap-1.5 text-xs text-slate-500">
-                    <span>{t.dynamicIntensity}</span>
-                    <select
-                      value={section.intensity}
-                      onChange={(e) => {
-                        const intensity = e.target.value as SectionIntensity;
-                        onUpdateSong((prev) => ({
-                          ...prev,
-                          sections: prev.sections.map((s) => (s.id === section.id ? { ...s, intensity } : s)),
-                        }));
-                      }}
-                      className="bg-slate-100 border border-slate-200 rounded-lg px-2 py-0.5 font-bold text-slate-800 text-xs min-h-[32px]"
-                    >
-                      <option value="low">{t.intensityLow}</option>
-                      <option value="medium">{t.intensityMedium}</option>
-                      <option value="high">{t.intensityHigh}</option>
-                    </select>
-                  </div>
+                  {/* Arranger-only: Section Intensity & Solo Mode */}
+                  {isArranger && (
+                    <>
+                      <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                        <span>{t.dynamicIntensity}</span>
+                        <select
+                          value={section.intensity}
+                          onChange={(e) => {
+                            const intensity = e.target.value as SectionIntensity;
+                            onUpdateSong((prev) => ({
+                              ...prev,
+                              sections: prev.sections.map((s) => (s.id === section.id ? { ...s, intensity } : s)),
+                            }));
+                          }}
+                          className="bg-slate-100 border border-slate-200 rounded-lg px-2 py-0.5 font-bold text-slate-800 text-xs min-h-[32px]"
+                        >
+                          <option value="low">{t.intensityLow}</option>
+                          <option value="medium">{t.intensityMedium}</option>
+                          <option value="high">{t.intensityHigh}</option>
+                        </select>
+                      </div>
 
-                  {/* Solo Mode if Solo */}
-                  {section.type === 'solo' && (
-                    <div className="flex items-center gap-1.5 text-xs text-purple-900 bg-purple-50 px-2 py-0.5 rounded-lg border border-purple-200">
-                      <span>{lang === 'th' ? 'โหมดโซโล่:' : 'Solo Mode:'}</span>
-                      <select
-                        value={section.soloMode || 'split-slow-fast'}
-                        onChange={(e) => {
-                          const soloMode = e.target.value as SoloMode;
-                          onUpdateSong((prev) => ({
-                            ...prev,
-                            sections: prev.sections.map((s) => (s.id === section.id ? { ...s, soloMode } : s)),
-                          }));
-                        }}
-                        className="bg-white rounded font-bold text-xs"
-                      >
-                        <option value="split-slow-fast">{lang === 'th' ? 'Split Slow-Fast (ครึ่งแรกช้า / ครึ่งหลังเร็ว)' : 'Split Slow-Fast'}</option>
-                        <option value="normal">{lang === 'th' ? 'จังหวะปกติทั้งท่อน (Normal)' : 'Normal Pace'}</option>
-                      </select>
-                    </div>
+                      {section.type === 'solo' && (
+                        <div className="flex items-center gap-1.5 text-xs text-purple-900 bg-purple-50 px-2 py-0.5 rounded-lg border border-purple-200">
+                          <span>{lang === 'th' ? 'โหมดโซโล่:' : 'Solo Mode:'}</span>
+                          <select
+                            value={section.soloMode || 'split-slow-fast'}
+                            onChange={(e) => {
+                              const soloMode = e.target.value as SoloMode;
+                              onUpdateSong((prev) => ({
+                                ...prev,
+                                sections: prev.sections.map((s) => (s.id === section.id ? { ...s, soloMode } : s)),
+                              }));
+                            }}
+                            className="bg-white rounded font-bold text-xs"
+                          >
+                            <option value="split-slow-fast">{lang === 'th' ? 'Split Slow-Fast (ครึ่งแรกช้า / ครึ่งหลังเร็ว)' : 'Split Slow-Fast'}</option>
+                            <option value="normal">{lang === 'th' ? 'จังหวะปกติทั้งท่อน (Normal)' : 'Normal Pace'}</option>
+                          </select>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
 
                 {/* Section Action Buttons */}
-                <div className="flex items-center gap-1.5 text-xs">
+                <div className="flex flex-wrap items-center gap-1.5 text-xs">
                   {/* Presets Button */}
                   <button
+                    type="button"
                     onClick={() => onOpenPresetsModal(section.id, section.name)}
                     className="px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 font-bold transition flex items-center gap-1 cursor-pointer min-h-[34px]"
                   >
@@ -293,6 +345,7 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
                   </button>
 
                   <button
+                    type="button"
                     onClick={() => handleAddBar(section.id)}
                     className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold transition cursor-pointer min-h-[34px]"
                   >
@@ -300,6 +353,16 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
                   </button>
 
                   <button
+                    type="button"
+                    onClick={() => handleDuplicateSection(section.id)}
+                    className="px-2.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200/80 font-bold transition cursor-pointer min-h-[34px]"
+                    title={t.duplicateSection}
+                  >
+                    {isArranger ? t.duplicateSection : '📋'}
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={() => handleMoveSection(sIdx, 'up')}
                     disabled={sIdx === 0}
                     className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold disabled:opacity-30 transition flex items-center justify-center cursor-pointer"
@@ -308,6 +371,7 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
                     ▲
                   </button>
                   <button
+                    type="button"
                     onClick={() => handleMoveSection(sIdx, 'down')}
                     disabled={sIdx === song.sections.length - 1}
                     className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold disabled:opacity-30 transition flex items-center justify-center cursor-pointer"
@@ -316,6 +380,7 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
                     ▼
                   </button>
                   <button
+                    type="button"
                     onClick={() => handleDeleteSection(section.id)}
                     className="w-8 h-8 rounded-xl hover:bg-rose-100 text-rose-600 font-bold transition flex items-center justify-center cursor-pointer"
                     title={lang === 'th' ? 'ลบท่อนนี้' : 'Delete Section'}
@@ -325,9 +390,51 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
                 </div>
               </div>
 
-              {/* Per-Section Instruments & Playing Style Arrangement Row */}
+              {/* Per-Section Instruments: Sleek Summary Row in Songwriter vs Full Grid in Arranger */}
+              {!isInstExpanded ? (
+                <div className="bg-slate-50/90 px-3.5 py-2 rounded-2xl border border-slate-200/80 flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <div className="flex flex-wrap items-center gap-1.5 text-slate-700">
+                    <span className="font-bold text-slate-600 mr-0.5">
+                      🎼 {t.activeInstrumentsLabel}:
+                    </span>
+                    {activeInstPills.length > 0 ? (
+                      activeInstPills.map((pillLabel, idx) => (
+                        <React.Fragment key={pillLabel}>
+                          {idx > 0 && <span className="text-slate-300">•</span>}
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-white border border-slate-200/90 font-semibold text-slate-800 shadow-2xs text-[11px]">
+                            {pillLabel}
+                          </span>
+                        </React.Fragment>
+                      ))
+                    ) : (
+                      <span className="text-slate-400 italic text-[11px]">
+                        {t.noActiveInstruments}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => toggleSectionInstrumentPanel(section.id)}
+                      className="px-2.5 py-1 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 font-bold text-[11px] transition cursor-pointer"
+                    >
+                      {t.expandInstruments}
+                    </button>
+                    {onSwitchToArranger && (
+                      <button
+                        type="button"
+                        onClick={onSwitchToArranger}
+                        className="px-2.5 py-1 rounded-xl bg-blue-50 hover:bg-blue-100 border border-blue-200 text-[#1A73E8] font-bold text-[11px] transition cursor-pointer"
+                        title={t.openArrangerHint}
+                      >
+                        {t.openArrangerBtn}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : (
               <div className="bg-slate-50/90 p-3.5 rounded-2xl border border-slate-200/80 space-y-2.5">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
                     <span>🎼</span>
                     <span>
@@ -336,11 +443,22 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
                         : 'Instruments & Playing Styles for this Section:'}
                     </span>
                   </span>
-                  <span className="text-[10px] text-slate-500 italic hidden sm:inline">
-                    {lang === 'th'
-                      ? '*เปิด/ปิดและเลือกสไตล์การเล่นของแต่ละชิ้นได้อิสระในท่อนนี้'
-                      : '*Mute or customize playing styles individually for this section'}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-slate-500 italic hidden sm:inline">
+                      {lang === 'th'
+                        ? '*เปิด/ปิดและเลือกสไตล์การเล่นของแต่ละชิ้นได้อิสระในท่อนนี้'
+                        : '*Mute or customize playing styles individually for this section'}
+                    </span>
+                    {!isArranger && (
+                      <button
+                        type="button"
+                        onClick={() => toggleSectionInstrumentPanel(section.id)}
+                        className="px-2.5 py-1 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 font-bold text-[11px] transition cursor-pointer"
+                      >
+                        {t.collapseInstruments}
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5 text-xs">
@@ -571,12 +689,15 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
                   </div>
                 </div>
               </div>
+              )}
 
               {/* Bars Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3.5">
                 {section.bars.map((bar) => {
                   const thisGlobalIndex = globalBarCounter++;
                   const isCurrentActive = thisGlobalIndex === activeGlobalBarIndex;
+                  const isBarControlsOpen = isArranger || !!openBarControls[bar.id];
+                  const syllableCount = countThaiEnglishSyllables(bar.lyrics);
 
                   // Transposed Sounding Chords
                   const chord1 = transposeChord(bar.chords[0] || 'C', song.transposeSemitones);
@@ -602,8 +723,8 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
                       }`}
                     >
                       {/* Bar Top Header */}
-                      <div className="flex items-center justify-between text-xs text-slate-500">
-                        <div className="flex items-center gap-1.5">
+                      <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           <span
                             className={`font-black ${
                               isCurrentActive ? 'text-[#1A73E8]' : 'text-slate-700'
@@ -616,78 +737,196 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
                               {lang === 'th' ? 'เล่นอยู่' : 'Playing'}
                             </span>
                           )}
-                        </div>
-
-                        {/* Bar Play Style & Chord Count */}
-                        <div className="flex items-center gap-1">
-                          <select
-                            value={bar.playStyle}
-                            onChange={(e) => {
-                              const playStyle = e.target.value as BarPlayStyle;
-                              onUpdateSong((prev) => ({
-                                ...prev,
-                                sections: prev.sections.map((s) => ({
-                                  ...s,
-                                  bars: s.bars.map((b) => (b.id === bar.id ? { ...b, playStyle } : b)),
-                                })),
-                              }));
-                            }}
-                            className="bg-white border border-slate-200 rounded-md px-1.5 py-0.5 text-[10px] font-bold text-slate-800"
-                          >
-                            <option value="normal">🎵 {t.styleNormal}</option>
-                            <option value="let-ring">🔔 {t.styleLetRing}</option>
-                            <option value="break">🔇 {t.styleBreak}</option>
-                          </select>
-
-                          <select
-                            value={bar.chordsPerBar}
-                            onChange={(e) => {
-                              const count = parseInt(e.target.value, 10) as 1 | 2;
-                              onUpdateSong((prev) => ({
-                                ...prev,
-                                sections: prev.sections.map((s) => {
-                                  if (s.id !== section.id) return s;
-                                  return {
-                                    ...s,
-                                    bars: s.bars.map((b) => {
-                                      if (b.id !== bar.id) return b;
-                                      const chords: string[] =
-                                        count === 2
-                                          ? [b.chords[0] || 'C', b.chords[1] || 'G']
-                                          : [b.chords[0] || 'C'];
-                                      return { ...b, chordsPerBar: count, chords };
-                                    }),
-                                  };
-                                }),
-                              }));
-                            }}
-                            className="bg-white border border-slate-200 rounded-md px-1.5 py-0.5 text-[10px] font-bold text-slate-800"
-                          >
-                            <option value={1}>{t.chordsPerBar1}</option>
-                            <option value={2}>{t.chordsPerBar2}</option>
-                          </select>
-
-                          {section.bars.length > 1 && (
-                            <button
-                              onClick={() => handleDeleteBar(section.id, bar.id)}
-                              className="text-slate-400 hover:text-rose-600 px-1 font-bold text-xs"
-                              title={lang === 'th' ? 'ลบห้องนี้' : 'Delete Bar'}
-                            >
-                              ✕
-                            </button>
+                          {!isArranger && bar.playStyle === 'let-ring' && (
+                            <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-bold">
+                              🔔
+                            </span>
+                          )}
+                          {!isArranger && bar.playStyle === 'break' && (
+                            <span className="px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 text-[10px] font-bold">
+                              🔇
+                            </span>
+                          )}
+                          {!isArranger && bar.melodyNotes.length > 0 && (
+                            <span className="px-1.5 py-0.5 rounded bg-blue-100 text-[#1A73E8] text-[10px] font-bold">
+                              🎵 {bar.melodyNotes.length}
+                            </span>
                           )}
                         </div>
+
+                        {/* Arranger shows full inline controls; Songwriter shows compact popover toggle */}
+                        {isArranger ? (
+                          <div className="flex items-center gap-1">
+                            <select
+                              value={bar.playStyle}
+                              onChange={(e) => {
+                                const playStyle = e.target.value as BarPlayStyle;
+                                onUpdateSong((prev) => ({
+                                  ...prev,
+                                  sections: prev.sections.map((s) => ({
+                                    ...s,
+                                    bars: s.bars.map((b) => (b.id === bar.id ? { ...b, playStyle } : b)),
+                                  })),
+                                }));
+                              }}
+                              className="bg-white border border-slate-200 rounded-md px-1.5 py-0.5 text-[10px] font-bold text-slate-800"
+                            >
+                              <option value="normal">🎵 {t.styleNormal}</option>
+                              <option value="let-ring">🔔 {t.styleLetRing}</option>
+                              <option value="break">🔇 {t.styleBreak}</option>
+                            </select>
+
+                            <select
+                              value={bar.chordsPerBar}
+                              onChange={(e) => {
+                                const count = parseInt(e.target.value, 10) as 1 | 2;
+                                onUpdateSong((prev) => ({
+                                  ...prev,
+                                  sections: prev.sections.map((s) => {
+                                    if (s.id !== section.id) return s;
+                                    return {
+                                      ...s,
+                                      bars: s.bars.map((b) => {
+                                        if (b.id !== bar.id) return b;
+                                        const chords: string[] =
+                                          count === 2
+                                            ? [b.chords[0] || 'C', b.chords[1] || 'G']
+                                            : [b.chords[0] || 'C'];
+                                        return { ...b, chordsPerBar: count, chords };
+                                      }),
+                                    };
+                                  }),
+                                }));
+                              }}
+                              className="bg-white border border-slate-200 rounded-md px-1.5 py-0.5 text-[10px] font-bold text-slate-800"
+                            >
+                              <option value={1}>{t.chordsPerBar1}</option>
+                              <option value={2}>{t.chordsPerBar2}</option>
+                            </select>
+
+                            {section.bars.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteBar(section.id, bar.id)}
+                                className="text-slate-400 hover:text-rose-600 px-1 font-bold text-xs cursor-pointer"
+                                title={lang === 'th' ? 'ลบห้องนี้' : 'Delete Bar'}
+                              >
+                                ✕
+                              </button>
+                            )}
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => toggleBarControlsPopover(bar.id)}
+                            aria-expanded={isBarControlsOpen}
+                            title={t.barOptionsBtn}
+                            className={`px-2 py-0.5 rounded-lg border text-xs font-bold transition cursor-pointer ${
+                              isBarControlsOpen
+                                ? 'bg-slate-800 text-white border-slate-800'
+                                : 'bg-white hover:bg-slate-100 text-slate-600 border-slate-200'
+                            }`}
+                          >
+                            ⋯
+                          </button>
+                        )}
                       </div>
+
+                      {/* Songwriter Secondary Bar Controls Popover/Drawer */}
+                      {!isArranger && isBarControlsOpen && (
+                        <div className="bg-white border border-slate-200 rounded-xl p-2.5 space-y-2 shadow-xs">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <select
+                              value={bar.playStyle}
+                              onChange={(e) => {
+                                const playStyle = e.target.value as BarPlayStyle;
+                                onUpdateSong((prev) => ({
+                                  ...prev,
+                                  sections: prev.sections.map((s) => ({
+                                    ...s,
+                                    bars: s.bars.map((b) => (b.id === bar.id ? { ...b, playStyle } : b)),
+                                  })),
+                                }));
+                              }}
+                              className="flex-1 min-w-[110px] bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-[11px] font-bold text-slate-800"
+                            >
+                              <option value="normal">🎵 {t.styleNormal}</option>
+                              <option value="let-ring">🔔 {t.styleLetRing}</option>
+                              <option value="break">🔇 {t.styleBreak}</option>
+                            </select>
+
+                            <select
+                              value={bar.chordsPerBar}
+                              onChange={(e) => {
+                                const count = parseInt(e.target.value, 10) as 1 | 2;
+                                onUpdateSong((prev) => ({
+                                  ...prev,
+                                  sections: prev.sections.map((s) => {
+                                    if (s.id !== section.id) return s;
+                                    return {
+                                      ...s,
+                                      bars: s.bars.map((b) => {
+                                        if (b.id !== bar.id) return b;
+                                        const chords: string[] =
+                                          count === 2
+                                            ? [b.chords[0] || 'C', b.chords[1] || 'G']
+                                            : [b.chords[0] || 'C'];
+                                        return { ...b, chordsPerBar: count, chords };
+                                      }),
+                                    };
+                                  }),
+                                }));
+                              }}
+                              className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-[11px] font-bold text-slate-800"
+                            >
+                              <option value={1}>{t.chordsPerBar1}</option>
+                              <option value={2}>{t.chordsPerBar2}</option>
+                            </select>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100 text-[11px]">
+                            <button
+                              type="button"
+                              onClick={() => onOpenMelodyPianoRoll(section.id, bar.id, thisGlobalIndex)}
+                              className="px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-[#1A73E8] font-bold transition flex items-center gap-1 cursor-pointer"
+                            >
+                              <span>🎹 {t.melodyNotesBtn}</span>
+                              {bar.melodyNotes.length > 0 && (
+                                <span className="px-1.5 bg-blue-200/70 rounded-full text-[10px] font-black">
+                                  {bar.melodyNotes.length}
+                                </span>
+                              )}
+                            </button>
+
+                            {section.bars.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteBar(section.id, bar.id)}
+                                className="px-2 py-1 rounded-lg hover:bg-rose-50 text-rose-600 font-bold transition cursor-pointer"
+                              >
+                                ✕ {t.delete}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
 
                       {/* Chord Buttons */}
                       <div className="flex gap-2">
                         {/* Chord 1 */}
                         <button
+                          type="button"
                           onClick={() => onOpenChordPicker(section.id, bar.id, 0, bar.chords[0] || 'C')}
-                          className="flex-1 py-2 px-3 rounded-xl bg-white border border-slate-200 hover:border-[#1A73E8] text-left flex items-center justify-between shadow-2xs group transition cursor-pointer min-h-[44px]"
+                          className={`flex-1 px-3 rounded-xl bg-white border border-slate-200 hover:border-[#1A73E8] text-left flex items-center justify-between shadow-2xs group transition cursor-pointer ${
+                            isArranger ? 'py-2 min-h-[44px]' : 'py-2.5 min-h-[50px]'
+                          }`}
                         >
                           <div>
-                            <span className="font-black text-lg text-slate-900 group-hover:text-[#1A73E8]">
+                            <span
+                              className={`font-black text-slate-900 group-hover:text-[#1A73E8] ${
+                                isArranger ? 'text-lg' : 'text-xl'
+                              }`}
+                            >
                               {chord1}
                             </span>
                             {song.capoFret > 0 && (
@@ -704,11 +943,18 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
                         {/* Chord 2 if 2 chords */}
                         {bar.chordsPerBar === 2 && chord2 && (
                           <button
+                            type="button"
                             onClick={() => onOpenChordPicker(section.id, bar.id, 1, bar.chords[1] || 'G')}
-                            className="flex-1 py-2 px-3 rounded-xl bg-white border border-slate-200 hover:border-[#1A73E8] text-left flex items-center justify-between shadow-2xs group transition cursor-pointer min-h-[44px]"
+                            className={`flex-1 px-3 rounded-xl bg-white border border-slate-200 hover:border-[#1A73E8] text-left flex items-center justify-between shadow-2xs group transition cursor-pointer ${
+                              isArranger ? 'py-2 min-h-[44px]' : 'py-2.5 min-h-[50px]'
+                            }`}
                           >
                             <div>
-                              <span className="font-black text-lg text-slate-900 group-hover:text-[#1A73E8]">
+                              <span
+                                className={`font-black text-slate-900 group-hover:text-[#1A73E8] ${
+                                  isArranger ? 'text-lg' : 'text-xl'
+                                }`}
+                              >
                                 {chord2}
                               </span>
                               {song.capoFret > 0 && capoChord2 && (
@@ -724,39 +970,55 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
                         )}
                       </div>
 
-                      {/* Lyrics Input */}
-                      <input
-                        type="text"
-                        value={bar.lyrics}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          onUpdateSong((prev) => ({
-                            ...prev,
-                            sections: prev.sections.map((s) => ({
-                              ...s,
-                              bars: s.bars.map((b) => (b.id === bar.id ? { ...b, lyrics: val } : b)),
-                            })),
-                          }));
-                        }}
-                        placeholder={t.lyricsPlaceholder}
-                        className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm font-medium text-slate-900 focus:outline-none focus:border-[#1A73E8] focus:ring-2 focus:ring-blue-100 placeholder:text-slate-400 min-h-[40px]"
-                      />
+                      {/* Lyrics Input with Live Thai/English Syllable Count Badge */}
+                      <div className="flex items-center gap-1.5 w-full px-3 rounded-xl bg-white border border-slate-200 focus-within:border-[#1A73E8] focus-within:ring-2 focus-within:ring-blue-100 min-h-[42px]">
+                        <input
+                          type="text"
+                          value={bar.lyrics}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            onUpdateSong((prev) => ({
+                              ...prev,
+                              sections: prev.sections.map((s) => ({
+                                ...s,
+                                bars: s.bars.map((b) => (b.id === bar.id ? { ...b, lyrics: val } : b)),
+                              })),
+                            }));
+                          }}
+                          placeholder={t.lyricsPlaceholder}
+                          className="flex-1 min-w-0 py-2 bg-transparent text-sm font-medium text-slate-900 focus:outline-none placeholder:text-slate-400"
+                        />
+                        {syllableCount > 0 && (
+                          <span
+                            className="shrink-0 px-2 py-0.5 rounded-lg bg-slate-100 text-slate-600 border border-slate-200/80 text-[10px] font-bold select-none"
+                            title={`${syllableCount} ${t.syllablesCount}`}
+                          >
+                            {syllableCount} {t.syllablesCount}
+                          </span>
+                        )}
+                      </div>
 
-                      {/* Dual Melody & Mic Placeholder triggers */}
-                      <div className="flex items-center justify-between pt-1 text-[11px] text-slate-500">
-                        <button
-                          type="button"
-                          onClick={() => onOpenMelodyPianoRoll(section.id, bar.id, thisGlobalIndex)}
-                          className="hover:text-[#1A73E8] font-bold transition flex items-center gap-1 cursor-pointer min-h-[30px]"
-                          title={lang === 'th' ? 'เปิด Mini Piano Roll แต่งโน้ตร้องไกด์' : 'Open Mini Piano Roll'}
-                        >
-                          <span>{t.melodyNotesBtn}</span>
-                          {bar.melodyNotes.length > 0 && (
-                            <span className="px-1.5 py-0.2 bg-blue-100 text-[#1A73E8] rounded-full text-[10px] font-black">
-                              {bar.melodyNotes.length}
-                            </span>
-                          )}
-                        </button>
+                      {/* Bar Footer: Full Melody+Mic in Arranger, Clean Quick Mic in Songwriter */}
+                      <div
+                        className={`flex items-center pt-1 text-[11px] text-slate-500 ${
+                          isArranger ? 'justify-between' : 'justify-end'
+                        }`}
+                      >
+                        {isArranger && (
+                          <button
+                            type="button"
+                            onClick={() => onOpenMelodyPianoRoll(section.id, bar.id, thisGlobalIndex)}
+                            className="hover:text-[#1A73E8] font-bold transition flex items-center gap-1 cursor-pointer min-h-[30px]"
+                            title={lang === 'th' ? 'เปิด Mini Piano Roll แต่งโน้ตร้องไกด์' : 'Open Mini Piano Roll'}
+                          >
+                            <span>🎹 {t.melodyNotesBtn}</span>
+                            {bar.melodyNotes.length > 0 && (
+                              <span className="px-1.5 py-0.2 bg-blue-100 text-[#1A73E8] rounded-full text-[10px] font-black">
+                                {bar.melodyNotes.length}
+                              </span>
+                            )}
+                          </button>
+                        )}
 
                         <button
                           type="button"

@@ -1,3 +1,4 @@
+export type AppViewMode = 'songwriter' | 'arranger' | 'karaoke';
 export type TimeSignature = '4/4' | '3/4' | '6/8';
 export type SectionType = 'intro' | 'verse' | 'pre-chorus' | 'chorus' | 'solo' | 'bridge' | 'outro';
 export type SectionIntensity = 'low' | 'medium' | 'high';
