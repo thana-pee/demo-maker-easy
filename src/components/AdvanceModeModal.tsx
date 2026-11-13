@@ -18,7 +18,12 @@ import {
 } from '@/lib/thaiRhymeHelper';
 import { useLanguage } from '@/context/LanguageContext';
 import type { SongProject } from '@/types/song';
-import { applyNaturalPromptToSong } from '@/lib/aiSongDirector';
+import {
+  applyNaturalPromptToSong,
+  applyDirectorPatchToSong,
+  buildSongDirectorSummary,
+  type AiDirectorPatch,
+} from '@/lib/aiSongDirector';
 
 export interface AdvanceTargetSectionContext {
   sectionId: string;
@@ -94,33 +99,102 @@ export const AdvanceModeModal: React.FC<AdvanceModeModalProps> = ({
 
   // AI Song Director State (0 Credits)
   const [directorPrompt, setDirectorPrompt] = useState('');
+  const [isApplyingDirector, setIsApplyingDirector] = useState(false);
   const [directorActions, setDirectorActions] = useState<string[]>([]);
+  const [directorEngineInfo, setDirectorEngineInfo] = useState<{
+    model: string;
+    isSimulated: boolean;
+    tip: string;
+  } | null>(null);
   const [directorNotice, setDirectorNotice] = useState<{ ok: boolean; text: string } | null>(null);
 
-  const handleApplyDirectorPrompt = (e?: React.FormEvent) => {
+  const handleApplyDirectorPrompt = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!song || !onApplySongUpdate || !directorPrompt.trim()) return;
-    const { updatedSong, summaryActions } = applyNaturalPromptToSong(directorPrompt, song);
-    if (summaryActions.length === 0) {
-      setDirectorActions([]);
+    const trimmed = directorPrompt.trim();
+    if (!song || !onApplySongUpdate || !trimmed) return;
+
+    setIsApplyingDirector(true);
+    setDirectorNotice(null);
+    setDirectorEngineInfo(null);
+
+    const finalizeOffline = (tipText: string) => {
+      const localRes = applyNaturalPromptToSong(trimmed, song);
+      setDirectorEngineInfo({
+        model: 'demo-offline-director',
+        isSimulated: true,
+        tip: tipText,
+      });
+      if (localRes.summaryActions.length === 0) {
+        setDirectorActions([]);
+        setDirectorNotice({
+          ok: false,
+          text:
+            lang === 'th'
+              ? 'ยังไม่พบคำสั่งตั้งค่าที่รู้จัก — ลองพิมพ์ เช่น "95 bpm คีย์ G ท่อน Intro เกาเบาๆ ท่อน Chorus ลีดแตกหนัก กลองเป็นชุด เบส 80%" หรือใส่ GEMINI_API_KEY ใน .env.local เพื่อใช้ Gemini 4 Hydrogen เข้าใจประโยคอิสระ'
+              : 'No recognized offline commands matched — try e.g. "95 bpm Key G, Chorus lead distortion" or set GEMINI_API_KEY in .env.local for Gemini 4 Hydrogen.',
+        });
+        return;
+      }
+      onApplySongUpdate(localRes.updatedSong);
+      setDirectorActions(localRes.summaryActions);
       setDirectorNotice({
-        ok: false,
+        ok: true,
         text:
           lang === 'th'
-            ? 'ยังไม่พบคำสั่งตั้งค่าที่รู้จัก — ลองพิมพ์ เช่น "95 bpm คีย์ G ท่อน Intro เกาเบาๆ ท่อน Chorus ลีดแตกหนัก กลองเป็นชุด เบส 80%"'
-            : 'No recognized commands matched — try e.g. "95 bpm Key G, Intro fingerpicking, Chorus lead distortion 100%, drums kit".',
+            ? `นำคำสั่งไปปรับค่าในเพลงเรียบร้อย (${localRes.summaryActions.length} รายการ)`
+            : `Applied ${localRes.summaryActions.length} configuration changes to your song!`,
       });
-      return;
+    };
+
+    try {
+      const res = await fetch('/api/advance/director', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: trimmed,
+          songSummary: buildSongDirectorSummary(song),
+        }),
+      });
+
+      if (!res.ok) {
+        finalizeOffline('เชื่อมต่อ API ไม่สำเร็จ — ทำงานผ่านโหมดออฟไลน์แทนอัตโนมัติ');
+        return;
+      }
+
+      const data = (await res.json()) as {
+        isSimulated: boolean;
+        model: string;
+        patch: AiDirectorPatch | null;
+        tip: string;
+      };
+
+      if (!data.isSimulated && data.patch) {
+        const applied = applyDirectorPatchToSong(data.patch, song);
+        if (applied.summaryActions.length > 0) {
+          onApplySongUpdate(applied.updatedSong);
+          setDirectorActions(applied.summaryActions);
+          setDirectorEngineInfo({
+            model: data.model,
+            isSimulated: false,
+            tip: data.tip,
+          });
+          setDirectorNotice({
+            ok: true,
+            text:
+              lang === 'th'
+                ? `${data.model} ปรับค่าในเพลงเรียบร้อย (${applied.summaryActions.length} รายการ)`
+                : `${data.model} applied ${applied.summaryActions.length} updates to your song!`,
+          });
+          return;
+        }
+      }
+
+      finalizeOffline(data.tip);
+    } catch {
+      finalizeOffline('ใช้งานแบบออฟไลน์อัตโนมัติ (ไม่ได้เชื่อมต่อเซิร์ฟเวอร์ AI)');
+    } finally {
+      setIsApplyingDirector(false);
     }
-    onApplySongUpdate(updatedSong);
-    setDirectorActions(summaryActions);
-    setDirectorNotice({
-      ok: true,
-      text:
-        lang === 'th'
-          ? `นำคำสั่งไปปรับค่าในเพลงเรียบร้อย (${summaryActions.length} รายการ)`
-          : `Applied ${summaryActions.length} configuration changes to your song!`,
-    });
   };
 
   const rhymeResult = findThaiRhymes(rhymeInput);
@@ -738,12 +812,35 @@ export const AdvanceModeModal: React.FC<AdvanceModeModalProps> = ({
                 />
                 <button
                   type="submit"
-                  disabled={!song || !onApplySongUpdate || !directorPrompt.trim()}
+                  disabled={!song || !onApplySongUpdate || !directorPrompt.trim() || isApplyingDirector}
                   className="w-full py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-black text-xs sm:text-sm shadow-xs transition cursor-pointer"
                 >
-                  🪄 {lang === 'th' ? 'ให้ AI ลงค่าในแอปทันที' : 'Apply Prompt Settings to App'}
+                  {isApplyingDirector
+                    ? lang === 'th'
+                      ? '⏳ กำลังวิเคราะห์ด้วย Gemini 4 Hydrogen...'
+                      : '⏳ Analyzing with Gemini 4 Hydrogen...'
+                    : `🪄 ${lang === 'th' ? 'ให้ AI ลงค่าในแอปทันที (Gemini 4 Hydrogen / Offline)' : 'Apply Settings with Gemini 4 Hydrogen'}`}
                 </button>
               </form>
+
+              {directorEngineInfo && (
+                <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-slate-100 border border-slate-200 text-[11px]">
+                  <span
+                    className={`font-black px-2 py-0.5 rounded-full ${
+                      directorEngineInfo.isSimulated
+                        ? 'bg-slate-200 text-slate-700'
+                        : 'bg-purple-600 text-white'
+                    }`}
+                  >
+                    {directorEngineInfo.isSimulated
+                      ? `⚡ ${directorEngineInfo.model}`
+                      : `✨ ${directorEngineInfo.model}`}
+                  </span>
+                  <span className="text-slate-600 font-medium truncate" title={directorEngineInfo.tip}>
+                    {directorEngineInfo.tip}
+                  </span>
+                </div>
+              )}
 
               {directorNotice && (
                 <div

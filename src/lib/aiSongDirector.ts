@@ -445,3 +445,232 @@ export function applyNaturalPromptToSong(prompt: string, currentSong: SongProjec
     summaryActions: Array.from(new Set(actions)),
   };
 }
+
+export interface AiDirectorSectionPatch {
+  sectionId?: string;
+  sectionType?: SectionType;
+  intensity?: 'low' | 'medium' | 'high';
+  guitarRhythm?: boolean;
+  guitarLead?: boolean;
+  bass?: boolean;
+  piano?: boolean;
+  drums?: boolean;
+  guitarRhythmStyle?: GuitarStyle;
+  guitarLeadStyle?: LeadGuitarStyle;
+  guitarLeadDrive?: LeadGuitarDrive;
+  bassStyle?: BassStyle;
+  pianoStyle?: PianoStyle;
+  drumsStyle?: DrumStyle;
+  guitarRhythmVolume?: number;
+  guitarLeadVolume?: number;
+  bassVolume?: number;
+  pianoVolume?: number;
+  drumsVolume?: number;
+  chords?: string[];
+}
+
+export interface AiDirectorPatch {
+  bpm?: number;
+  baseKey?: string;
+  timeSignature?: TimeSignature;
+  guitarModel?: GuitarModel;
+  ambience3D?: Ambience3DMode;
+  sectionPatches?: AiDirectorSectionPatch[];
+  summaryNotes?: string[];
+}
+
+export interface AiDirectorSongSummary {
+  bpm: number;
+  baseKey: string;
+  timeSignature: TimeSignature;
+  guitarModel: GuitarModel;
+  ambience3D: Ambience3DMode;
+  sections: Array<{
+    id: string;
+    name: string;
+    type: SectionType;
+    intensity: 'low' | 'medium' | 'high';
+    barCount: number;
+    sampleChords: string[];
+    instruments: SectionInstruments;
+  }>;
+}
+
+const VALID_TIME_SIGNATURES = new Set<TimeSignature>(['4/4', '3/4', '6/8']);
+const VALID_GUITAR_MODELS = new Set<GuitarModel>([
+  'classical-nylon',
+  'dreadnought-steel',
+  'ovation-roundback',
+  'gibson-les-paul',
+]);
+const VALID_AMBIENCES = new Set<Ambience3DMode>(['living-room', 'wood-studio', 'unplugged-hall']);
+const VALID_INTENSITIES = new Set(['low', 'medium', 'high']);
+const VALID_RHYTHM_STYLES = new Set<GuitarStyle>(['campfire-strum', 'soft-strum', 'fingerpicking']);
+const VALID_LEAD_STYLES = new Set<LeadGuitarStyle>(['melodic-solo', 'riff-fills', 'soft-arpeggio']);
+const VALID_LEAD_DRIVES = new Set<LeadGuitarDrive>(['clean', 'crunch', 'overdrive', 'distortion', 'fuzz']);
+const VALID_BASS_STYLES = new Set<BassStyle>(['root-fifth', 'warm-sustain']);
+const VALID_PIANO_STYLES = new Set<PianoStyle>(['warm-pad', 'gentle-arpeggio']);
+const VALID_DRUM_STYLES = new Set<DrumStyle>(['off', 'shaker-cajon', 'simple-kit']);
+
+const TRACK_KEYS: readonly InstrumentKey[] = ['guitarRhythm', 'guitarLead', 'bass', 'piano', 'drums'];
+const VOLUME_FIELDS: Record<InstrumentKey, keyof SectionInstruments> = {
+  guitarRhythm: 'guitarRhythmVolume',
+  guitarLead: 'guitarLeadVolume',
+  bass: 'bassVolume',
+  piano: 'pianoVolume',
+  drums: 'drumsVolume',
+};
+
+/** สร้างข้อมูลสรุปขนาดกะทัดรัดของ SongProject เพื่อส่งให้ Gemini 4 Hydrogen ประมวลผลประหยัด Token */
+export function buildSongDirectorSummary(song: SongProject): AiDirectorSongSummary {
+  return {
+    bpm: song.bpm,
+    baseKey: song.baseKey,
+    timeSignature: song.timeSignature,
+    guitarModel: song.guitarModel,
+    ambience3D: song.ambience3D,
+    sections: song.sections.map((s) => ({
+      id: s.id,
+      name: s.name,
+      type: s.type,
+      intensity: s.intensity,
+      barCount: s.bars.length,
+      sampleChords: s.bars.slice(0, 4).map((b) => b.chords.join('/')),
+      instruments: { ...s.instruments },
+    })),
+  };
+}
+
+/** นำ Patch JSON ที่ได้จาก Gemini 4 Hydrogen มาตรวจสอบความถูกต้องแล้วอัปเดตลงใน SongProject */
+export function applyDirectorPatchToSong(
+  patch: AiDirectorPatch,
+  currentSong: SongProject
+): AiDirectorResult {
+  const updatedSong = cloneSong(currentSong);
+  const actions: string[] = [];
+
+  if (typeof patch.bpm === 'number' && Number.isFinite(patch.bpm)) {
+    const nextBpm = clamp(Math.round(patch.bpm), 40, 220);
+    if (nextBpm !== updatedSong.bpm) {
+      updatedSong.bpm = nextBpm;
+      actions.push(`ความเร็ว (BPM) -> ${nextBpm}`);
+    }
+  }
+
+  if (typeof patch.baseKey === 'string') {
+    const k = patch.baseKey.trim();
+    if (/^[A-G][#b]?m?$/.test(k)) {
+      updatedSong.baseKey = k;
+      actions.push(`คีย์เพลง -> ${k}`);
+    }
+  }
+
+  if (patch.timeSignature && VALID_TIME_SIGNATURES.has(patch.timeSignature)) {
+    updatedSong.timeSignature = patch.timeSignature;
+    actions.push(`จังหวะ -> ${patch.timeSignature}`);
+  }
+
+  if (patch.guitarModel && VALID_GUITAR_MODELS.has(patch.guitarModel)) {
+    updatedSong.guitarModel = patch.guitarModel;
+    actions.push(`รุ่นกีตาร์หลัก -> ${patch.guitarModel}`);
+  }
+
+  if (patch.ambience3D && VALID_AMBIENCES.has(patch.ambience3D)) {
+    updatedSong.ambience3D = patch.ambience3D;
+    actions.push(`มิติห้อง (3D Room) -> ${patch.ambience3D}`);
+  }
+
+  if (Array.isArray(patch.sectionPatches)) {
+    for (const sp of patch.sectionPatches) {
+      if (!sp || typeof sp !== 'object') continue;
+      let targets = updatedSong.sections;
+      if (sp.sectionId) {
+        targets = updatedSong.sections.filter((s) => s.id === sp.sectionId);
+      } else if (sp.sectionType) {
+        targets = updatedSong.sections.filter((s) => s.type === sp.sectionType);
+      }
+      if (targets.length === 0) continue;
+
+      for (const sec of targets) {
+        if (sp.intensity && VALID_INTENSITIES.has(sp.intensity)) {
+          sec.intensity = sp.intensity;
+          actions.push(`[${sec.name}] ความหนักแน่น -> ${sp.intensity}`);
+        }
+
+        for (const tk of TRACK_KEYS) {
+          const boolVal = sp[tk];
+          if (typeof boolVal === 'boolean') {
+            sec.instruments[tk] = boolVal;
+            actions.push(`[${sec.name}] ${boolVal ? 'เปิด' : 'ปิด'} ${tk}`);
+          }
+          const volField = VOLUME_FIELDS[tk];
+          const volVal = sp[volField as keyof AiDirectorSectionPatch];
+          if (typeof volVal === 'number' && Number.isFinite(volVal)) {
+            const clampedVol = clamp(Math.round(volVal), 0, 100);
+            (sec.instruments as unknown as Record<string, number>)[volField] = clampedVol;
+            if (clampedVol > 0 && typeof boolVal !== 'boolean') {
+              sec.instruments[tk] = true;
+            }
+            actions.push(`[${sec.name}] ความดัง ${tk} -> ${clampedVol}%`);
+          }
+        }
+
+        if (sp.guitarRhythmStyle && VALID_RHYTHM_STYLES.has(sp.guitarRhythmStyle)) {
+          sec.instruments.guitarRhythm = true;
+          sec.instruments.guitarRhythmStyle = sp.guitarRhythmStyle;
+          actions.push(`[${sec.name}] กีตาร์คอร์ด -> ${sp.guitarRhythmStyle}`);
+        }
+        if (sp.guitarLeadStyle && VALID_LEAD_STYLES.has(sp.guitarLeadStyle)) {
+          sec.instruments.guitarLead = true;
+          sec.instruments.guitarLeadStyle = sp.guitarLeadStyle;
+          actions.push(`[${sec.name}] ลีดสไตล์ -> ${sp.guitarLeadStyle}`);
+        }
+        if (sp.guitarLeadDrive && VALID_LEAD_DRIVES.has(sp.guitarLeadDrive)) {
+          const normalized = sp.guitarLeadDrive === 'fuzz' ? 'distortion' : sp.guitarLeadDrive;
+          sec.instruments.guitarLead = true;
+          sec.instruments.guitarLeadDrive = normalized;
+          actions.push(`[${sec.name}] โทนลีด -> ${normalized}`);
+        }
+        if (sp.bassStyle && VALID_BASS_STYLES.has(sp.bassStyle)) {
+          sec.instruments.bass = true;
+          sec.instruments.bassStyle = sp.bassStyle;
+          actions.push(`[${sec.name}] เบส -> ${sp.bassStyle}`);
+        }
+        if (sp.pianoStyle && VALID_PIANO_STYLES.has(sp.pianoStyle)) {
+          sec.instruments.piano = true;
+          sec.instruments.pianoStyle = sp.pianoStyle;
+          actions.push(`[${sec.name}] เปียโน -> ${sp.pianoStyle}`);
+        }
+        if (sp.drumsStyle && VALID_DRUM_STYLES.has(sp.drumsStyle)) {
+          if (sp.drumsStyle !== 'off') sec.instruments.drums = true;
+          sec.instruments.drumsStyle = sp.drumsStyle;
+          actions.push(`[${sec.name}] กลอง -> ${sp.drumsStyle}`);
+        }
+
+        if (Array.isArray(sp.chords) && sp.chords.length > 0) {
+          const validChords = sp.chords
+            .filter((c): c is string => typeof c === 'string')
+            .map((c) => c.trim())
+            .filter((c) => CHORD_TOKEN_REGEX.test(c));
+          if (validChords.length > 0) {
+            sec.bars.forEach((bar, idx) => {
+              bar.chords = [validChords[idx % validChords.length]];
+              bar.chordsPerBar = 1;
+            });
+            actions.push(`[${sec.name}] คอร์ด -> ${validChords.join(' - ')}`);
+          }
+        }
+      }
+    }
+  }
+
+  const finalNotes =
+    Array.isArray(patch.summaryNotes) && patch.summaryNotes.length > 0 && actions.length > 0
+      ? patch.summaryNotes.filter((n): n is string => typeof n === 'string' && n.trim().length > 0)
+      : actions;
+
+  return {
+    updatedSong,
+    summaryActions: Array.from(new Set(finalNotes.length > 0 ? finalNotes : actions)),
+  };
+}

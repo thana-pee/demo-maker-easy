@@ -188,7 +188,7 @@ test('/api/advance/lyrics POST: คืน 400 เมื่อ Payload ไม่�
   }
 });
 
-test('/api/advance/lyrics POST: เรียก Gemini 2.5 Flash เมื่อมี Key โดยส่งผ่าน Header (ไม่รั่ว Secret)', async () => {
+test('/api/advance/lyrics POST: เรียก Gemini 4 Hydrogen เมื่อมี Key โดยส่งผ่าน Header (ไม่รั่ว Secret)', async () => {
   const prevKey = process.env.GEMINI_API_KEY;
   const origFetch = globalThis.fetch;
   process.env.GEMINI_API_KEY = 'secret-test-gemini-key-xyz';
@@ -250,7 +250,8 @@ test('/api/advance/lyrics POST: เรียก Gemini 2.5 Flash เมื่อ
       lines: Array<{ chord: string; text: string; syllables: number }>;
     };
     assert.equal(body.isSimulated, false);
-    assert.equal(body.model, 'gemini-2.5-flash');
+    assert.equal(body.model, 'gemini-4-hydrogen');
+    assert.ok(captured.url.includes('gemini-4-hydrogen'));
     assert.equal(body.lines.length, 4);
     assert.deepEqual(
       body.lines.map((l) => l.chord),

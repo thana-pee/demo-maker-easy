@@ -19,7 +19,12 @@ import {
   makeGuitarDistortionCurve,
   makeGuitarFuzzCurve,
 } from '../src/lib/audioEngine';
-import { applyNaturalPromptToSong } from '../src/lib/aiSongDirector';
+import {
+  applyNaturalPromptToSong,
+  applyDirectorPatchToSong,
+  buildSongDirectorSummary,
+} from '../src/lib/aiSongDirector';
+import { POST as runAiDirector } from '../src/app/api/advance/director/route';
 
 type NoteEv = Extract<PlannedEvent, { kind: 'note' }>;
 type DrumEv = Extract<PlannedEvent, { kind: 'drum' }>;
@@ -156,4 +161,110 @@ test('AI Song Director: empty or non-matching prompt leaves original song untouc
   assert.equal(res.summaryActions.length, 0);
   assert.equal(res.updatedSong.bpm, base.bpm);
   assert.equal(res.updatedSong.baseKey, base.baseKey);
+});
+
+test('AI Song Director Patch & /api/advance/director: uses Gemini 4 Hydrogen with key, clamps values, and degrades gracefully offline', async () => {
+  const base = createDefaultSong();
+  const prevKey = process.env.GEMINI_API_KEY;
+  const prevModel = process.env.GEMINI_MODEL;
+  const origFetch = globalThis.fetch;
+
+  delete process.env.GEMINI_API_KEY;
+  delete process.env.GEMINI_MODEL;
+
+  try {
+    // 1. Missing key -> simulated offline director response
+    const simRes = await runAiDirector(
+      new Request('http://localhost/api/advance/director', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: 'ขอเพลงชิลๆ', songSummary: buildSongDirectorSummary(base) }),
+      })
+    );
+    assert.equal(simRes.status, 200);
+    const simData = (await simRes.json()) as { isSimulated: boolean; model: string; patch: unknown };
+    assert.equal(simData.isSimulated, true);
+    assert.equal(simData.patch, null);
+
+    // 2. With GEMINI_API_KEY -> calls gemini-4-hydrogen with x-goog-api-key header & applies patch safely
+    process.env.GEMINI_API_KEY = 'secret-director-key-test';
+    const captured: { url: string; headerKey: string | null } = { url: '', headerKey: null };
+
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      captured.url = typeof input === 'string' ? input : input.toString();
+      captured.headerKey = new Headers(init?.headers).get('x-goog-api-key');
+      return new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    text: JSON.stringify({
+                      bpm: 999, // over-range -> clamped to 220
+                      baseKey: 'A',
+                      ambience3D: 'unplugged-hall',
+                      sectionPatches: [
+                        {
+                          sectionType: 'chorus',
+                          guitarLeadDrive: 'fuzz', // normalized to distortion
+                          guitarLeadVolume: 140, // clamped to 100
+                          drumsStyle: 'simple-kit',
+                          drumsVolume: 85,
+                        },
+                      ],
+                      summaryNotes: ['ตั้งค่าสไตล์ Concert Rock ด้วย Gemini 4 Hydrogen'],
+                    }),
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    };
+
+    const liveRes = await runAiDirector(
+      new Request('http://localhost/api/advance/director', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: 'จัดให้เป็นคอนเสิร์ตร็อคคีย์ A ท่อนฮุคกลองชุด ลีดแตกหนัก',
+          songSummary: buildSongDirectorSummary(base),
+        }),
+      })
+    );
+    assert.equal(liveRes.status, 200);
+    assert.ok(captured.url.includes('gemini-4-hydrogen'));
+    assert.ok(!captured.url.includes('secret-director-key-test'));
+    assert.equal(captured.headerKey, 'secret-director-key-test');
+
+    const liveText = await liveRes.text();
+    assert.ok(!liveText.includes('secret-director-key-test'));
+    const liveData = JSON.parse(liveText) as {
+      isSimulated: boolean;
+      model: string;
+      patch: Parameters<typeof applyDirectorPatchToSong>[0];
+    };
+    assert.equal(liveData.isSimulated, false);
+    assert.equal(liveData.model, 'gemini-4-hydrogen');
+
+    const applied = applyDirectorPatchToSong(liveData.patch, base);
+    assert.equal(applied.updatedSong.bpm, 220);
+    assert.equal(applied.updatedSong.baseKey, 'A');
+    assert.equal(applied.updatedSong.ambience3D, 'unplugged-hall');
+    const chorus = applied.updatedSong.sections.find((s) => s.type === 'chorus');
+    assert.ok(chorus);
+    assert.equal(chorus.instruments.guitarLeadDrive, 'distortion');
+    assert.equal(chorus.instruments.guitarLeadVolume, 100);
+    assert.equal(chorus.instruments.drumsStyle, 'simple-kit');
+    assert.equal(chorus.instruments.drumsVolume, 85);
+  } finally {
+    globalThis.fetch = origFetch;
+    if (prevKey !== undefined) process.env.GEMINI_API_KEY = prevKey;
+    else delete process.env.GEMINI_API_KEY;
+    if (prevModel !== undefined) process.env.GEMINI_MODEL = prevModel;
+    else delete process.env.GEMINI_MODEL;
+  }
 });

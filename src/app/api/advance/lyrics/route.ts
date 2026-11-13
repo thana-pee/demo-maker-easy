@@ -1,4 +1,5 @@
 import { countThaiEnglishSyllables } from '@/lib/thaiRhymeHelper';
+import { callGeminiJson, DEFAULT_GEMINI_MODEL } from '@/lib/geminiClient';
 
 export interface AdvanceLyricsRequestBody {
   mood: string;
@@ -24,7 +25,10 @@ export interface AdvanceLyricsResponseBody {
   tip: string;
 }
 
-function buildSimulatedLyrics(body: AdvanceLyricsRequestBody): AdvanceLyricsResponseBody {
+function buildSimulatedLyrics(
+  body: AdvanceLyricsRequestBody,
+  tipOverride?: string
+): AdvanceLyricsResponseBody {
   const chords = body.chordProgression.length > 0 ? body.chordProgression : ['C', 'G', 'Am', 'F'];
   const moodLower = body.mood.toLowerCase();
   const topic = body.topic.trim();
@@ -78,7 +82,8 @@ function buildSimulatedLyrics(body: AdvanceLyricsRequestBody): AdvanceLyricsResp
     lines,
     fullLyrics: lines.map((l) => l.text).join('\n'),
     tip:
-      'Simulation Mode (ยังไม่ได้ตั้งค่า GEMINI_API_KEY ใน .env) — สามารถตั้งค่า GEMINI_API_KEY บนเซิร์ฟเวอร์เพื่อเปิดใช้ Gemini 2.5 Flash ได้ทันที',
+      tipOverride ??
+      `Simulation Mode (ยังไม่ได้ตั้งค่า GEMINI_API_KEY ใน .env.local หรือ Vercel) — ใส่คีย์เพื่อเปิดใช้ ${DEFAULT_GEMINI_MODEL} ได้ทันที`,
   };
 }
 
@@ -118,84 +123,56 @@ export async function POST(request: Request): Promise<Response> {
     sectionType,
   };
 
-  const apiKey = process.env.GEMINI_API_KEY?.trim();
-  if (!apiKey) {
+  const promptText = [
+    'You are a top Thai & bilingual acoustic pop songwriter.',
+    `Write 4 poetic, singable Thai (or light Thai-English) lyric lines for a "${sectionType}" section.`,
+    `Mood: ${mood}`,
+    `Topic: ${topic}`,
+    `Chord progression: ${chordProgression.join(' -> ') || 'C -> G -> Am -> F'}`,
+    existingLyrics ? `Existing draft lyrics to continue/refine: "${existingLyrics}"` : '',
+    'Respond ONLY in strict JSON: {"lines": ["line1", "line2", "line3", "line4"], "tip": "short songwriting note"}',
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  const gemini = await callGeminiJson<{ lines?: unknown; tip?: unknown }>(promptText, {
+    temperature: 0.85,
+  });
+
+  if (!gemini.ok) {
+    const tipOverride =
+      gemini.reason === 'http-error'
+        ? `Gemini API unavailable (HTTP ${gemini.status}) — แสดงผลโหมดจำลองแทนอย่างปลอดภัย`
+        : undefined;
+    return Response.json(buildSimulatedLyrics(payload, tipOverride), { status: 200 });
+  }
+
+  const rawLines = Array.isArray(gemini.data.lines)
+    ? gemini.data.lines.filter((l): l is string => typeof l === 'string' && l.trim().length > 0)
+    : [];
+
+  if (rawLines.length === 0) {
     return Response.json(buildSimulatedLyrics(payload), { status: 200 });
   }
 
-  try {
-    const promptText = [
-      'You are a top Thai & bilingual acoustic pop songwriter.',
-      `Write 4 poetic, singable Thai (or light Thai-English) lyric lines for a "${sectionType}" section.`,
-      `Mood: ${mood}`,
-      `Topic: ${topic}`,
-      `Chord progression: ${chordProgression.join(' -> ') || 'C -> G -> Am -> F'}`,
-      existingLyrics ? `Existing draft lyrics to continue/refine: "${existingLyrics}"` : '',
-      'Respond ONLY in strict JSON: {"lines": ["line1", "line2", "line3", "line4"], "tip": "short songwriting note"}',
-    ]
-      .filter(Boolean)
-      .join('\n');
+  const chords = chordProgression.length > 0 ? chordProgression : ['C', 'G', 'Am', 'F'];
+  const lines: AdvanceLyricLine[] = rawLines.map((text, idx) => ({
+    chord: chords[idx % chords.length],
+    text: text.trim(),
+    syllables: countThaiEnglishSyllables(text),
+  }));
 
-    const geminiRes = await fetch(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': apiKey,
-        },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: promptText }] }],
-          generationConfig: {
-            responseMimeType: 'application/json',
-            temperature: 0.85,
-          },
-        }),
-      }
-    );
-
-    if (!geminiRes.ok) {
-      const sim = buildSimulatedLyrics(payload);
-      return Response.json(
-        {
-          ...sim,
-          tip: `Gemini API unavailable (HTTP ${geminiRes.status}) — แสดงผลโหมดจำลองแทนอย่างปลอดภัย`,
-        },
-        { status: 200 }
-      );
-    }
-
-    const data = (await geminiRes.json()) as {
-      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-    };
-    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    const parsed = JSON.parse(rawText) as { lines?: unknown; tip?: unknown };
-    const rawLines = Array.isArray(parsed.lines)
-      ? parsed.lines.filter((l): l is string => typeof l === 'string' && l.trim().length > 0)
-      : [];
-
-    if (rawLines.length === 0) {
-      return Response.json(buildSimulatedLyrics(payload), { status: 200 });
-    }
-
-    const chords = chordProgression.length > 0 ? chordProgression : ['C', 'G', 'Am', 'F'];
-    const lines: AdvanceLyricLine[] = rawLines.map((text, idx) => ({
-      chord: chords[idx % chords.length],
-      text: text.trim(),
-      syllables: countThaiEnglishSyllables(text),
-    }));
-
-    const result: AdvanceLyricsResponseBody = {
-      isSimulated: false,
-      model: 'gemini-2.5-flash',
-      sectionType,
-      chordsUsed: chords,
-      lines,
-      fullLyrics: lines.map((l) => l.text).join('\n'),
-      tip: typeof parsed.tip === 'string' ? parsed.tip : 'สร้างโดย Gemini 2.5 Flash ให้เข้ากับคอร์ดของท่อนนี้แล้ว',
-    };
-    return Response.json(result, { status: 200 });
-  } catch {
-    return Response.json(buildSimulatedLyrics(payload), { status: 200 });
-  }
+  const result: AdvanceLyricsResponseBody = {
+    isSimulated: false,
+    model: gemini.model,
+    sectionType,
+    chordsUsed: chords,
+    lines,
+    fullLyrics: lines.map((l) => l.text).join('\n'),
+    tip:
+      typeof gemini.data.tip === 'string'
+        ? gemini.data.tip
+        : `สร้างโดย ${gemini.model} ให้เข้ากับคอร์ดของท่อนนี้แล้ว`,
+  };
+  return Response.json(result, { status: 200 });
 }
