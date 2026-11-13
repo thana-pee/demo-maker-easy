@@ -6,7 +6,18 @@ import { createDefaultSong } from '@/lib/defaultSong';
 import { ProgressionPreset } from '@/lib/chordUtils';
 import { getTiming } from '@/lib/barPlanner';
 import { useAudioEngine } from '@/hooks/useAudioEngine';
-import { getSavedSongs, saveSong, getActiveSongId, setActiveSongId } from '@/lib/storage';
+import {
+  getSavedSongs,
+  saveSong,
+  getActiveSongId,
+  setActiveSongId,
+  hydrateSongVocalsFromIdb,
+} from '@/lib/storage';
+import {
+  saveVocalBlob,
+  deleteVocalBlob,
+  makeVocalBlobKey,
+} from '@/lib/audioStorageIdb';
 import { parseSongFromUrl } from '@/lib/shareUrl';
 
 import { TransportBar } from '@/components/TransportBar';
@@ -32,6 +43,15 @@ export default function Home() {
   const [showIosBanner, setShowIosBanner] = useState(true);
   const [shareToastMsg, setShareToastMsg] = useState<string | null>(null);
 
+  const selectSongWithVocals = useCallback((nextSong: SongProject) => {
+    setSong(nextSong);
+    void hydrateSongVocalsFromIdb(nextSong).then((hydrated) => {
+      if (hydrated !== nextSong) {
+        setSong((cur) => (cur.id === hydrated.id ? hydrated : cur));
+      }
+    });
+  }, []);
+
   // 1. ตรวจสอบเพลงจาก URL หรือจาก localStorage เมื่อเปิดเว็บครั้งแรก
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -50,14 +70,14 @@ export default function Home() {
       }
     }
 
-    // ถ้าไม่มีใน URL ให้โหลดเพลงล่าสุดที่บันทึกไว้ใน localStorage
+    // ถ้าไม่มีใน URL ให้โหลดเพลงล่าสุดที่บันทึกไว้ใน localStorage (และ hydrate เสียงร้องจาก IndexedDB)
     const saved = getSavedSongs();
     const activeId = getActiveSongId();
     const target = saved.find((s) => s.id === activeId) || saved[0];
     if (target) {
-      setSong(target);
+      selectSongWithVocals(target);
     }
-  }, []);
+  }, [selectSongWithVocals]);
 
   // 2. Auto-save เพลงลง localStorage เมื่อมีการเปลี่ยนแปลง (Debounce 600ms)
   const isInitialMount = useRef(true);
@@ -300,6 +320,7 @@ export default function Home() {
   }, []);
 
   const handleSaveVocal = useCallback((sectionId: string, barId: string, vocalAudio: string, latencyOffsetMs: number) => {
+    void saveVocalBlob(makeVocalBlobKey(song.id, barId), vocalAudio);
     setSong((prev) => ({
       ...prev,
       vocalLatencyOffsetMs: latencyOffsetMs,
@@ -311,9 +332,10 @@ export default function Home() {
         };
       }),
     }));
-  }, []);
+  }, [song.id]);
 
   const handleClearVocal = useCallback((sectionId: string, barId: string) => {
+    void deleteVocalBlob(makeVocalBlobKey(song.id, barId));
     setSong((prev) => ({
       ...prev,
       sections: prev.sections.map((sec) => {
@@ -329,7 +351,7 @@ export default function Home() {
         };
       }),
     }));
-  }, []);
+  }, [song.id]);
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-900 pb-20 safe-bottom">
@@ -455,7 +477,7 @@ export default function Home() {
       <SongLibraryModal
         isOpen={isLibraryModalOpen}
         currentSong={song}
-        onSelectSong={(newSong) => setSong(newSong)}
+        onSelectSong={selectSongWithVocals}
         onClose={() => setIsLibraryModalOpen(false)}
       />
 

@@ -1,4 +1,12 @@
 export type AppViewMode = 'songwriter' | 'arranger' | 'karaoke';
+export type SongStatusTag = 'draft' | 'arranged' | 'vocal-recorded' | 'mastered';
+
+export interface SongSnapshot {
+  id: string;
+  name: string;
+  createdAt: string;
+  songData: string; // JSON snapshot excluding snapshots/vocalAudio to stay lightweight
+}
 export type TimeSignature = '4/4' | '3/4' | '6/8';
 export type SectionType = 'intro' | 'verse' | 'pre-chorus' | 'chorus' | 'solo' | 'bridge' | 'outro';
 export type SectionIntensity = 'low' | 'medium' | 'high';
@@ -91,4 +99,7 @@ export interface SongProject {
   mixer: InstrumentMixerConfig;
   sections: SongSection[];
   vocalLatencyOffsetMs?: number;       // -150 ถึง +150 ms สำหรับเฟส 2B
+  folder?: string;                     // ชื่อโฟลเดอร์/อัลบั้มสำหรับจัดหมวดหมู่เพลง (Phase 4C)
+  statusTag?: SongStatusTag;           // สถานะของเพลงในเวิร์กโฟลว์ (Phase 4C)
+  snapshots?: SongSnapshot[];          // ประวัติเวอร์ชัน (Version Snapshots) ของเพลง (Phase 4C)
 }

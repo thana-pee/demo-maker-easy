@@ -13,8 +13,16 @@
  *   - importSongsJSON(jsonStr) : นำเข้าไฟล์สำรองเพลง
  */
 
-import type { SongProject } from '../types/song';
+import type { SongProject, SongSnapshot, SongStatusTag } from '../types/song';
 import { createDefaultSong } from './defaultSong';
+import { generateUniqueId } from './sectionUtils';
+import {
+  clearSongVocals,
+  hydrateSongVocalsFromIdb,
+  persistSongVocalsToIdb,
+} from './audioStorageIdb';
+
+export { hydrateSongVocalsFromIdb, persistSongVocalsToIdb };
 
 export const STORAGE_KEY = 'demo_maker_songs_v1';
 export const ACTIVE_SONG_KEY = 'demo_maker_active_song_id';
@@ -28,14 +36,16 @@ export interface SongSummary {
   timeSignature: string;
   barsCount: number;
   sectionsCount: number;
+  folder?: string;
+  statusTag?: SongStatusTag;
 }
 
 function getStorage(): Storage | null {
   if (typeof window !== 'undefined' && window.localStorage) {
     return window.localStorage;
   }
-  if (typeof globalThis !== 'undefined' && (globalThis as any).localStorage) {
-    return (globalThis as any).localStorage;
+  if (typeof globalThis !== 'undefined' && (globalThis as { localStorage?: Storage }).localStorage) {
+    return (globalThis as { localStorage?: Storage }).localStorage ?? null;
   }
   return null;
 }
@@ -63,6 +73,22 @@ export function getSavedSongs(): SongProject[] {
   }
 }
 
+/** คืนสำเนาของ SongProject โดยถอด vocalAudio ออกจากแต่ละห้องเพื่อให้ JSON เบาที่สุด */
+export function stripVocalsFromSong(song: SongProject): SongProject {
+  return {
+    ...song,
+    sections: (song.sections || []).map((sec) => ({
+      ...sec,
+      bars: (sec.bars || []).map((bar) => {
+        if (!('vocalAudio' in bar) || bar.vocalAudio === undefined) return bar;
+        const rest = { ...bar };
+        delete rest.vocalAudio;
+        return rest;
+      }),
+    })),
+  };
+}
+
 /** ดึงข้อมูลสรุปของเพลงทั้งหมด (สำหรับแสดงผลในหน้ารายชื่อเพลงอย่างรวดเร็ว) */
 export function getSavedSongsSummaries(): SongSummary[] {
   const songs = getSavedSongs();
@@ -75,6 +101,8 @@ export function getSavedSongsSummaries(): SongSummary[] {
     timeSignature: s.timeSignature || '4/4',
     barsCount: (s.sections || []).reduce((acc, sec) => acc + (sec.bars?.length || 0), 0),
     sectionsCount: s.sections?.length || 0,
+    folder: s.folder,
+    statusTag: s.statusTag,
   }));
 }
 
@@ -84,43 +112,42 @@ export function getSongById(id: string): SongProject | null {
   return songs.find((s) => s.id === id) || null;
 }
 
-/** บันทึกหรืออัปเดตเพลง (พร้อมระบบกู้คืนเมื่อ LocalStorage เต็ม) */
+/** บันทึกหรืออัปเดตเพลง (offload vocalAudio ไปยัง IndexedDB ในเบราว์เซอร์ + มีระบบกู้คืนเมื่อ LocalStorage เต็ม) */
 export function saveSong(song: SongProject): void {
   const storage = getStorage();
+  const updatedSong: SongProject = {
+    ...song,
+    updatedAt: new Date().toISOString(),
+  };
+
+  // ในเบราว์เซอร์ที่มี IndexedDB ให้ย้ายไฟล์เสียงร้องไปเก็บใน IndexedDB เพื่อเลี่ยงขีดจำกัด 5MB ของ localStorage
+  const canOffloadToIdb = typeof indexedDB !== 'undefined' && indexedDB !== null;
+  if (canOffloadToIdb) {
+    void persistSongVocalsToIdb(updatedSong);
+  }
+
   if (!storage) return;
   try {
     const songs = getSavedSongs();
-    const updatedSong: SongProject = {
-      ...song,
-      updatedAt: new Date().toISOString(),
-    };
+    const songForLocalStorage = canOffloadToIdb ? stripVocalsFromSong(updatedSong) : updatedSong;
 
     const existingIndex = songs.findIndex((s) => s.id === song.id);
     let newSongs: SongProject[];
     if (existingIndex >= 0) {
       newSongs = [...songs];
-      newSongs[existingIndex] = updatedSong;
+      newSongs[existingIndex] = songForLocalStorage;
     } else {
-      newSongs = [updatedSong, ...songs];
+      newSongs = [songForLocalStorage, ...songs];
     }
 
     try {
       storage.setItem(STORAGE_KEY, JSON.stringify(newSongs));
-    } catch (writeErr: any) {
+    } catch (writeErr: unknown) {
+      const errObj = writeErr as { name?: string; code?: number };
       // ตรวจจับ QuotaExceededError เมื่อมีไฟล์เสียงร้องสะสมหลายเพลง
-      if (writeErr?.name === 'QuotaExceededError' || writeErr?.code === 22 || writeErr?.code === 1014) {
-        console.warn('LocalStorage quota exceeded. Pruning older vocal audio blobs to protect project data...');
-        // ปลดเสียงร้องของเพลงอื่นออก เพื่อให้เพลงปัจจุบันเซฟคอร์ดและเนื้อเพลงได้แน่นอน
-        const pruned = newSongs.map((s) => {
-          if (s.id === song.id) return s;
-          return {
-            ...s,
-            sections: s.sections.map((sec) => ({
-              ...sec,
-              bars: sec.bars.map(({ vocalAudio, ...b }) => b),
-            })),
-          };
-        });
+      if (errObj?.name === 'QuotaExceededError' || errObj?.code === 22 || errObj?.code === 1014) {
+        console.warn('LocalStorage quota exceeded. Pruning vocal audio blobs to protect project data...');
+        const pruned = newSongs.map((s) => (s.id === song.id && !canOffloadToIdb ? s : stripVocalsFromSong(s)));
         try {
           storage.setItem(STORAGE_KEY, JSON.stringify(pruned));
         } catch (retryErr) {
@@ -137,9 +164,10 @@ export function saveSong(song: SongProject): void {
   }
 }
 
-/** ลบเพลงตาม ID */
+/** ลบเพลงตาม ID พร้อมล้างไฟล์เสียงร้องของเพลงนั้นใน IndexedDB */
 export function deleteSong(id: string): boolean {
   const storage = getStorage();
+  void clearSongVocals(id);
   if (!storage) return false;
   try {
     const songs = getSavedSongs();
@@ -233,4 +261,146 @@ export function importSongsJSON(jsonStr: string): SongProject[] | null {
     console.error('Failed to import songs JSON:', err);
     return null;
   }
+}
+
+// ───────────────────── Phase 4C: Folders, Search, Status & Snapshots ─────────────────────
+
+/** ดึงรายชื่อโฟลเดอร์ทั้งหมดที่มีอยู่ในคลังเพลง (เรียงตามตัวอักษร) */
+export function extractSongFolders(songs: SongProject[]): string[] {
+  const set = new Set<string>();
+  for (const s of songs) {
+    const f = s.folder?.trim();
+    if (f) set.add(f);
+  }
+  return Array.from(set).sort((a, b) => a.localeCompare(b));
+}
+
+/** กรองเพลงตามคำค้นหา (ชื่อเพลง หรือ เนื้อร้องในทุกห้อง), โฟลเดอร์ และสถานะ */
+export function filterLibrarySongs(
+  songs: SongProject[],
+  query: string,
+  folderFilter = 'ALL',
+  statusFilter: SongStatusTag | 'ALL' = 'ALL'
+): SongProject[] {
+  const q = query.trim().toLowerCase();
+  const folderNorm = folderFilter.trim();
+
+  return songs.filter((song) => {
+    if (folderNorm && folderNorm !== 'ALL') {
+      const songFolder = song.folder?.trim() || '';
+      if (folderNorm === '__UNFILED__') {
+        if (songFolder !== '') return false;
+      } else if (songFolder !== folderNorm) {
+        return false;
+      }
+    }
+
+    if (statusFilter && statusFilter !== 'ALL') {
+      const effectiveStatus: SongStatusTag = song.statusTag || 'draft';
+      if (effectiveStatus !== statusFilter) return false;
+    }
+
+    if (!q) return true;
+    if ((song.title || '').toLowerCase().includes(q)) return true;
+
+    return (song.sections || []).some((sec) =>
+      (sec.bars || []).some((bar) => (bar.lyrics || '').toLowerCase().includes(q))
+    );
+  });
+}
+
+/** สร้าง Version Snapshot น้ำหนักเบา (ไม่รวม snapshots ซ้อน และไม่รวม vocalAudio) */
+export function createSongSnapshot(song: SongProject, name?: string): SongSnapshot {
+  const light = stripVocalsFromSong(song);
+  const withoutSnapshots = { ...light };
+  delete withoutSnapshots.snapshots;
+
+  const indexNum = (song.snapshots?.length ?? 0) + 1;
+  const label = name?.trim() || `Snapshot #${indexNum}`;
+  return {
+    id: generateUniqueId('snap'),
+    name: label,
+    createdAt: new Date().toISOString(),
+    songData: JSON.stringify(withoutSnapshots),
+  };
+}
+
+/** กู้คืนโครงสร้างเพลงจาก Snapshot โดยคง ID, ประวัติ Snapshots และ vocalAudio ของห้องเดิมไว้ */
+export function restoreSongFromSnapshot(currentSong: SongProject, snapshot: SongSnapshot): SongProject | null {
+  try {
+    const parsed = JSON.parse(snapshot.songData) as SongProject;
+    if (!parsed || !Array.isArray(parsed.sections)) return null;
+
+    // เก็บ vocalAudio เดิมตาม bar.id ไว้ เพื่อไม่ให้เสียงร้องที่อัดไว้หายตอนย้อนเวอร์ชันคอร์ด/เนื้อร้อง
+    const existingVocalsByBarId = new Map<string, string>();
+    for (const sec of currentSong.sections || []) {
+      for (const bar of sec.bars || []) {
+        if (bar.vocalAudio) existingVocalsByBarId.set(bar.id, bar.vocalAudio);
+      }
+    }
+
+    const restoredSections = parsed.sections.map((sec) => ({
+      ...sec,
+      bars: (sec.bars || []).map((bar) => {
+        const preserved = existingVocalsByBarId.get(bar.id);
+        return preserved ? { ...bar, vocalAudio: preserved } : bar;
+      }),
+    }));
+
+    return {
+      ...parsed,
+      id: currentSong.id,
+      updatedAt: new Date().toISOString(),
+      folder: currentSong.folder ?? parsed.folder,
+      statusTag: currentSong.statusTag ?? parsed.statusTag,
+      snapshots: currentSong.snapshots || [],
+      sections: restoredSections,
+    };
+  } catch (err) {
+    console.error('Failed to restore song snapshot:', err);
+    return null;
+  }
+}
+
+/** บันทึก Snapshot ใหม่ลงในเพลงและจัดเก็บลงคลังทันที */
+export function addSnapshotToSong(
+  song: SongProject,
+  name?: string
+): { song: SongProject; snapshot: SongSnapshot } {
+  const snapshot = createSongSnapshot(song, name);
+  const nextSnapshots = [snapshot, ...(song.snapshots || [])].slice(0, 25);
+  const updated: SongProject = {
+    ...song,
+    snapshots: nextSnapshots,
+  };
+  saveSong(updated);
+  return { song: updated, snapshot };
+}
+
+/** ลบ Snapshot ออกจากเพลงและจัดเก็บลงคลัง */
+export function removeSnapshotFromSong(song: SongProject, snapshotId: string): SongProject {
+  const updated: SongProject = {
+    ...song,
+    snapshots: (song.snapshots || []).filter((snap) => snap.id !== snapshotId),
+  };
+  saveSong(updated);
+  return updated;
+}
+
+/** อัปเดต metadata (folder / statusTag) ของเพลงและบันทึกลงคลัง */
+export function updateSongLibraryMeta(
+  song: SongProject,
+  patch: { folder?: string; statusTag?: SongStatusTag }
+): SongProject {
+  const updated: SongProject = { ...song };
+  if ('folder' in patch) {
+    const cleaned = patch.folder?.trim();
+    if (cleaned) updated.folder = cleaned;
+    else delete updated.folder;
+  }
+  if (patch.statusTag !== undefined) {
+    updated.statusTag = patch.statusTag;
+  }
+  saveSong(updated);
+  return updated;
 }

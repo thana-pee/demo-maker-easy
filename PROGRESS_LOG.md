@@ -12,6 +12,7 @@
 | **3A** | ✅ APPROVED | 2026-11-12 | PWA, Mobile/iPad Polish & Bilingual (TH/EN) |
 | **4A** | ✅ DONE | 2026-11-13 | UI Decluttering, 3-Tab Workflow & Zen Focus Mode |
 | **4B** | ✅ DONE | 2026-11-13 | Studio-Grade Musical Realism & Vocal DSP Chain |
+| **4C** | ✅ DONE | 2026-11-13 | IndexedDB Audio Storage & Library Organization |
 
 ---
 
@@ -164,4 +165,22 @@ Files changed:
 
 Tests:
 - `npx tsx --test tests/*.test.ts` → 63/63 passing (100%)
+- `npm run build` → Next.js 16.4.6 (Turbopack) + TypeScript checks exited with code 0 (4/4 static pages prerendered)
+
+---
+
+### [Phase 4C] IndexedDB Audio Storage, Folders, Status Tags & Version Snapshots
+Status: PASS (Completed & Verified)
+Timestamp: 2026-11-13T08:30:00+07:00
+
+Files changed:
+- `src/lib/audioStorageIdb.ts`: Created IndexedDB vocal store (`demo_maker_audio_db`, v1, store `vocals`, key `${songId}_${barId}`) with `saveVocalBlob`, `getVocalBlob`, `deleteVocalBlob`, `clearSongVocals`, `persistSongVocalsToIdb`, `hydrateSongVocalsFromIdb`, and SSR/Node in-memory `Map` fallback
+- `src/types/song.ts`: Exported `SongStatusTag` (`draft` | `arranged` | `vocal-recorded` | `mastered`), `SongSnapshot`, and added optional `folder`, `statusTag`, `snapshots` to `SongProject`
+- `src/lib/storage.ts`: Added browser IndexedDB offload in `saveSong` (via `stripVocalsFromSong` + `persistSongVocalsToIdb`), `clearSongVocals` cleanup in `deleteSong`, plus `extractSongFolders`, `filterLibrarySongs`, `createSongSnapshot`, `restoreSongFromSnapshot`, `addSnapshotToSong`, `removeSnapshotFromSong`, and `updateSongLibraryMeta`
+- `src/components/SongLibraryModal.tsx`: Upgraded library modal with title/lyrics search bar, interactive Folder filter pills + inline folder assignment/creation, color-coded Status Tag selector (`📝 Draft`, `🎸 Arranged`, `🎤 Vocal`, `⭐ Mastered`), and active-song `📸 Save Snapshot` with collapsible snapshot history (**Restore Version** & **Delete Snapshot**)
+- `src/app/page.tsx`: Wired `selectSongWithVocals` hydration via `hydrateSongVocalsFromIdb` and immediate IndexedDB vocal persistence/deletion on vocal record/clear
+- `tests/phase4c.test.ts`: Added 5 tests covering IndexedDB memory fallback, mocked `demo_maker_audio_db` v1 lifecycle & `localStorage` offload/hydration, search/folder/status filtering, lightweight snapshot creation/restore/deletion, and `SongLibraryModal` UI contract
+
+Tests:
+- `npx tsx --test tests/*.test.ts` → 68/68 passing (100%)
 - `npm run build` → Next.js 16.4.6 (Turbopack) + TypeScript checks exited with code 0 (4/4 static pages prerendered)
