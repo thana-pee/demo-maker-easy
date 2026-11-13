@@ -78,7 +78,6 @@ export function useAudioEngine(song: SongProject): AudioEngineHookResult {
   useEffect(() => {
     const eng = engineRef.current;
     if (!eng) return;
-    eng.updateSong(song);
     eng.setMixerVolume('guitarRhythm', song.mixer.guitarRhythm.enabled ? song.mixer.guitarRhythm.volume : 0);
     eng.setMixerVolume('guitarLead', song.mixer.guitarLead.enabled ? song.mixer.guitarLead.volume : 0);
     eng.setMixerVolume('bass', song.mixer.bass.enabled ? song.mixer.bass.volume : 0);
@@ -91,6 +90,7 @@ export function useAudioEngine(song: SongProject): AudioEngineHookResult {
     }
     eng.setGuitarAcoustics(song.guitarModel, song.stringGauge);
     eng.setAmbience3D(song.ambience3D || 'wood-studio');
+    eng.updateSong(song);
   }, [song]);
 
   const initEngine = useCallback(async () => {

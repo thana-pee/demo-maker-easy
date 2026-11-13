@@ -217,6 +217,56 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
     }));
   };
 
+  // Update per-section instrument volume (0–100%)
+  const updateSectionInstrumentVolume = (
+    sectionId: string,
+    field: 'guitarRhythmVolume' | 'guitarLeadVolume' | 'bassVolume' | 'pianoVolume' | 'drumsVolume',
+    volume: number
+  ) => {
+    const clamped = Math.max(0, Math.min(100, Math.round(volume)));
+    onUpdateSong((prev) => ({
+      ...prev,
+      sections: prev.sections.map((s) => {
+        if (s.id !== sectionId) return s;
+        return {
+          ...s,
+          instruments: {
+            ...s.instruments,
+            [field]: clamped,
+          },
+        };
+      }),
+    }));
+  };
+
+  const renderSectionVolumeSlider = (
+    sectionId: string,
+    field: 'guitarRhythmVolume' | 'guitarLeadVolume' | 'bassVolume' | 'pianoVolume' | 'drumsVolume',
+    currentVol: number | undefined,
+    accentClass: string
+  ) => {
+    const vol = currentVol ?? 100;
+    return (
+      <div className="flex items-center gap-1.5 pt-1 border-t border-slate-100 mt-auto">
+        <span className="text-[10px] text-slate-400 shrink-0" title={lang === 'th' ? 'ความดังท่อนนี้' : 'Section volume'}>
+          🔊
+        </span>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          value={vol}
+          onChange={(e) => updateSectionInstrumentVolume(sectionId, field, Number(e.target.value))}
+          aria-label={`${field} ${lang === 'th' ? 'ความดังท่อนนี้' : 'section volume'}`}
+          className={`w-full h-1.5 bg-slate-200 rounded-lg cursor-pointer ${accentClass}`}
+        />
+        <span className="text-[10px] font-bold text-slate-600 w-8 text-right shrink-0 tabular-nums">
+          {vol}%
+        </span>
+      </div>
+    );
+  };
+
   // Delete Bar
   const handleDeleteBar = (sectionId: string, barId: string) => {
     onUpdateSong((prev) => ({
@@ -501,17 +551,20 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
                       </button>
                     </div>
                     {section.instruments?.guitarRhythm ? (
-                      <select
-                        value={section.instruments?.guitarRhythmStyle || 'campfire-strum'}
-                        onChange={(e) =>
-                          updateSectionInstrumentStyle(section.id, 'guitarRhythmStyle', e.target.value)
-                        }
-                        className="w-full text-[11px] bg-blue-50 border border-blue-200 rounded-lg px-2 py-1 font-bold text-blue-950 focus:outline-none"
-                      >
-                        <option value="campfire-strum">{lang === 'th' ? 'ตีคอร์ดแคมป์ไฟ' : 'Campfire Strum'}</option>
-                        <option value="soft-strum">{lang === 'th' ? 'ตีคอร์ดนุ่มนวล' : 'Soft Strum'}</option>
-                        <option value="fingerpicking">{lang === 'th' ? 'เกาสายอะคูสติก' : 'Fingerpicking'}</option>
-                      </select>
+                      <>
+                        <select
+                          value={section.instruments?.guitarRhythmStyle || 'campfire-strum'}
+                          onChange={(e) =>
+                            updateSectionInstrumentStyle(section.id, 'guitarRhythmStyle', e.target.value)
+                          }
+                          className="w-full text-[11px] bg-blue-50 border border-blue-200 rounded-lg px-2 py-1 font-bold text-blue-950 focus:outline-none"
+                        >
+                          <option value="campfire-strum">{lang === 'th' ? 'ตีคอร์ดแคมป์ไฟ' : 'Campfire Strum'}</option>
+                          <option value="soft-strum">{lang === 'th' ? 'ตีคอร์ดนุ่มนวล' : 'Soft Strum'}</option>
+                          <option value="fingerpicking">{lang === 'th' ? 'เกาสายอะคูสติก' : 'Fingerpicking'}</option>
+                        </select>
+                        {renderSectionVolumeSlider(section.id, 'guitarRhythmVolume', section.instruments?.guitarRhythmVolume, 'accent-[#1A73E8]')}
+                      </>
                     ) : (
                       <div className="text-[10px] text-slate-400 py-1 text-center font-medium">
                         {lang === 'th' ? 'ปิดเสียงในท่อนนี้' : 'Muted in this section'}
@@ -544,7 +597,7 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
                       </button>
                     </div>
                     {section.instruments?.guitarLead ? (
-                      <div className="space-y-1">
+                      <div className="space-y-1 flex-1 flex flex-col">
                         <select
                           value={section.instruments?.guitarLeadStyle || 'melodic-solo'}
                           onChange={(e) =>
@@ -557,7 +610,11 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
                           <option value="soft-arpeggio">{lang === 'th' ? 'เกาโน้ตสูงคลอ (Arp)' : 'Soft Arpeggio'}</option>
                         </select>
                         <select
-                          value={section.instruments?.guitarLeadDrive || song.mixer.guitarLead.drive || 'overdrive'}
+                          value={
+                            (section.instruments?.guitarLeadDrive || song.mixer.guitarLead.drive || 'overdrive') === 'fuzz'
+                              ? 'distortion'
+                              : (section.instruments?.guitarLeadDrive || song.mixer.guitarLead.drive || 'overdrive')
+                          }
                           onChange={(e) =>
                             updateSectionInstrumentStyle(section.id, 'guitarLeadDrive', e.target.value)
                           }
@@ -565,9 +622,11 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
                           title="Overdrive / Tone"
                         >
                           <option value="clean">{lang === 'th' ? 'คลีนหวาน (Clean)' : 'Clean'}</option>
+                          <option value="crunch">{lang === 'th' ? 'ครันช์เบา (Crunch)' : 'Crunch'}</option>
                           <option value="overdrive">{lang === 'th' ? 'แตกอุ่น (Warm Overdrive)' : 'Warm Overdrive'}</option>
-                          <option value="fuzz">{lang === 'th' ? 'แตกหนัก (Saturated Fuzz)' : 'Saturated Fuzz'}</option>
+                          <option value="distortion">{lang === 'th' ? 'แตกหนัก (Distortion / Fuzz)' : 'Distortion / Fuzz'}</option>
                         </select>
+                        {renderSectionVolumeSlider(section.id, 'guitarLeadVolume', section.instruments?.guitarLeadVolume, 'accent-purple-600')}
                       </div>
                     ) : (
                       <div className="text-[10px] text-slate-400 py-1 text-center font-medium">
@@ -601,16 +660,19 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
                       </button>
                     </div>
                     {section.instruments?.bass ? (
-                      <select
-                        value={section.instruments?.bassStyle || 'root-fifth'}
-                        onChange={(e) =>
-                          updateSectionInstrumentStyle(section.id, 'bassStyle', e.target.value)
-                        }
-                        className="w-full text-[11px] bg-blue-50 border border-blue-200 rounded-lg px-2 py-1 font-bold text-blue-950 focus:outline-none"
-                      >
-                        <option value="root-fifth">{lang === 'th' ? 'Root-5th สลับจังหวะ' : 'Root-5th Alternate'}</option>
-                        <option value="warm-sustain">{lang === 'th' ? 'ลากยาวอุ่นๆ (Sustain)' : 'Warm Sustain'}</option>
-                      </select>
+                      <>
+                        <select
+                          value={section.instruments?.bassStyle || 'root-fifth'}
+                          onChange={(e) =>
+                            updateSectionInstrumentStyle(section.id, 'bassStyle', e.target.value)
+                          }
+                          className="w-full text-[11px] bg-blue-50 border border-blue-200 rounded-lg px-2 py-1 font-bold text-blue-950 focus:outline-none"
+                        >
+                          <option value="root-fifth">{lang === 'th' ? 'Root-5th สลับจังหวะ' : 'Root-5th Alternate'}</option>
+                          <option value="warm-sustain">{lang === 'th' ? 'ลากยาวอุ่นๆ (Sustain)' : 'Warm Sustain'}</option>
+                        </select>
+                        {renderSectionVolumeSlider(section.id, 'bassVolume', section.instruments?.bassVolume, 'accent-blue-600')}
+                      </>
                     ) : (
                       <div className="text-[10px] text-slate-400 py-1 text-center font-medium">
                         {lang === 'th' ? 'ปิดเสียงในท่อนนี้' : 'Muted in this section'}
@@ -643,16 +705,19 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
                       </button>
                     </div>
                     {section.instruments?.piano ? (
-                      <select
-                        value={section.instruments?.pianoStyle || 'warm-pad'}
-                        onChange={(e) =>
-                          updateSectionInstrumentStyle(section.id, 'pianoStyle', e.target.value)
-                        }
-                        className="w-full text-[11px] bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 font-bold text-amber-950 focus:outline-none"
-                      >
-                        <option value="warm-pad">{lang === 'th' ? 'คอร์ดปูพื้น (Warm Pad)' : 'Warm Pad'}</option>
-                        <option value="gentle-arpeggio">{lang === 'th' ? 'พรมนิ้วเบาๆ (Arp)' : 'Gentle Arpeggio'}</option>
-                      </select>
+                      <>
+                        <select
+                          value={section.instruments?.pianoStyle || 'warm-pad'}
+                          onChange={(e) =>
+                            updateSectionInstrumentStyle(section.id, 'pianoStyle', e.target.value)
+                          }
+                          className="w-full text-[11px] bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 font-bold text-amber-950 focus:outline-none"
+                        >
+                          <option value="warm-pad">{lang === 'th' ? 'คอร์ดปูพื้น (Warm Pad)' : 'Warm Pad'}</option>
+                          <option value="gentle-arpeggio">{lang === 'th' ? 'พรมนิ้วเบาๆ (Arp)' : 'Gentle Arpeggio'}</option>
+                        </select>
+                        {renderSectionVolumeSlider(section.id, 'pianoVolume', section.instruments?.pianoVolume, 'accent-amber-600')}
+                      </>
                     ) : (
                       <div className="text-[10px] text-slate-400 py-1 text-center font-medium">
                         {lang === 'th' ? 'ปิดเสียงในท่อนนี้' : 'Muted in this section'}
@@ -685,16 +750,19 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
                       </button>
                     </div>
                     {section.instruments?.drums ? (
-                      <select
-                        value={section.instruments?.drumsStyle || 'shaker-cajon'}
-                        onChange={(e) =>
-                          updateSectionInstrumentStyle(section.id, 'drumsStyle', e.target.value)
-                        }
-                        className="w-full text-[11px] bg-emerald-50 border border-emerald-200 rounded-lg px-2 py-1 font-bold text-emerald-950 focus:outline-none"
-                      >
-                        <option value="shaker-cajon">Shaker & Cajon</option>
-                        <option value="simple-kit">{lang === 'th' ? 'กลองชุดเรียบๆ (Kit)' : 'Simple Kit'}</option>
-                      </select>
+                      <>
+                        <select
+                          value={section.instruments?.drumsStyle || 'shaker-cajon'}
+                          onChange={(e) =>
+                            updateSectionInstrumentStyle(section.id, 'drumsStyle', e.target.value)
+                          }
+                          className="w-full text-[11px] bg-emerald-50 border border-emerald-200 rounded-lg px-2 py-1 font-bold text-emerald-950 focus:outline-none"
+                        >
+                          <option value="shaker-cajon">Shaker & Cajon</option>
+                          <option value="simple-kit">{lang === 'th' ? 'กลองชุดเรียบๆ (Kit)' : 'Simple Kit'}</option>
+                        </select>
+                        {renderSectionVolumeSlider(section.id, 'drumsVolume', section.instruments?.drumsVolume, 'accent-emerald-600')}
+                      </>
                     ) : (
                       <div className="text-[10px] text-slate-400 py-1 text-center font-medium">
                         {lang === 'th' ? 'ปิดเสียงในท่อนนี้' : 'Muted in this section'}

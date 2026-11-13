@@ -17,6 +17,8 @@ import {
   countThaiEnglishSyllables,
 } from '@/lib/thaiRhymeHelper';
 import { useLanguage } from '@/context/LanguageContext';
+import type { SongProject } from '@/types/song';
+import { applyNaturalPromptToSong } from '@/lib/aiSongDirector';
 
 export interface AdvanceTargetSectionContext {
   sectionId: string;
@@ -28,8 +30,10 @@ export interface AdvanceTargetSectionContext {
 
 interface AdvanceModeModalProps {
   targetSection?: AdvanceTargetSectionContext | null;
+  song?: SongProject;
   onCreditsChange: (balance: number) => void;
   onApplyLyrics?: (sectionId: string, lines: string[]) => void;
+  onApplySongUpdate?: (nextSong: SongProject) => void;
   onClose: () => void;
 }
 
@@ -41,7 +45,13 @@ interface GeneratedLyricResult {
   tip: string;
 }
 
-type AdvanceTab = 'rhyme' | 'ai-lyrics' | 'wallet';
+type AdvanceTab = 'rhyme' | 'ai-lyrics' | 'ai-director' | 'wallet';
+
+const AI_DIRECTOR_PRESETS = [
+  'ตั้งความเร็ว 95 bpm คีย์ G ท่อน Intro เกาเบาๆ 60% ท่อน Chorus ลีดแตกหนัก 100% กลองเป็นชุด เบส 80%',
+  'เปลี่ยนเป็นเพลง Ballad ช้าๆ 72 bpm ท่อน Verse ปิดกลอง เหลือเปียโนเบาๆ 55% แล้วท่อน Solo ลีดแตกอุ่น 90%',
+  'ใช้กีตาร์สายไนลอน ห้องคอนเสิร์ต (Unplugged Hall) ท่อน Chorus ตีคอร์ดแคมป์ไฟ ลีดหยอดลูกส่งแบบคลีน คอร์ด C G Am F',
+];
 
 const MOOD_PRESETS = [
   { id: 'warm', th: 'อบอุ่น (Warm)', en: 'Warm & Cozy' },
@@ -55,8 +65,10 @@ const AI_LYRICS_COST = 1;
 
 export const AdvanceModeModal: React.FC<AdvanceModeModalProps> = ({
   targetSection,
+  song,
   onCreditsChange,
   onApplyLyrics,
+  onApplySongUpdate,
   onClose,
 }) => {
   const { lang } = useLanguage();
@@ -79,6 +91,37 @@ export const AdvanceModeModal: React.FC<AdvanceModeModalProps> = ({
   const [isGenerating, setIsGenerating] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiResult, setAiResult] = useState<GeneratedLyricResult | null>(null);
+
+  // AI Song Director State (0 Credits)
+  const [directorPrompt, setDirectorPrompt] = useState('');
+  const [directorActions, setDirectorActions] = useState<string[]>([]);
+  const [directorNotice, setDirectorNotice] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const handleApplyDirectorPrompt = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!song || !onApplySongUpdate || !directorPrompt.trim()) return;
+    const { updatedSong, summaryActions } = applyNaturalPromptToSong(directorPrompt, song);
+    if (summaryActions.length === 0) {
+      setDirectorActions([]);
+      setDirectorNotice({
+        ok: false,
+        text:
+          lang === 'th'
+            ? 'ยังไม่พบคำสั่งตั้งค่าที่รู้จัก — ลองพิมพ์ เช่น "95 bpm คีย์ G ท่อน Intro เกาเบาๆ ท่อน Chorus ลีดแตกหนัก กลองเป็นชุด เบส 80%"'
+            : 'No recognized commands matched — try e.g. "95 bpm Key G, Intro fingerpicking, Chorus lead distortion 100%, drums kit".',
+      });
+      return;
+    }
+    onApplySongUpdate(updatedSong);
+    setDirectorActions(summaryActions);
+    setDirectorNotice({
+      ok: true,
+      text:
+        lang === 'th'
+          ? `นำคำสั่งไปปรับค่าในเพลงเรียบร้อย (${summaryActions.length} รายการ)`
+          : `Applied ${summaryActions.length} configuration changes to your song!`,
+    });
+  };
 
   const rhymeResult = findThaiRhymes(rhymeInput);
   const rhymeSyllables = countThaiEnglishSyllables(rhymeInput);
@@ -231,6 +274,17 @@ export const AdvanceModeModal: React.FC<AdvanceModeModalProps> = ({
             }`}
           >
             ✨ {lang === 'th' ? 'AI Lyric Co-Pilot (1 เครดิต)' : 'AI Lyrics (1 Credit)'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('ai-director')}
+            className={`flex-1 px-3 py-2 rounded-xl font-bold text-xs sm:text-sm transition cursor-pointer whitespace-nowrap ${
+              activeTab === 'ai-director'
+                ? 'bg-white text-purple-700 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            🪄 {lang === 'th' ? 'AI สั่งตั้งค่าแอป (0 เครดิต)' : 'AI Studio Director (0 Credits)'}
           </button>
           <button
             type="button"
@@ -632,6 +686,93 @@ export const AdvanceModeModal: React.FC<AdvanceModeModalProps> = ({
                   ))}
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* ─── TAB 4: AI STUDIO DIRECTOR (0 CREDITS) ─── */}
+          {activeTab === 'ai-director' && (
+            <div className="space-y-4">
+              <div className="p-3.5 rounded-2xl bg-purple-50/80 border border-purple-200 space-y-1">
+                <div className="text-xs font-black text-purple-900 flex items-center gap-1.5">
+                  🪄 {lang === 'th' ? 'สั่ง AI ตั้งค่าเพลงและมิกเซอร์ทั้งแอปด้วยภาษาธรรมชาติ (0 เครดิต)' : 'Natural-Language AI Studio Director (0 Credits)'}
+                </div>
+                <p className="text-[11px] text-purple-700 font-medium leading-relaxed">
+                  {lang === 'th'
+                    ? 'พิมพ์สิ่งที่ต้องการ เช่น ปรับความเร็ว BPM, เปลี่ยนคีย์, เลือกห้อง 3D, เปิด/ปิดเครื่องดนตรี, ปรับ % ความดังรายท่อน หรือสั่งแตกหนัก/แตกอุ่น แล้วกดให้ AI ลงค่าให้ทันที'
+                    : 'Describe your desired tempo, key, room ambience, per-section instruments, overdrive/fuzz tone, % volumes, or chord changes and apply them in one click.'}
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="text-[11px] font-bold text-slate-600">
+                  {lang === 'th' ? '💡 ตัวอย่างคำสั่งคลิกด่วน:' : '💡 Quick Prompt Examples:'}
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  {AI_DIRECTOR_PRESETS.map((preset, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => {
+                        setDirectorPrompt(preset);
+                        setDirectorNotice(null);
+                      }}
+                      className="text-left text-[11px] font-medium px-3 py-2 rounded-xl bg-slate-50 hover:bg-purple-50 border border-slate-200 hover:border-purple-300 text-slate-700 transition cursor-pointer"
+                    >
+                      “{preset}”
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <form onSubmit={handleApplyDirectorPrompt} className="space-y-3">
+                <textarea
+                  rows={3}
+                  value={directorPrompt}
+                  onChange={(e) => setDirectorPrompt(e.target.value)}
+                  placeholder={
+                    lang === 'th'
+                      ? 'เช่น ตั้งความเร็ว 95 bpm คีย์ G ท่อน Intro เกาเบาๆ ท่อน Chorus ลีดแตกหนัก 100% กลองเป็นชุด เบส 80%...'
+                      : 'e.g. Set 95 bpm key G, Intro soft fingerpicking, Chorus lead distortion 100%, drums kit, bass 80%...'
+                  }
+                  className="w-full px-3.5 py-2.5 rounded-2xl border border-purple-200 bg-white text-xs sm:text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-400"
+                />
+                <button
+                  type="submit"
+                  disabled={!song || !onApplySongUpdate || !directorPrompt.trim()}
+                  className="w-full py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-black text-xs sm:text-sm shadow-xs transition cursor-pointer"
+                >
+                  🪄 {lang === 'th' ? 'ให้ AI ลงค่าในแอปทันที' : 'Apply Prompt Settings to App'}
+                </button>
+              </form>
+
+              {directorNotice && (
+                <div
+                  className={`p-3 rounded-xl border text-xs font-bold ${
+                    directorNotice.ok
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                      : 'bg-amber-50 border-amber-200 text-amber-900'
+                  }`}
+                >
+                  {directorNotice.ok ? '✅ ' : '⚠️ '}
+                  {directorNotice.text}
+                </div>
+              )}
+
+              {directorActions.length > 0 && (
+                <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 space-y-1.5">
+                  <div className="text-[11px] font-black text-slate-700">
+                    {lang === 'th' ? 'รายการที่ AI ปรับแต่งให้ล่าสุด:' : 'Applied Changes:'}
+                  </div>
+                  <ul className="space-y-1 max-h-40 overflow-y-auto">
+                    {directorActions.map((act, i) => (
+                      <li key={i} className="text-[11px] font-medium text-slate-700 flex items-start gap-1.5">
+                        <span className="text-purple-600 font-bold">•</span>
+                        <span>{act}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
         </div>

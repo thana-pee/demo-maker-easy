@@ -166,6 +166,36 @@ export function isTrackOn(song: SongProject, section: SongSection, track: TrackI
   }
 }
 
+/**
+ * ดึงค่าความดังเฉพาะท่อน (0–100) ของเครื่องดนตรีแต่ละชิ้น
+ * ค่าเริ่มต้น 100 หมายถึงใช้ความดังเต็มตามมิกเซอร์หลักโดยไม่ลดทอน
+ */
+export function getSectionTrackVolume(section: SongSection, track: TrackId): number {
+  const ins = section.instruments;
+  let raw: number | undefined;
+  switch (track) {
+    case 'guitarRhythm':
+      raw = ins.guitarRhythmVolume;
+      break;
+    case 'guitarLead':
+      raw = ins.guitarLeadVolume;
+      break;
+    case 'bass':
+      raw = ins.bassVolume;
+      break;
+    case 'piano':
+      raw = ins.pianoVolume;
+      break;
+    case 'drums':
+      raw = ins.drumsVolume;
+      break;
+    default:
+      return 100;
+  }
+  if (typeof raw !== 'number' || Number.isNaN(raw)) return 100;
+  return clamp(Math.round(raw), 0, 100);
+}
+
 // ───────────────────────────── Plan context ─────────────────────────────
 
 interface Segment {
@@ -236,13 +266,19 @@ function pushNote(
     end = ctx.timing.barSec + ctx.tail[track]; // ปล่อยหางเสียงข้ามเส้นห้อง
   }
   if (end - t < 0.04) end = t + 0.04;
-  ctx.out.push({ kind: 'note', track, t, midi, dur: end - t, vel: clampVel(vel), release });
+  const secVol = getSectionTrackVolume(ctx.fb.section, track);
+  if (secVol <= 0) return;
+  const scaledVel = secVol === 100 ? vel : vel * (secVol / 100);
+  ctx.out.push({ kind: 'note', track, t, midi, dur: end - t, vel: clampVel(scaledVel), release });
 }
 
 function pushDrum(ctx: PlanCtx, voice: DrumVoice, t: number, vel: number, pan: number) {
   if (t < 0) t = 0;
   if (t >= ctx.cutT - 1e-6) return;
-  ctx.out.push({ kind: 'drum', voice, t, vel: clampVel(vel), pan });
+  const secVol = getSectionTrackVolume(ctx.fb.section, 'drums');
+  if (secVol <= 0) return;
+  const scaledVel = secVol === 100 ? vel : vel * (secVol / 100);
+  ctx.out.push({ kind: 'drum', voice, t, vel: clampVel(scaledVel), pan });
 }
 
 const jitter = (ctx: PlanCtx, ms = 5) => ((ctx.rng() - 0.5) * 2 * ms) / 1000;

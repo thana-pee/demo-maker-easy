@@ -21,11 +21,20 @@ import {
   flattenSong,
   getTiming,
   isTrackOn,
+  getSectionTrackVolume,
   type TrackId,
   type PlannedEvent,
   type FlatBar,
 } from './barPlanner';
-import type { SongProject, GuitarModel, LeadGuitarDrive, MelodySound, StringGauge, Ambience3DMode } from '../types/song';
+import type {
+  SongProject,
+  SongSection,
+  GuitarModel,
+  LeadGuitarDrive,
+  MelodySound,
+  StringGauge,
+  Ambience3DMode,
+} from '../types/song';
 
 // ─────────────────────────── Types ───────────────────────────
 
@@ -599,7 +608,7 @@ class GuitarRhythmTrackGainNode extends TrackGainNode {
 }
 
 /** สร้าง Curve จำลองเสียงแตกหลอดสุญญากาศ (Tube Saturation Curve with Soft-Knee) */
-function makeGuitarDistortionCurve(samples = 4096): Float32Array<ArrayBuffer> {
+export function makeGuitarDistortionCurve(samples = 4096): Float32Array<ArrayBuffer> {
   const buffer = new ArrayBuffer(samples * 4);
   const curve = new Float32Array(buffer);
   for (let i = 0; i < samples; ++i) {
@@ -611,28 +620,125 @@ function makeGuitarDistortionCurve(samples = 4096): Float32Array<ArrayBuffer> {
   return curve;
 }
 
+/** สร้าง Curve จำลองเสียงแตก Fuzz / High-Gain Hard-Clip (Sharp Harmonic Crunch) */
+export function makeGuitarFuzzCurve(samples = 4096): Float32Array<ArrayBuffer> {
+  const buffer = new ArrayBuffer(samples * 4);
+  const curve = new Float32Array(buffer);
+  for (let i = 0; i < samples; ++i) {
+    const x = (i * 2) / samples - 1;
+    const driven = x * 6.5;
+    const clipped = Math.max(-0.92, Math.min(0.92, driven / (1 + 0.35 * Math.abs(driven))));
+    curve[i] = Math.tanh(clipped * 1.85 + 0.14 * x * x);
+  }
+  return curve;
+}
+
+export interface LeadDriveDSPParams {
+  normalizedDrive: 'clean' | 'crunch' | 'overdrive' | 'distortion';
+  curveType: 'tube' | 'fuzz';
+  dry: number;
+  wet: number;
+  pre: number;
+  cabFreq: number;
+  cabQ: number;
+  toneFreq: number;
+  toneGainDb: number;
+  post: number;
+  vibDepth: number;
+}
+
+/** แมปค่า LeadGuitarDrive (รวม alias 'fuzz') เป็นพารามิเตอร์ DSP ที่แยกคาแรกเตอร์ชัดเจน */
+export function getLeadDriveDSPParams(drive: LeadGuitarDrive): LeadDriveDSPParams {
+  const normalized = drive === 'fuzz' ? 'distortion' : drive;
+  switch (normalized) {
+    case 'clean':
+      return {
+        normalizedDrive: 'clean',
+        curveType: 'tube',
+        dry: 1.0,
+        wet: 0.0,
+        pre: 1.0,
+        cabFreq: 6200,
+        cabQ: 0.9,
+        toneFreq: 2500,
+        toneGainDb: 0.5,
+        post: 0.78,
+        vibDepth: 0.0003,
+      };
+    case 'crunch':
+      return {
+        normalizedDrive: 'crunch',
+        curveType: 'tube',
+        dry: 0.25,
+        wet: 0.85,
+        pre: 3.2,
+        cabFreq: 4800,
+        cabQ: 1.1,
+        toneFreq: 1400,
+        toneGainDb: 2.5,
+        post: 0.58,
+        vibDepth: 0.0005,
+      };
+    case 'overdrive':
+      return {
+        normalizedDrive: 'overdrive',
+        curveType: 'tube',
+        dry: 0.05,
+        wet: 1.0,
+        pre: 7.2,
+        cabFreq: 4100,
+        cabQ: 1.25,
+        toneFreq: 950,
+        toneGainDb: 4.5,
+        post: 0.45,
+        vibDepth: 0.0007,
+      };
+    case 'distortion':
+    default:
+      return {
+        normalizedDrive: 'distortion',
+        curveType: 'fuzz',
+        dry: 0.0,
+        wet: 1.30,
+        pre: 16.0,
+        cabFreq: 4900,
+        cabQ: 1.85,
+        toneFreq: 2150,
+        toneGainDb: 7.0,
+        post: 0.34,
+        vibDepth: 0.00085,
+      };
+  }
+}
+
 /**
- * LeadGuitarTrackGainNode — Channel กีตาร์ลีดพร้อมเอฟเฟกต์ Overdrive / Distortion + Cabinet Sim
+ * LeadGuitarTrackGainNode — Channel กีตาร์ลีดพร้อมเอฟเฟกต์ Overdrive / Distortion + Tone EQ + Cabinet Sim
  *
  * Signal Chain:
- *   input -> dryGain -----------------------------------------------------> masterGain -> fadeGain -> panner -> destination
- *         \-> preFilter (HPF 100Hz) -> preGain -> waveShaper -> cabFilter -> postGain -> wetGain -/
+ *   input -> dryGain -----------------------------------------------------------------> sumNode -> vibrato -> masterGain
+ *         \-> preFilter (HPF 110Hz) -> preGain -> waveShaper -> toneFilter -> cabFilter -> postGain -> wetGain -/
  */
 class LeadGuitarTrackGainNode extends TrackGainNode {
   private preFilter: BiquadFilterNode;
   private preGain: GainNode;
   private waveShaper: WaveShaperNode;
+  private toneFilter: BiquadFilterNode;
   private cabFilter: BiquadFilterNode;
   private postGain: GainNode;
   private wetGain: GainNode;
   private dryGain: GainNode;
-  private currentDrive: LeadGuitarDrive = 'clean';
+  private tubeCurve: Float32Array<ArrayBuffer>;
+  private fuzzCurve: Float32Array<ArrayBuffer>;
+  private currentDrive: 'clean' | 'crunch' | 'overdrive' | 'distortion' = 'clean';
 
   constructor(ctx: AudioContext, destination: AudioNode, vol: number, pan: number) {
     super(ctx, destination, vol, pan);
 
     // ปลด input -> masterGain ตรงๆ จาก constructor แม่ เพื่อให้ผ่าน drive circuit
     this.input.disconnect(this.masterGain);
+
+    this.tubeCurve = makeGuitarDistortionCurve(4096);
+    this.fuzzCurve = makeGuitarFuzzCurve(4096);
 
     // 1. Pre-filter: ตัด sub-bass rumble ก่อนอัดเข้า WaveShaper
     this.preFilter = ctx.createBiquadFilter();
@@ -643,31 +749,36 @@ class LeadGuitarTrackGainNode extends TrackGainNode {
     this.preGain = ctx.createGain();
     this.preGain.gain.value = 1.0;
 
-    // 3. WaveShaper: จำลองหลอดสุญญากาศ (พร้อม 4x oversampling ลด aliasing noise)
+    // 3. WaveShaper: จำลองหลอดสุญญากาศ / Fuzz (พร้อม 4x oversampling ลด aliasing noise)
     this.waveShaper = ctx.createWaveShaper();
-    this.waveShaper.curve = makeGuitarDistortionCurve(4096);
+    this.waveShaper.curve = this.tubeCurve;
     this.waveShaper.oversample = '4x';
 
-    // 4. Cabinet Filter: จำลองตู้แอมป์กีตาร์ (Celestion V30 roll-off ~4.2kHz) เพื่อให้เสียงหนา อบอุ่น ไม่แหลมสาก
+    // 4. Tone EQ (Peaking): แยกคาแรกเตอร์เสียงอุ่น (Mid ~950Hz) vs เสียงแตกหนักคม (Upper-Mid Bite ~2150Hz)
+    this.toneFilter = ctx.createBiquadFilter();
+    this.toneFilter.type = 'peaking';
+    this.toneFilter.frequency.value = 2500;
+    this.toneFilter.Q.value = 1.2;
+    this.toneFilter.gain.value = 0.5;
+
+    // 5. Cabinet Filter: จำลองตู้แอมป์กีตาร์ เพื่อให้เสียงหนา อบอุ่น ไม่แหลมสาก
     this.cabFilter = ctx.createBiquadFilter();
     this.cabFilter.type = 'lowpass';
-    this.cabFilter.frequency.value = 4500;
-    this.cabFilter.Q.value = 1.1;
+    this.cabFilter.frequency.value = 6200;
+    this.cabFilter.Q.value = 0.9;
 
-    // 5. Post Gain: ชดเชยระดับเสียงไม่ให้โดดหลังแตก
+    // 6. Post Gain: ชดเชยระดับเสียงไม่ให้โดดหลังแตก
     this.postGain = ctx.createGain();
-    this.postGain.gain.value = 0.55;
+    this.postGain.gain.value = 0.78;
 
-    // 6. Wet / Dry blend
+    // 7. Wet / Dry blend
     this.wetGain = ctx.createGain();
     this.wetGain.gain.value = 0.0;
 
     this.dryGain = ctx.createGain();
     this.dryGain.gain.value = 1.0;
 
-    // 7. Vibrato & Singing Sustain circuit (BBD modulated analog delay)
-    // เลียนแบบวงจรเอฟเฟกต์ก้อน Chorus/Vibrato ของมือกีตาร์ (เช่น Boss CE-2 / VB-2)
-    // ทำให้นักกีตาร์ที่ลากโน้ตยาว มีการสั่นนิ้ว (Vibrato 5.0 Hz) อบอุ่น มีมิติ ไม่แข็งทื่อเป็นอีเล็กโทน
+    // 8. Vibrato & Singing Sustain circuit (BBD modulated analog delay)
     this.vibratoDelay = ctx.createDelay();
     this.vibratoDelay.delayTime.value = 0.0035; // 3.5ms baseline delay
 
@@ -682,7 +793,7 @@ class LeadGuitarTrackGainNode extends TrackGainNode {
     this.vibratoDepth.connect(this.vibratoDelay.delayTime);
     this.vibratoLfo.start();
 
-    // 8. Junction sum & stereo-like blend
+    // 9. Junction sum & stereo-like blend
     this.sumNode = ctx.createGain();
     this.vibratoDirect = ctx.createGain();
     this.vibratoDirect.gain.value = 0.4;
@@ -693,7 +804,8 @@ class LeadGuitarTrackGainNode extends TrackGainNode {
     this.input.connect(this.preFilter);
     this.preFilter.connect(this.preGain);
     this.preGain.connect(this.waveShaper);
-    this.waveShaper.connect(this.cabFilter);
+    this.waveShaper.connect(this.toneFilter);
+    this.toneFilter.connect(this.cabFilter);
     this.cabFilter.connect(this.postGain);
     this.postGain.connect(this.wetGain);
     this.wetGain.connect(this.sumNode);
@@ -719,66 +831,24 @@ class LeadGuitarTrackGainNode extends TrackGainNode {
   private vibratoWet: GainNode;
 
   setDrive(drive: LeadGuitarDrive, t: number = 0) {
-    if (this.currentDrive === drive) return;
-    this.currentDrive = drive;
+    const params = getLeadDriveDSPParams(drive);
+    if (this.currentDrive === params.normalizedDrive) return;
+    this.currentDrive = params.normalizedDrive;
 
     const ctxTime = t || this.input.context.currentTime;
     const ramp = 0.04;
 
-    let dry = 1.0;
-    let wet = 0.0;
-    let pre = 1.0;
-    let cabFreq = 6000;
-    let cabQ = 1.0;
-    let post = 0.75;
-    let vibDepth = 0.0003;
+    this.waveShaper.curve = params.curveType === 'fuzz' ? this.fuzzCurve : this.tubeCurve;
 
-    switch (drive) {
-      case 'clean':
-        dry = 1.0;
-        wet = 0.0;
-        pre = 1.0;
-        cabFreq = 6000;
-        cabQ = 0.9;
-        post = 0.75;
-        vibDepth = 0.0003;
-        break;
-      case 'crunch':
-        dry = 0.25;
-        wet = 0.85;
-        pre = 3.2;
-        cabFreq = 4800;
-        cabQ = 1.1;
-        post = 0.58;
-        vibDepth = 0.0005;
-        break;
-      case 'overdrive':
-        dry = 0.05;
-        wet = 1.0;
-        pre = 7.0;
-        cabFreq = 4200;
-        cabQ = 1.3;
-        post = 0.45;
-        vibDepth = 0.0007;
-        break;
-      case 'distortion':
-        dry = 0.0;
-        wet = 1.15;
-        pre = 13.0;
-        cabFreq = 3700;
-        cabQ = 1.5;
-        post = 0.32;
-        vibDepth = 0.00085;
-        break;
-    }
-
-    this.dryGain.gain.setTargetAtTime(dry, ctxTime, ramp);
-    this.wetGain.gain.setTargetAtTime(wet, ctxTime, ramp);
-    this.preGain.gain.setTargetAtTime(pre, ctxTime, ramp);
-    this.cabFilter.frequency.setTargetAtTime(cabFreq, ctxTime, ramp);
-    this.cabFilter.Q.setTargetAtTime(cabQ, ctxTime, ramp);
-    this.postGain.gain.setTargetAtTime(post, ctxTime, ramp);
-    this.vibratoDepth.gain.setTargetAtTime(vibDepth, ctxTime, ramp);
+    this.dryGain.gain.setTargetAtTime(params.dry, ctxTime, ramp);
+    this.wetGain.gain.setTargetAtTime(params.wet, ctxTime, ramp);
+    this.preGain.gain.setTargetAtTime(params.pre, ctxTime, ramp);
+    this.toneFilter.frequency.setTargetAtTime(params.toneFreq, ctxTime, ramp);
+    this.toneFilter.gain.setTargetAtTime(params.toneGainDb, ctxTime, ramp);
+    this.cabFilter.frequency.setTargetAtTime(params.cabFreq, ctxTime, ramp);
+    this.cabFilter.Q.setTargetAtTime(params.cabQ, ctxTime, ramp);
+    this.postGain.gain.setTargetAtTime(params.post, ctxTime, ramp);
+    this.vibratoDepth.gain.setTargetAtTime(params.vibDepth, ctxTime, ramp);
   }
 
   override disconnect() {
@@ -786,6 +856,7 @@ class LeadGuitarTrackGainNode extends TrackGainNode {
     this.preFilter.disconnect();
     this.preGain.disconnect();
     this.waveShaper.disconnect();
+    this.toneFilter.disconnect();
     this.cabFilter.disconnect();
     this.postGain.disconnect();
     this.wetGain.disconnect();
@@ -1132,10 +1203,35 @@ class AudioEngine {
     this.reverbWetGain.gain.setTargetAtTime(wet, this.ctx.currentTime, 0.05);
   }
 
+  /** อัปเดตความดังเฉพาะท่อนและโทนเสียงแตกกีตาร์ลีดแบบ Real-time ให้ตรงกับท่อนที่กำลังทำงาน */
+  private _applySectionMixAndDrive(song: SongProject, section: SongSection | undefined, nowTime: number) {
+    const sectionTracks = ['guitarRhythm', 'guitarLead', 'bass', 'piano', 'drums'] as const;
+    for (const track of sectionTracks) {
+      const mixerConf = song.mixer[track];
+      const baseEnabled = track === 'drums' ? mixerConf.enabled && mixerConf.style !== 'off' : mixerConf.enabled;
+      const secEnabled = section ? section.instruments[track] : true;
+      const secVol = section ? getSectionTrackVolume(section, track) : 100;
+      const effectiveVol = baseEnabled && secEnabled ? Math.round((mixerConf.volume * secVol) / 100) : 0;
+      this.setMixerVolume(track, effectiveVol);
+    }
+
+    const leadNode = this.trackGains['guitarLead'];
+    if (leadNode instanceof LeadGuitarTrackGainNode) {
+      const secDrive = section?.instruments.guitarLeadDrive ?? song.mixer.guitarLead.drive ?? 'overdrive';
+      leadNode.setDrive(secDrive, nowTime);
+    }
+  }
+
   updateSong(song: SongProject) {
     this._currentSong = song;
     if (this.isPlayingFlag) {
       this.playbackFlat = flattenSong(song);
+    }
+    if (this.ctx) {
+      const activeSection =
+        (this.activeBarIndex >= 0 ? this.playbackFlat[this.activeBarIndex]?.section : undefined) ??
+        song.sections[0];
+      this._applySectionMixAndDrive(song, activeSection, this.ctx.currentTime);
     }
   }
 
@@ -1182,6 +1278,7 @@ class AudioEngine {
 
     const planned = planBar(song, flat, barIndex);
     const now = (this.ctx?.currentTime ?? 0) + 0.05;
+    this._applySectionMixAndDrive(song, flat[barIndex].section, now);
 
     for (const ev of planned.events) {
       const t = now + ev.t;
@@ -1355,12 +1452,8 @@ class AudioEngine {
     const now = Math.max(ctx.currentTime + 0.04, this.nextBarAudioTime);
     this.nextBarAudioTime = now + timing.barSec;
 
-    // ปรับเสียงแตกกีตาร์ลีดตามท่อน (Per-Section Drive Override หรือค่าจากมิกเซอร์)
-    const leadNode = this.trackGains['guitarLead'];
-    if (leadNode instanceof LeadGuitarTrackGainNode) {
-      const secDrive = flat[barIndex].section.instruments.guitarLeadDrive ?? activeSong.mixer.guitarLead.drive ?? 'overdrive';
-      leadNode.setDrive(secDrive, now);
-    }
+    // ปรับความดังเฉพาะท่อนและเสียงแตกกีตาร์ลีดตามท่อน
+    this._applySectionMixAndDrive(activeSong, flat[barIndex].section, now);
 
     // Schedule events
     for (const ev of planned.events) {

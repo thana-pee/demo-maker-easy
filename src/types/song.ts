@@ -24,7 +24,7 @@ export type Ambience3DMode = 'living-room' | 'wood-studio' | 'unplugged-hall';
 
 export type GuitarStyle = 'campfire-strum' | 'soft-strum' | 'fingerpicking';
 export type LeadGuitarStyle = 'melodic-solo' | 'riff-fills' | 'soft-arpeggio';
-export type LeadGuitarDrive = 'clean' | 'crunch' | 'overdrive' | 'distortion';
+export type LeadGuitarDrive = 'clean' | 'crunch' | 'overdrive' | 'distortion' | 'fuzz';
 export type BassStyle = 'root-fifth' | 'warm-sustain';
 export type PianoStyle = 'warm-pad' | 'gentle-arpeggio';
 export type DrumStyle = 'off' | 'shaker-cajon' | 'simple-kit';
@@ -60,6 +60,13 @@ export interface SectionInstruments {
   bassStyle?: BassStyle;
   pianoStyle?: PianoStyle;
   drumsStyle?: DrumStyle;
+
+  // ความดังเฉพาะท่อนนี้ 0–100 (Per-Section Instrument Volume Overrides, default 100)
+  guitarRhythmVolume?: number;
+  guitarLeadVolume?: number;
+  bassVolume?: number;
+  pianoVolume?: number;
+  drumsVolume?: number;
 }
 
 export interface SongSection {

@@ -665,8 +665,10 @@ export default function Home() {
       {advanceModalState.isOpen && (
         <AdvanceModeModal
           targetSection={advanceModalState.targetSection}
+          song={song}
           onCreditsChange={setCreditBalance}
           onApplyLyrics={handleApplyAiLyrics}
+          onApplySongUpdate={setSong}
           onClose={() => setAdvanceModalState((prev) => ({ ...prev, isOpen: false }))}
         />
       )}
