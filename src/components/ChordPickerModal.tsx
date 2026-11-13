@@ -1,7 +1,9 @@
 'use client';
 
 import React, { useState } from 'react';
-import { getDiatonicChords } from '@/lib/chordUtils';
+import { getDiatonicChords, parseChord } from '@/lib/chordUtils';
+
+const SLASH_BASS_NOTES = ['E', 'F#', 'G', 'A', 'B', 'C', 'D'] as const;
 
 interface ChordPickerModalProps {
   isOpen: boolean;
@@ -23,6 +25,9 @@ export const ChordPickerModal: React.FC<ChordPickerModalProps> = ({
   if (!isOpen) return null;
 
   const diatonicChords = getDiatonicChords(baseKey);
+  const activeRaw = (customInput.trim() || currentChord || 'C').trim();
+  const baseChord = activeRaw.split('/')[0].trim() || 'C';
+  const { bass: currentBass } = parseChord(activeRaw);
 
   const handleCustomSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -30,6 +35,11 @@ export const ChordPickerModal: React.FC<ChordPickerModalProps> = ({
       onSelectChord(customInput.trim());
       setCustomInput('');
     }
+  };
+
+  const handleAttachSlashBass = (bassNote: string | null) => {
+    onSelectChord(bassNote ? `${baseChord}/${bassNote}` : baseChord);
+    setCustomInput('');
   };
 
   return (
@@ -66,6 +76,44 @@ export const ChordPickerModal: React.FC<ChordPickerModalProps> = ({
               </button>
             );
           })}
+        </div>
+
+        {/* Slash Bass (/Bass) Quick Attachment Bar */}
+        <div className="pt-2 border-t border-slate-100 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-slate-600">
+              Slash Bass (/Bass) สำหรับ <span className="font-bold text-slate-900">{baseChord}</span>
+            </span>
+            {currentBass && (
+              <button
+                type="button"
+                onClick={() => handleAttachSlashBass(null)}
+                className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-rose-50 hover:text-rose-600 text-slate-600 transition"
+              >
+                Clear Bass ({baseChord})
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {SLASH_BASS_NOTES.map((bassNote) => {
+              const isBassActive = currentBass === bassNote;
+              return (
+                <button
+                  key={bassNote}
+                  type="button"
+                  onClick={() => handleAttachSlashBass(bassNote)}
+                  title={`ใช้คอร์ด ${baseChord}/${bassNote}`}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition ${
+                    isBassActive
+                      ? 'bg-[#1A73E8] text-white border-[#1A73E8] shadow-sm'
+                      : 'bg-slate-50 hover:bg-blue-50 hover:border-blue-300 text-slate-700 border-slate-200'
+                  }`}
+                >
+                  /{bassNote}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {/* Custom Chord Input */}

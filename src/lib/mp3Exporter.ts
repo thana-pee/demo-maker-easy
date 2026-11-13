@@ -191,6 +191,29 @@ export async function renderSongToAudioBuffer(
       }
       gain.connect(bodyFilter);
       bodyFilter.connect(panner);
+    } else if (tr === 'vocal') {
+      const hpf = offlineCtx.createBiquadFilter();
+      hpf.type = 'highpass';
+      hpf.frequency.value = 95;
+      hpf.Q.value = 0.707;
+
+      const presenceEq = offlineCtx.createBiquadFilter();
+      presenceEq.type = 'peaking';
+      presenceEq.frequency.value = 3800;
+      presenceEq.gain.value = 2.5;
+      presenceEq.Q.value = 1.1;
+
+      const vocalComp = offlineCtx.createDynamicsCompressor();
+      vocalComp.threshold.setValueAtTime(-18, 0);
+      vocalComp.knee.setValueAtTime(6, 0);
+      vocalComp.ratio.setValueAtTime(4, 0);
+      vocalComp.attack.setValueAtTime(0.008, 0);
+      vocalComp.release.setValueAtTime(0.12, 0);
+
+      gain.connect(hpf);
+      hpf.connect(presenceEq);
+      presenceEq.connect(vocalComp);
+      vocalComp.connect(panner);
     } else {
       gain.connect(panner);
     }

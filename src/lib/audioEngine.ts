@@ -483,7 +483,7 @@ class MelodySynth {
 // ─────────────────────────── TrackGain ───────────────────────────
 
 /** GainNode ต่อ track สำหรับ fade/restore/mixer volume */
-class TrackGainNode {
+export class TrackGainNode {
   protected masterGain: GainNode;
   protected fadeGain: GainNode;
   protected panner: StereoPannerNode;
@@ -807,6 +807,54 @@ class LeadGuitarTrackGainNode extends TrackGainNode {
   }
 }
 
+/**
+ * VocalStudioTrackGainNode — Vocal Studio DSP Chain:
+ *  input -> hpf (95Hz highpass) -> presenceEq (3.8kHz +2.5dB peaking, Q: 1.1)
+ *        -> vocalComp (-18dB, 4:1, 8ms/120ms) -> masterGain -> fadeGain -> panner -> destination
+ */
+export class VocalStudioTrackGainNode extends TrackGainNode {
+  private hpf: BiquadFilterNode;
+  private presenceEq: BiquadFilterNode;
+  private vocalComp: DynamicsCompressorNode;
+
+  constructor(ctx: AudioContext, destination: AudioNode, vol: number, pan: number) {
+    super(ctx, destination, vol, pan);
+
+    // ปลดสายตรง input -> masterGain จากคลาสแม่ แล้วส่งผ่าน Studio Vocal DSP Chain
+    this.input.disconnect(this.masterGain);
+
+    this.hpf = ctx.createBiquadFilter();
+    this.hpf.type = 'highpass';
+    this.hpf.frequency.value = 95;
+    this.hpf.Q.value = 0.707;
+
+    this.presenceEq = ctx.createBiquadFilter();
+    this.presenceEq.type = 'peaking';
+    this.presenceEq.frequency.value = 3800;
+    this.presenceEq.gain.value = 2.5;
+    this.presenceEq.Q.value = 1.1;
+
+    this.vocalComp = ctx.createDynamicsCompressor();
+    this.vocalComp.threshold.setValueAtTime(-18, ctx.currentTime);
+    this.vocalComp.knee.setValueAtTime(6, ctx.currentTime);
+    this.vocalComp.ratio.setValueAtTime(4, ctx.currentTime);
+    this.vocalComp.attack.setValueAtTime(0.008, ctx.currentTime);
+    this.vocalComp.release.setValueAtTime(0.12, ctx.currentTime);
+
+    this.input.connect(this.hpf);
+    this.hpf.connect(this.presenceEq);
+    this.presenceEq.connect(this.vocalComp);
+    this.vocalComp.connect(this.masterGain);
+  }
+
+  override disconnect() {
+    super.disconnect();
+    try { this.hpf.disconnect(); } catch {}
+    try { this.presenceEq.disconnect(); } catch {}
+    try { this.vocalComp.disconnect(); } catch {}
+  }
+}
+
 // ─────────────────────────── AudioEngine ───────────────────────────
 
 class AudioEngine {
@@ -981,10 +1029,10 @@ class AudioEngine {
       }
     }
 
-    // Vocal Track Gain Node
+    // Vocal Track Gain Node (Studio HPF + Presence EQ + Vocal Compressor)
     this.vocalGain?.disconnect();
     const vocalVol = song.mixer.vocal?.volume ?? 95;
-    this.vocalGain = new TrackGainNode(
+    this.vocalGain = new VocalStudioTrackGainNode(
       ctx,
       dest,
       (song.mixer.vocal?.enabled ?? true) ? vocalVol : 0,

@@ -186,6 +186,7 @@ interface PlanCtx {
   rng: () => number;
   isBreak: boolean;
   isLetRing: boolean;
+  isSongEnd: boolean;
   cutT: number; // เวลาที่ตัดเสียงในห้อง Break (วินาที) ; ห้องปกติ = barSec
   intensity: number;
   gaugeDur: number;
@@ -304,6 +305,46 @@ const FINGER_PATTERNS: Record<TimeSignature, { steps: number[]; seq: Array<'R' |
   '6/8': { steps: [0, 2, 4, 6, 8, 10], seq: ['R', '3', '2', '1', '2', '3'] },
 };
 
+const OUTRO_STRUM_GAP_MS: [number, number] = [38, 52];
+
+/** เติมหางเสียง sus4 / add9 แบบละเอียดอ่อนบนสายกลาง-แหลมในอัปสโตรกท้ายห้อง */
+function embellishVoicing(voicing: GuitarVoicing, parsed: ParsedChord): GuitarVoicing {
+  if (parsed.quality === 'sus4' || parsed.quality === 'sus2' || parsed.quality === 'add9') {
+    return voicing;
+  }
+  const strs = voicing.strings;
+  if (strs.length < 3) return voicing;
+  const topStart = Math.max(0, strs.length - 3);
+  let targetIdx = -1;
+  let shift = 0;
+
+  if (parsed.quality === 'maj' || parsed.quality === '7' || parsed.quality === 'maj7') {
+    const thirdPc = (parsed.pc + 4) % 12;
+    targetIdx = strs.findIndex((s, idx) => idx >= topStart && s.midi % 12 === thirdPc);
+    if (targetIdx >= 0) {
+      shift = 1; // 3rd -> 4th (sus4)
+    } else {
+      targetIdx = strs.findIndex((s, idx) => idx >= topStart && s.midi % 12 === parsed.pc);
+      if (targetIdx >= 0) shift = 2; // root -> 9th (add9)
+    }
+  } else {
+    targetIdx = strs.findIndex((s, idx) => idx >= topStart && s.midi % 12 === parsed.pc);
+    if (targetIdx >= 0) {
+      shift = 2; // minor root -> add9
+    } else {
+      const m3Pc = (parsed.pc + 3) % 12;
+      targetIdx = strs.findIndex((s, idx) => idx >= topStart && s.midi % 12 === m3Pc);
+      if (targetIdx >= 0) shift = 2; // m3 -> 4th (sus4)
+    }
+  }
+
+  if (targetIdx < 0 || shift === 0) return voicing;
+  const nextStrings = strs.map((s, idx) =>
+    idx === targetIdx ? { ...s, midi: s.midi + shift } : s
+  );
+  return { ...voicing, strings: nextStrings };
+}
+
 function emitStrum(
   ctx: PlanCtx,
   voicing: GuitarVoicing,
@@ -315,7 +356,8 @@ function emitStrum(
   release: number
 ) {
   const { stepSec } = ctx.timing;
-  const strings = dir === 'D' ? voicing.strings : [...voicing.strings].reverse();
+  // Zone Strumming: ลง = ไล่สายเบส→แหลมทุกสาย / ขึ้น = แปรงเฉพาะ 3 สายแหลมบน
+  const strings = dir === 'D' ? voicing.strings : voicing.strings.slice(-3).reverse();
   const t0 = step * stepSec + jitter(ctx, 4);
   let acc = 0;
   strings.forEach((s, k) => {
@@ -335,11 +377,13 @@ function planRhythm(ctx: PlanCtx) {
   const release = song.stringGauge === 'heavy-012' ? 0.9 : 0.5;
   const vScale = ctx.intensity;
 
-  // Let Ring: ดีดครั้งเดียวต่อคอร์ด แล้วปล่อยกังวานค้างจนจบ segment
+  // Let Ring (และ Outro Ring-out): ดีดครั้งเดียวต่อคอร์ด แล้วปล่อยกังวานค้างจนจบ segment
   if (ctx.isLetRing) {
+    const gap = ctx.isSongEnd ? OUTRO_STRUM_GAP_MS : STRUM_GAP_MS.ring;
     ctx.segs.forEach((seg, i) => {
-      const dur = (seg.endStep - seg.startStep) * timing.stepSec + 0.2;
-      emitStrum(ctx, voicings[i], seg.startStep, 'D', 92 * vScale + ctx.gaugeVel, STRUM_GAP_MS.ring, dur * ctx.gaugeDur, release);
+      const baseDur = (seg.endStep - seg.startStep) * timing.stepSec + 0.2;
+      const dur = ctx.isSongEnd ? Math.max(baseDur, timing.barSec + 2.6) : baseDur * ctx.gaugeDur;
+      emitStrum(ctx, voicings[i], seg.startStep, 'D', 92 * vScale + ctx.gaugeVel, gap, dur, release);
     });
     return;
   }
@@ -362,18 +406,51 @@ function planRhythm(ctx: PlanCtx) {
       const base = pat.seq[i] === 'R' ? 84 : pat.seq[i] === 'A' ? 70 : 62;
       const v = base * vScale + ctx.gaugeVel + (ctx.rng() - 0.5) * 8;
       const dur = ((seg.endStep - step) * timing.stepSec + 0.15) * ctx.gaugeDur;
-      pushNote(ctx, 'guitarRhythm', step * timing.stepSec + jitter(ctx), s.midi, dur, v, release);
+      const ritOffset = ctx.isSongEnd ? (step / timing.stepsPerBar) * 0.12 : 0;
+      pushNote(ctx, 'guitarRhythm', step * timing.stepSec + ritOffset + jitter(ctx), s.midi, dur, v, release);
     });
     return;
   }
 
   const pats = STRUM_PATTERNS[song.timeSignature][style === 'soft-strum' ? 'soft-strum' : 'campfire-strum'];
-  const gap = style === 'soft-strum' ? STRUM_GAP_MS.soft : STRUM_GAP_MS.campfire;
+  const baseGap = style === 'soft-strum' ? STRUM_GAP_MS.soft : STRUM_GAP_MS.campfire;
+
+  if (ctx.isSongEnd && !ctx.isBreak) {
+    // Outro Ritardando & Final Arpeggiated Strum
+    const finalSweepStep = ctx.segs.length > 1 ? ctx.segs[ctx.segs.length - 1].startStep : Math.floor(timing.stepsPerBar / 2);
+    pats.forEach((hit, i) => {
+      if (hit.step >= finalSweepStep) return;
+      const nextStep = i + 1 < pats.length ? Math.min(pats[i + 1].step, finalSweepStep) : finalSweepStep;
+      const si = segIndexAt(ctx.segs, hit.step);
+      const dur = ((nextStep - hit.step) * timing.stepSec + 0.12) * ctx.gaugeDur;
+      emitStrum(ctx, voicings[si], hit.step, hit.dir, hit.vel * vScale + ctx.gaugeVel, OUTRO_STRUM_GAP_MS, dur, release);
+    });
+    const finalSi = ctx.segs.length - 1;
+    const sustainDur = Math.max((timing.stepsPerBar - finalSweepStep) * timing.stepSec + 2.6, 2.8);
+    emitStrum(
+      ctx,
+      voicings[finalSi],
+      finalSweepStep,
+      'D',
+      88 * vScale + ctx.gaugeVel,
+      OUTRO_STRUM_GAP_MS,
+      sustainDur,
+      Math.max(release, 0.9)
+    );
+    return;
+  }
+
+  const lastLateUpIdx =
+    fb.bar.chordsPerBar === 1 && !ctx.isBreak
+      ? pats.reduce((acc, h, idx) => (h.dir === 'U' && h.step >= Math.floor(timing.stepsPerBar / 2) ? idx : acc), -1)
+      : -1;
+
   pats.forEach((hit, i) => {
     const nextStep = i + 1 < pats.length ? pats[i + 1].step : timing.stepsPerBar;
     const si = segIndexAt(ctx.segs, hit.step);
     const dur = ((nextStep - hit.step) * timing.stepSec + 0.1) * ctx.gaugeDur;
-    emitStrum(ctx, voicings[si], hit.step, hit.dir, hit.vel * vScale + ctx.gaugeVel, gap, dur, release);
+    const v = i === lastLateUpIdx ? embellishVoicing(voicings[si], ctx.segs[si].parsed) : voicings[si];
+    emitStrum(ctx, v, hit.step, hit.dir, hit.vel * vScale + ctx.gaugeVel, baseGap, dur, release);
   });
 }
 
@@ -591,28 +668,78 @@ function bassRoot(pc: number): number {
   return 28 + ((pc - 4 + 12) % 12); // E1..D#2
 }
 
+/** คำนวณโน้ตเดินเบสเชื่อม (approach note) ก่อนเข้าคอร์ดถัดไป */
+function pickWalkingApproachNote(curRoot: number, nextAnchorPc: number): number {
+  const nextRoot = bassRoot(nextAnchorPc);
+  const diffDown = (curRoot - nextRoot + 12) % 12;
+  // ถ้ากำลังเคลื่อนตัวลง (2 semitones เช่น D->C) ใช้ chromatic (nextRoot + 1)
+  if (diffDown === 2 && nextRoot + 1 <= 43 && nextRoot + 1 !== curRoot) {
+    return nextRoot + 1;
+  }
+  // ถ้ากำลังเคลื่อนตัวลง (3–5 semitones เช่น C->Am, Am->F) ใช้โน้ตผ่านด้านบน (nextRoot + 2)
+  if (diffDown >= 3 && diffDown <= 5 && nextRoot + 2 !== curRoot && nextRoot + 2 <= 43) {
+    return nextRoot + 2;
+  }
+  if (nextRoot - 1 >= 28 && nextRoot - 1 !== curRoot) return nextRoot - 1;
+  if (nextRoot + 2 <= 43 && nextRoot + 2 !== curRoot) return nextRoot + 2;
+  return nextRoot + 1 <= 43 ? nextRoot + 1 : curRoot + 1;
+}
+
 function planBass(ctx: PlanCtx) {
   const { song, fb, timing } = ctx;
   const style: BassStyle = fb.section.instruments.bassStyle ?? song.mixer.bass.style;
   const rel = 0.45;
   const base = 80 * ctx.intensity;
+  const nextSegs =
+    ctx.next && isTrackOn(song, ctx.next.section, 'bass')
+      ? buildSegments(song, ctx.next.bar, timing)
+      : null;
 
-  ctx.segs.forEach((seg) => {
-    const root = bassRoot(seg.parsed.pc);
+  ctx.segs.forEach((seg, si) => {
+    const anchorPc = seg.parsed.bassPc ?? seg.parsed.pc;
+    const root = bassRoot(anchorPc);
     const fifth = root + 7 <= 43 ? root + 7 : root - 5;
     const len = seg.endStep - seg.startStep;
     const t0 = seg.startStep * timing.stepSec;
 
+    const nextFirst = si === ctx.segs.length - 1 && nextSegs ? nextSegs[0] : null;
+    const nextAnchorPc = nextFirst ? (nextFirst.parsed.bassPc ?? nextFirst.parsed.pc) : anchorPc;
+    const hasWalk =
+      !ctx.isBreak &&
+      !ctx.isLetRing &&
+      !ctx.isSongEnd &&
+      len >= 6 &&
+      !!nextFirst &&
+      (nextFirst.parsed.pc !== seg.parsed.pc || nextAnchorPc !== anchorPc);
+    const walkStep = timing.stepsPerBar - 2;
+    const walkT = walkStep * timing.stepSec;
+
     if (ctx.isLetRing || style === 'warm-sustain') {
-      pushNote(ctx, 'bass', t0, root, (len * timing.stepSec + 0.2), base, rel);
+      const dur = hasWalk ? Math.max(0.08, walkT - t0 - 0.02) : len * timing.stepSec + 0.2;
+      pushNote(ctx, 'bass', t0, root, dur, base, rel);
+      if (hasWalk) {
+        const approachMidi = pickWalkingApproachNote(root, nextAnchorPc);
+        pushNote(ctx, 'bass', walkT + jitter(ctx, 3), approachMidi, 2 * timing.stepSec * 0.9, base - 4, rel);
+      }
       return;
     }
+
     if (len >= 12) {
       const fifthOffset = song.timeSignature === '3/4' ? 8 : Math.floor(len / 2);
+      const t5 = t0 + fifthOffset * timing.stepSec + jitter(ctx, 3);
       pushNote(ctx, 'bass', t0, root, fifthOffset * timing.stepSec * 0.95, base + 4, rel);
-      pushNote(ctx, 'bass', t0 + fifthOffset * timing.stepSec + jitter(ctx, 3), fifth, (len - fifthOffset) * timing.stepSec + 0.1, base - 6, rel);
+      const fifthDur = hasWalk
+        ? Math.max(0.08, walkT - t5 - 0.02)
+        : (len - fifthOffset) * timing.stepSec + 0.1;
+      pushNote(ctx, 'bass', t5, fifth, fifthDur, base - 6, rel);
     } else {
-      pushNote(ctx, 'bass', t0, root, len * timing.stepSec + 0.1, base, rel);
+      const dur = hasWalk ? Math.max(0.08, walkT - t0 - 0.02) : len * timing.stepSec + 0.1;
+      pushNote(ctx, 'bass', t0, root, dur, base, rel);
+    }
+
+    if (hasWalk) {
+      const approachMidi = pickWalkingApproachNote(root, nextAnchorPc);
+      pushNote(ctx, 'bass', walkT + jitter(ctx, 3), approachMidi, 2 * timing.stepSec * 0.9, base - 4, rel);
     }
   });
 }
@@ -792,6 +919,7 @@ export function planBar(song: SongProject, flat: FlatBar[], index: number): Plan
     rng: mulberry32(index * 7919 + 17),
     isBreak,
     isLetRing,
+    isSongEnd,
     cutT,
     intensity: INTENSITY_SCALE[fb.section.intensity] ?? 0.86,
     gaugeDur: heavy ? 1.25 : 0.9, // สายใหญ่: หางเสียงยาวขึ้น +25%, สายเล็ก: สั้นลงเล็กน้อย

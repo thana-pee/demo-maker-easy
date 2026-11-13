@@ -64,13 +64,21 @@ export interface ParsedChord {
   pc: number; // pitch class 0..11 ของ root (C=0)
   quality: ChordQuality;
   isMinor: boolean;
+  /** pitch class 0..11 ของโน้ตเบสใน Slash Chord เช่น D/F# -> bassPc = 6 */
+  bassPc?: number;
 }
 
 export function parseChordSymbol(chord: string): ParsedChord {
-  const { root, quality } = parseChord(chord);
+  const { root, quality, bass } = parseChord(chord);
   const pc = PITCH_CLASS[root] ?? 0;
   const q = classifyQuality(quality);
-  return { pc, quality: q, isMinor: q === 'm' || q === 'm7' };
+  const bassPc = bass !== undefined ? PITCH_CLASS[bass] : undefined;
+  return {
+    pc,
+    quality: q,
+    isMinor: q === 'm' || q === 'm7',
+    ...(bassPc !== undefined ? { bassPc } : {}),
+  };
 }
 
 export function chordIntervals(quality: ChordQuality): number[] {
@@ -170,13 +178,27 @@ export function getGuitarVoicing(soundingChord: string, capoFret = 0): GuitarVoi
   const capo = Math.max(0, Math.min(12, Math.round(capoFret)));
   const fingering = capo > 0 ? transposeChord(soundingChord, -capo) : soundingChord;
   const { pc, quality } = parseChordSymbol(fingering);
+  const soundingParsed = parseChordSymbol(soundingChord);
   const frets = pickFrets(pc, quality);
 
-  const strings: GuitarVoicingString[] = [];
+  let strings: GuitarVoicingString[] = [];
   frets.forEach((fret, i) => {
     if (fret === null) return;
     strings.push({ stringIndex: i, midi: OPEN_STRING_MIDI[i] + fret + capo });
   });
+
+  if (soundingParsed.bassPc !== undefined) {
+    const slashMidi = 40 + ((soundingParsed.bassPc - 4 + 12) % 12); // E2 (40) .. D#3 (51)
+    const bassStringIndex = slashMidi < 45 ? 0 : slashMidi < 50 ? 1 : 2;
+    const filtered = strings.filter(
+      (s) => s.midi > slashMidi && s.stringIndex > bassStringIndex
+    );
+    const upper =
+      filtered.length >= 3 ? filtered : strings.filter((s) => s.midi > slashMidi);
+    strings = [{ stringIndex: bassStringIndex, midi: slashMidi }, ...upper].sort(
+      (a, b) => a.midi - b.midi || a.stringIndex - b.stringIndex
+    );
+  }
 
   return { strings, fingering };
 }

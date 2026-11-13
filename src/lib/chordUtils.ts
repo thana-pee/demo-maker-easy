@@ -17,31 +17,58 @@ const NOTE_TO_INDEX: Record<string, number> = {
   'B': 11, 'CB': 11
 };
 
-export function parseChord(chordString: string): { root: string; quality: string } {
+export function parseChord(chordString: string): { root: string; quality: string; bass?: string } {
   const clean = chordString.trim();
   if (!clean) return { root: 'C', quality: '' };
 
-  let root = clean.slice(0, 1).toUpperCase();
+  const slashIdx = clean.indexOf('/');
+  const mainPart = slashIdx >= 0 ? clean.slice(0, slashIdx).trim() : clean;
+  const rawBass = slashIdx >= 0 ? clean.slice(slashIdx + 1).trim() : '';
+
+  if (!mainPart) return { root: 'C', quality: '' };
+
+  let root = mainPart.slice(0, 1).toUpperCase();
   let qualityIndex = 1;
 
-  if (clean.length > 1 && (clean[1] === '#' || clean[1] === 'b' || clean[1] === 'B')) {
-    root += clean[1] === 'B' ? 'b' : clean[1];
+  if (mainPart.length > 1 && (mainPart[1] === '#' || mainPart[1] === 'b' || mainPart[1] === 'B')) {
+    root += mainPart[1] === 'B' ? 'b' : mainPart[1];
     qualityIndex = 2;
   }
 
-  const quality = clean.slice(qualityIndex);
-  return { root, quality };
+  const quality = mainPart.slice(qualityIndex);
+
+  let bass: string | undefined;
+  if (rawBass) {
+    let b = rawBass.slice(0, 1).toUpperCase();
+    if (rawBass.length > 1 && (rawBass[1] === '#' || rawBass[1] === 'b' || rawBass[1] === 'B')) {
+      b += rawBass[1] === 'B' ? 'b' : rawBass[1];
+    }
+    bass = b;
+  }
+
+  return bass ? { root, quality, bass } : { root, quality };
+}
+
+function transposeNoteName(note: string, semitones: number, preferFlats: boolean): string | null {
+  const idx = NOTE_TO_INDEX[note];
+  if (idx === undefined) return null;
+  const newIdx = (idx + semitones + 120) % 12;
+  const noteList = preferFlats ? CHROMATIC_FLAT : CHROMATIC_SHARP;
+  return noteList[newIdx];
 }
 
 export function transposeChord(chord: string, semitones: number, preferFlats = false): string {
   if (semitones === 0) return chord;
-  const { root, quality } = parseChord(chord);
-  const idx = NOTE_TO_INDEX[root];
-  if (idx === undefined) return chord;
+  const { root, quality, bass } = parseChord(chord);
+  const newRoot = transposeNoteName(root, semitones, preferFlats);
+  if (!newRoot) return chord;
 
-  const newIdx = (idx + semitones + 120) % 12;
-  const noteList = preferFlats ? CHROMATIC_FLAT : CHROMATIC_SHARP;
-  return noteList[newIdx] + quality;
+  let result = newRoot + quality;
+  if (bass) {
+    const newBass = transposeNoteName(bass, semitones, preferFlats);
+    result += '/' + (newBass ?? bass);
+  }
+  return result;
 }
 
 /**

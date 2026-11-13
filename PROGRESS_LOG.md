@@ -11,6 +11,7 @@
 | **2B** | ✅ APPROVED | 2026-11-12 | Mic Audio Scratchpad & 3D MP3 Mixdown |
 | **3A** | ✅ APPROVED | 2026-11-12 | PWA, Mobile/iPad Polish & Bilingual (TH/EN) |
 | **4A** | ✅ DONE | 2026-11-13 | UI Decluttering, 3-Tab Workflow & Zen Focus Mode |
+| **4B** | ✅ DONE | 2026-11-13 | Studio-Grade Musical Realism & Vocal DSP Chain |
 
 ---
 
@@ -143,4 +144,24 @@ Files changed:
 
 Tests:
 - `npx tsx --test tests/*.test.ts` → 56/56 passing (100%)
+- `npm run build` → Next.js 16.4.6 (Turbopack) + TypeScript checks exited with code 0 (4/4 static pages prerendered)
+
+---
+
+### [Phase 4B] Studio-Grade Musical Realism & Vocal Studio DSP Chain
+Status: PASS (Completed & Verified)
+Timestamp: 2026-11-13T08:25:00+07:00
+
+Files changed:
+- `src/lib/chordUtils.ts`: Updated `parseChord` and `transposeChord` to preserve and transpose optional `/Bass` slash chord suffixes cleanly alongside root and quality
+- `src/lib/guitarVoicings.ts`: Added `bassPc?: number` to `ParsedChord`, parsed slash bass notes in `parseChordSymbol`, and updated `getGuitarVoicing` so `strings[0]` produces exact slash bass pitch in E2–D#3 (MIDI 40–51) with upper strings ordered cleanly above it (including Capo fingering support)
+- `src/components/ChordPickerModal.tsx`: Added one-tap **Slash Bass (`/Bass`)** selector bar (`/E`, `/F#`, `/G`, `/A`, `/B`, `/C`, `/D`, plus `Clear Bass`) onto chosen chords
+- `src/lib/barPlanner.ts`: Added `isSongEnd` to `PlanCtx`; implemented Zone Strumming in `emitStrum` (downstrokes bottom-up, upstrokes top 3 treble strings top-down); added subtle late-upstroke `sus4`/`add9` Auto-Embellishment (`embellishVoicing`) on 1-chord strum bars; added Walking Bass approach notes (`pickWalkingApproachNote`) on chord transitions and Slash Bass root anchoring in `planBass`; added Outro Ritardando widened arpeggiated sweep gaps (`38–52ms`) and sustained ring-out (`>= 2.6s`) on `isSongEnd`
+- `src/lib/audioEngine.ts`: Exported `TrackGainNode` and added `VocalStudioTrackGainNode` (`95Hz highpass` -> `3800Hz +2.5dB Q1.1 peaking` -> `-18dB 4:1 compressor` -> `masterGain` -> `fadeGain` -> `panner` -> `masterBus`) wired to `this.vocalGain`
+- `src/lib/mp3Exporter.ts`: Mirrored the Vocal Studio DSP Chain (95Hz HPF, 3.8kHz +2.5dB peaking EQ, vocal compressor) on `trackGains['vocal']` for offline MP3 mixdown
+- `tests/phase1b.test.ts`: Updated superseded step-6 upstroke string count assertion (`>= 4` -> `=== 3`) to match Phase 4B 3-string treble Zone Strumming while keeping top-down pitch assertion intact
+- `tests/phase4b.test.ts`: Added 7 unit tests verifying Slash Chords (`D/F#`, `C/G`, `G/B`, `C/E`, `F/A`, `Am/G`, Capo), Upstroke Zone Strumming, Auto-Embellishment, Walking Bass approach notes & Slash Bass anchoring, Outro Ritardando (`38–52ms`, `>= 2.6s`), VocalStudioTrackGainNode DSP routing, and MP3 export/UI presence
+
+Tests:
+- `npx tsx --test tests/*.test.ts` → 63/63 passing (100%)
 - `npm run build` → Next.js 16.4.6 (Turbopack) + TypeScript checks exited with code 0 (4/4 static pages prerendered)

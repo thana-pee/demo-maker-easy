@@ -155,11 +155,11 @@ test('Strum: หน่วงทีละสาย 18–32ms ตามทิศ�
     assert.ok(gap >= 18 - 0.01 && gap <= 32 + 0.01, `gap สายที่ ${k} = ${gap.toFixed(2)}ms`);
     assert.ok(first[k].midi > first[k - 1].midi, 'ดาวน์สโตรกต้องไล่จากสายต่ำไปสูง');
   }
-  // อัปสโตรกที่ step 6: ไล่จากสายสูงลงต่ำ
+  // อัปสโตรกที่ step 6: ไล่จากสายสูงลงต่ำ (Phase 4B Zone Strumming: แปรงเฉพาะ 3 สายแหลมบน)
   const stepSec = p.timing.stepSec;
   const up = r.filter((e) => e.t >= 6 * stepSec - 0.02 && e.t < 6 * stepSec + 0.2);
-  assert.ok(up.length >= 4);
-  for (let k = 1; k < 4; k++) assert.ok(up[k].midi < up[k - 1].midi, 'อัปสโตรกต้องไล่จากสายสูงลงต่ำ');
+  assert.equal(up.length, 3);
+  for (let k = 1; k < up.length; k++) assert.ok(up[k].midi < up[k - 1].midi, 'อัปสโตรกต้องไล่จากสายสูงลงต่ำ');
 
   // เพดานของสเปก
   assert.ok(STRUM_GAP_MS.campfire[0] >= 18 && STRUM_GAP_MS.soft[1] <= 32 && STRUM_GAP_MS.ring[1] <= 32);

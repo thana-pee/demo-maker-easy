@@ -9,7 +9,7 @@
 | Phase | Status | Title | Scope Summary |
 |---|---|---|---|
 | **Phase 4A** | ✅ DONE | UI Decluttering & 3-Tab Workflow | Split into `Songwriter` / `Arranger` / `Stage` (`karaoke`) tabs, add Zen Focus Mode, collapse per-section instruments in Songwriter mode, add syllable counter, and add Duplicate Section button. |
-| **Phase 4B** | ⏳ TODO | Studio-Grade Musical Realism & Vocal DSP | Slash Chords (`C/G`, `D/F#`), Zone Strumming, Auto-Sus/Add9 embellishments, Walking Bass approach notes, Outro Ritardando & `VocalStudioTrackGainNode` DSP chain. |
+| **Phase 4B** | ✅ DONE | Studio-Grade Musical Realism & Vocal DSP | Slash Chords (`C/G`, `D/F#`), Zone Strumming, Auto-Sus/Add9 embellishments, Walking Bass approach notes, Outro Ritardando & `VocalStudioTrackGainNode` DSP chain. |
 | **Phase 4C** | ⏳ TODO | IndexedDB Audio Storage & Library Organization | IndexedDB vocal storage (`audioStorageIdb.ts`), Folders/Albums, Status Tags (`draft` / `arranged` / `vocal-recorded` / `mastered`), Search & Song Version Snapshots. |
 | **Phase 4D** | ⏳ TODO | User Auth & Multi-Device Cloud Sync | Supabase Auth / Guest fallback, `updatedAt`-based pull/push cloud merge, `AccountSyncModal.tsx` & header sync status badge. |
 | **Phase 4E** | ⏳ TODO | Advance Mode, Credit Wallet & Thai Lyric AI | `creditManager.ts` (30 starter credits, transactions, packages), offline `thaiRhymeHelper.ts`, `/api/advance/lyrics` endpoint & `AdvanceModeModal.tsx`. |
