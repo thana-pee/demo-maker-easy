@@ -13,6 +13,7 @@
 | **4A** | ✅ DONE | 2026-11-13 | UI Decluttering, 3-Tab Workflow & Zen Focus Mode |
 | **4B** | ✅ DONE | 2026-11-13 | Studio-Grade Musical Realism & Vocal DSP Chain |
 | **4C** | ✅ DONE | 2026-11-13 | IndexedDB Audio Storage & Library Organization |
+| **4D** | ✅ DONE | 2026-11-13 | User Login & Multi-Device Cloud Sync |
 
 ---
 
@@ -183,4 +184,21 @@ Files changed:
 
 Tests:
 - `npx tsx --test tests/*.test.ts` → 68/68 passing (100%)
+- `npm run build` → Next.js 16.4.6 (Turbopack) + TypeScript checks exited with code 0 (4/4 static pages prerendered)
+
+---
+
+### [Phase 4D] User Login & Multi-Device Cloud Sync
+Status: PASS (Completed & Verified)
+Timestamp: 2026-11-13T08:42:00+07:00
+
+Files changed:
+- `src/lib/cloudSync.ts`: Added `CloudUser` (`guest` | `authenticated`), Guest local profile fallback (`GUEST_USER`), Supabase Auth REST helpers (`getCurrentUser`, `signInWithEmailOtp`, `verifyEmailOtp`, `signOutUser`, `consumeAuthCallbackFromUrl`), `updatedAt`-based conflict resolution (`mergeSongLists`), and 1-click Pull + Merge + Push orchestrator (`syncLibraryNow`)
+- `src/components/AccountSyncModal.tsx`: Created Account & Cloud Sync modal featuring Email Magic Link / 6-digit OTP login, user profile badge, live cloud sync status indicator (`local-only` | `synced` | `syncing` | `offline` | `error`), 1-click `☁️ Sync Now` trigger, Sign Out action, and optional Supabase endpoint settings
+- `src/components/TransportBar.tsx`: Added compact Account & Cloud Sync status pill button opening `AccountSyncModal`
+- `src/app/page.tsx`: Wired cloud auth/sync state (`cloudUser`, `syncStatus`, `lastSyncedAt`), URL hash Magic Link consumption, online/offline listeners, `handleSyncNow`, and `AccountSyncModal`
+- `tests/phase4d.test.ts`: Added 5 unit tests covering Guest fallback, Supabase Auth REST (`/auth/v1/otp`, `/auth/v1/verify`, `/auth/v1/logout`), `mergeSongLists` conflict resolution, `syncLibraryNow` Pull+Merge+Push, and UI contract checks
+
+Tests:
+- `npx tsx --test tests/*.test.ts` → 73/73 passing (100%)
 - `npm run build` → Next.js 16.4.6 (Turbopack) + TypeScript checks exited with code 0 (4/4 static pages prerendered)

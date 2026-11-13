@@ -30,7 +30,18 @@ import { ExportModal } from '@/components/ExportModal';
 import { SongLibraryModal } from '@/components/SongLibraryModal';
 import { MiniPianoRollModal } from '@/components/MiniPianoRollModal';
 import { VocalRecorderModal } from '@/components/VocalRecorderModal';
+import { AccountSyncModal } from '@/components/AccountSyncModal';
 import { PwaInstallPrompt } from '@/components/PwaInstallPrompt';
+import {
+  GUEST_USER,
+  type CloudUser,
+  type CloudSyncStatus,
+  getCurrentUser,
+  getLastSyncedAt,
+  isCloudConfigured,
+  consumeAuthCallbackFromUrl,
+  syncLibraryNow,
+} from '@/lib/cloudSync';
 import { useLanguage } from '@/context/LanguageContext';
 
 export default function Home() {
@@ -149,6 +160,61 @@ export default function Home() {
 
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isLibraryModalOpen, setIsLibraryModalOpen] = useState(false);
+  const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
+  const [cloudUser, setCloudUser] = useState<CloudUser>(GUEST_USER);
+  const [syncStatus, setSyncStatus] = useState<CloudSyncStatus>('local-only');
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+
+  // 1b. โหลดสถานะผู้ใช้ Cloud + รับ Magic Link Hash + จับสถานะ Online/Offline
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    let active = true;
+
+    const initCloudState = async () => {
+      const callbackUser = await consumeAuthCallbackFromUrl();
+      if (!active) return;
+      const resolvedUser = callbackUser || getCurrentUser();
+      setCloudUser(resolvedUser);
+      setLastSyncedAt(getLastSyncedAt());
+      if (!navigator.onLine) {
+        setSyncStatus('offline');
+      } else if (resolvedUser.mode === 'authenticated' && isCloudConfigured()) {
+        setSyncStatus('synced');
+      } else {
+        setSyncStatus('local-only');
+      }
+    };
+    void initCloudState();
+
+    const handleOnline = () => {
+      const u = getCurrentUser();
+      setSyncStatus(u.mode === 'authenticated' && isCloudConfigured() ? 'synced' : 'local-only');
+    };
+    const handleOffline = () => setSyncStatus('offline');
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      active = false;
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  const handleSyncNow = useCallback(async () => {
+    setSyncStatus('syncing');
+    const saved = getSavedSongs();
+    const localList = saved.some((s) => s.id === song.id)
+      ? saved.map((s) => (s.id === song.id ? song : s))
+      : [song, ...saved];
+    const res = await syncLibraryNow(localList);
+    setSyncStatus(res.status);
+    if (res.syncedAt) setLastSyncedAt(res.syncedAt);
+    const updatedActive = res.mergedSongs.find((s) => s.id === song.id);
+    if (updatedActive && Date.parse(updatedActive.updatedAt || '') > Date.parse(song.updatedAt || '')) {
+      selectSongWithVocals(updatedActive);
+    }
+    return { success: res.success, message: res.message };
+  }, [song, selectSongWithVocals]);
 
   // Beat ticker driven by bar timing & synced on every bar change
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -406,12 +472,15 @@ export default function Home() {
         isCountIn={isCountIn}
         isSoundPanelOpen={isSoundPanelOpen}
         isZenMode={isZenMode}
+        cloudUser={cloudUser}
+        syncStatus={syncStatus}
         onTogglePlay={handleTogglePlay}
         onStop={handleStop}
         onToggleCountIn={handleToggleCountIn}
         onSwitchMode={(mode) => setActiveMode(mode)}
         onToggleSoundPanel={() => setIsSoundPanelOpen((prev) => !prev)}
         onToggleZenMode={() => setIsZenMode((prev) => !prev)}
+        onOpenAccountModal={() => setIsAccountModalOpen(true)}
         onOpenExportModal={() => setIsExportModalOpen(true)}
         onOpenLibraryModal={() => setIsLibraryModalOpen(true)}
         onUpdateSong={setSong}
@@ -479,6 +548,19 @@ export default function Home() {
         currentSong={song}
         onSelectSong={selectSongWithVocals}
         onClose={() => setIsLibraryModalOpen(false)}
+      />
+
+      <AccountSyncModal
+        isOpen={isAccountModalOpen}
+        user={cloudUser}
+        syncStatus={syncStatus}
+        lastSyncedAt={lastSyncedAt}
+        onSyncNow={handleSyncNow}
+        onAuthChange={(nextUser, nextStatus) => {
+          setCloudUser(nextUser);
+          setSyncStatus(nextStatus);
+        }}
+        onClose={() => setIsAccountModalOpen(false)}
       />
 
       {melodyModalState.isOpen && (

@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { SongProject, TimeSignature, AppViewMode } from '@/types/song';
+import type { CloudSyncStatus, CloudUser } from '@/lib/cloudSync';
 import { useLanguage } from '@/context/LanguageContext';
 
 interface TransportBarProps {
@@ -13,16 +14,27 @@ interface TransportBarProps {
   isCountIn: boolean;
   isSoundPanelOpen: boolean;
   isZenMode?: boolean;
+  cloudUser?: CloudUser;
+  syncStatus?: CloudSyncStatus;
   onTogglePlay: () => void;
   onStop: () => void;
   onToggleCountIn: () => void;
   onSwitchMode: (mode: AppViewMode) => void;
   onToggleSoundPanel: () => void;
   onToggleZenMode?: () => void;
+  onOpenAccountModal?: () => void;
   onOpenExportModal: () => void;
   onOpenLibraryModal: () => void;
   onUpdateSong: (updater: (prev: SongProject) => SongProject) => void;
 }
+
+const SYNC_DOT_COLOR: Record<CloudSyncStatus, string> = {
+  synced: 'bg-emerald-500',
+  syncing: 'bg-blue-500 animate-pulse',
+  'local-only': 'bg-slate-400',
+  offline: 'bg-amber-500',
+  error: 'bg-rose-500',
+};
 
 const CHROMATIC_KEYS = ['F#', 'G', 'Ab', 'A', 'Bb', 'B', 'C', 'C#', 'D', 'Eb', 'E', 'F'];
 
@@ -35,12 +47,15 @@ export const TransportBar: React.FC<TransportBarProps> = ({
   isCountIn,
   isSoundPanelOpen,
   isZenMode = false,
+  cloudUser,
+  syncStatus = 'local-only',
   onTogglePlay,
   onStop,
   onToggleCountIn,
   onSwitchMode,
   onToggleSoundPanel,
   onToggleZenMode,
+  onOpenAccountModal,
   onOpenExportModal,
   onOpenLibraryModal,
   onUpdateSong,
@@ -230,6 +245,23 @@ export const TransportBar: React.FC<TransportBarProps> = ({
               title={t.zenModeHint}
             >
               <span>{t.zenMode}</span>
+            </button>
+          )}
+
+          {/* Account & Cloud Sync Trigger Pill */}
+          {onOpenAccountModal && (
+            <button
+              type="button"
+              onClick={onOpenAccountModal}
+              title={lang === 'th' ? 'บัญชีผู้ใช้ & ซิงค์ Cloud' : 'Account & Cloud Sync'}
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200/80 text-slate-800 font-bold text-xs sm:text-sm transition cursor-pointer min-h-[38px] whitespace-nowrap"
+            >
+              <span className={`w-2 h-2 rounded-full ${SYNC_DOT_COLOR[syncStatus]}`} />
+              <span>
+                {cloudUser?.mode === 'authenticated'
+                  ? `☁️ ${cloudUser.displayName}`
+                  : '👤 Cloud'}
+              </span>
             </button>
           )}
 
