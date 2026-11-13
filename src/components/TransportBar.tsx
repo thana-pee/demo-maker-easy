@@ -252,16 +252,19 @@ export const TransportBar: React.FC<TransportBarProps> = ({
             </button>
           )}
 
-          {/* Credit Wallet Pill */}
+          {/* AI & Advance Mode Trigger Pill */}
           {onOpenAdvanceModal && (
             <button
               type="button"
               onClick={onOpenAdvanceModal}
-              title={lang === 'th' ? 'คลังเครดิต & Advance AI / คำสัมผัสไทย' : 'Credit Wallet & Advance AI / Thai Rhyme'}
-              className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300/80 text-amber-900 font-black text-xs sm:text-sm transition cursor-pointer min-h-[38px] whitespace-nowrap shadow-xs"
+              title={
+                lang === 'th'
+                  ? 'เปิด Advance Mode / AI สั่งตั้งค่าแอป & คลังเครดิต (Credits)'
+                  : 'Open Advance Mode / AI Director & Credits'
+              }
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300/80 text-amber-900 font-black text-xs sm:text-sm transition cursor-pointer min-h-[38px] whitespace-nowrap shadow-xs"
             >
-              <span>⚡ {creditBalance}</span>
-              <span className="hidden sm:inline">Credits</span>
+              <span>🪄 AI / Advance ({creditBalance})</span>
             </button>
           )}
 
