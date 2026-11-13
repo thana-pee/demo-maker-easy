@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { SongProject, MelodyNote, AppViewMode } from '@/types/song';
+import { SongProject, SongSection, MelodyNote, AppViewMode } from '@/types/song';
 import { createDefaultSong } from '@/lib/defaultSong';
 import { ProgressionPreset } from '@/lib/chordUtils';
 import { getTiming } from '@/lib/barPlanner';
@@ -31,7 +31,15 @@ import { SongLibraryModal } from '@/components/SongLibraryModal';
 import { MiniPianoRollModal } from '@/components/MiniPianoRollModal';
 import { VocalRecorderModal } from '@/components/VocalRecorderModal';
 import { AccountSyncModal } from '@/components/AccountSyncModal';
+import {
+  AdvanceModeModal,
+  type AdvanceTargetSectionContext,
+} from '@/components/AdvanceModeModal';
 import { PwaInstallPrompt } from '@/components/PwaInstallPrompt';
+import {
+  DEFAULT_STARTER_CREDITS,
+  getCreditBalance,
+} from '@/lib/creditManager';
 import {
   GUEST_USER,
   type CloudUser,
@@ -161,6 +169,14 @@ export default function Home() {
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isLibraryModalOpen, setIsLibraryModalOpen] = useState(false);
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
+  const [creditBalance, setCreditBalance] = useState<number>(DEFAULT_STARTER_CREDITS);
+  const [advanceModalState, setAdvanceModalState] = useState<{
+    isOpen: boolean;
+    targetSection: AdvanceTargetSectionContext | null;
+  }>({
+    isOpen: false,
+    targetSection: null,
+  });
   const [cloudUser, setCloudUser] = useState<CloudUser>(GUEST_USER);
   const [syncStatus, setSyncStatus] = useState<CloudSyncStatus>('local-only');
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
@@ -176,6 +192,7 @@ export default function Home() {
       const resolvedUser = callbackUser || getCurrentUser();
       setCloudUser(resolvedUser);
       setLastSyncedAt(getLastSyncedAt());
+      setCreditBalance(getCreditBalance());
       if (!navigator.onLine) {
         setSyncStatus('offline');
       } else if (resolvedUser.mode === 'authenticated' && isCloudConfigured()) {
@@ -419,6 +436,52 @@ export default function Home() {
     }));
   }, [song.id]);
 
+  const handleOpenAdvanceModal = useCallback((section?: SongSection) => {
+    if (!section) {
+      setAdvanceModalState({ isOpen: true, targetSection: null });
+      return;
+    }
+    const chords = section.bars
+      .flatMap((bar) => bar.chords)
+      .filter((c): c is string => Boolean(c && c.trim()));
+    const existingLyrics = section.bars
+      .map((bar) => bar.lyrics.trim())
+      .filter(Boolean)
+      .join(' / ');
+    setAdvanceModalState({
+      isOpen: true,
+      targetSection: {
+        sectionId: section.id,
+        sectionName: section.name,
+        sectionType: section.type,
+        chords: chords.length > 0 ? chords.slice(0, 8) : ['C', 'G', 'Am', 'F'],
+        existingLyrics,
+      },
+    });
+  }, []);
+
+  const handleApplyAiLyrics = useCallback((sectionId: string, lines: string[]) => {
+    if (lines.length === 0) return;
+    setSong((prev) => ({
+      ...prev,
+      sections: prev.sections.map((sec) => {
+        if (sec.id !== sectionId) return sec;
+        return {
+          ...sec,
+          bars: sec.bars.map((bar, idx) => {
+            if (idx < lines.length) {
+              return { ...bar, lyrics: lines[idx] };
+            }
+            if (idx === sec.bars.length - 1 && lines.length > sec.bars.length) {
+              return { ...bar, lyrics: lines.slice(idx).join(' ') };
+            }
+            return bar;
+          }),
+        };
+      }),
+    }));
+  }, []);
+
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-900 pb-20 safe-bottom">
       {/* PWA Home Screen Install Prompt Banner */}
@@ -474,6 +537,7 @@ export default function Home() {
         isZenMode={isZenMode}
         cloudUser={cloudUser}
         syncStatus={syncStatus}
+        creditBalance={creditBalance}
         onTogglePlay={handleTogglePlay}
         onStop={handleStop}
         onToggleCountIn={handleToggleCountIn}
@@ -481,6 +545,7 @@ export default function Home() {
         onToggleSoundPanel={() => setIsSoundPanelOpen((prev) => !prev)}
         onToggleZenMode={() => setIsZenMode((prev) => !prev)}
         onOpenAccountModal={() => setIsAccountModalOpen(true)}
+        onOpenAdvanceModal={() => handleOpenAdvanceModal()}
         onOpenExportModal={() => setIsExportModalOpen(true)}
         onOpenLibraryModal={() => setIsLibraryModalOpen(true)}
         onUpdateSong={setSong}
@@ -507,6 +572,7 @@ export default function Home() {
             onOpenPresetsModal={handleOpenPresetsModal}
             onOpenMelodyPianoRoll={handleOpenMelodyPianoRoll}
             onOpenVocalRecorder={handleOpenVocalRecorder}
+            onOpenAdvanceForSection={handleOpenAdvanceModal}
             onSwitchToArranger={() => setActiveMode('arranger')}
           />
         ) : (
@@ -588,6 +654,15 @@ export default function Home() {
           onSaveVocal={handleSaveVocal}
           onClearVocal={handleClearVocal}
           onClose={() => setVocalModalState((prev) => ({ ...prev, isOpen: false }))}
+        />
+      )}
+
+      {advanceModalState.isOpen && (
+        <AdvanceModeModal
+          targetSection={advanceModalState.targetSection}
+          onCreditsChange={setCreditBalance}
+          onApplyLyrics={handleApplyAiLyrics}
+          onClose={() => setAdvanceModalState((prev) => ({ ...prev, isOpen: false }))}
         />
       )}
     </div>

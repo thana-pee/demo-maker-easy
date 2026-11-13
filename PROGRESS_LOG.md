@@ -14,6 +14,7 @@
 | **4B** | ✅ DONE | 2026-11-13 | Studio-Grade Musical Realism & Vocal DSP Chain |
 | **4C** | ✅ DONE | 2026-11-13 | IndexedDB Audio Storage & Library Organization |
 | **4D** | ✅ DONE | 2026-11-13 | User Login & Multi-Device Cloud Sync |
+| **4E** | ✅ DONE | 2026-11-13 | Advance Mode, Credit Wallet & Thai Lyric AI |
 
 ---
 
@@ -202,3 +203,24 @@ Files changed:
 Tests:
 - `npx tsx --test tests/*.test.ts` → 73/73 passing (100%)
 - `npm run build` → Next.js 16.4.6 (Turbopack) + TypeScript checks exited with code 0 (4/4 static pages prerendered)
+
+---
+
+### [Phase 4E] Advance Mode, Credit Wallet, PromptPay Preview & Thai Rhyme / AI Lyric Co-Pilot
+Status: PASS (Completed & Verified)
+Timestamp: 2026-11-13T08:49:00+07:00
+
+Files changed:
+- `src/lib/thaiRhymeHelper.ts`: Created offline 0-credit Thai rhyme dictionary & heuristic syllable analyzer (`THAI_RHYME_GROUPS`, `findThaiRhymes`) supporting 15+ Thai vowel/final-consonant groups while re-exporting `countThaiEnglishSyllables` from `src/lib/sectionUtils.ts`
+- `src/lib/creditManager.ts`: Implemented Credit Wallet state & transaction ledger (`DEFAULT_STARTER_CREDITS = 30`, `CREDIT_PACKAGES`, `getCreditBalance`, `getCreditTransactions`, `canAfford`, `deductCredits`, `topUpCredits`, `resetCreditWalletForTests`) backed by `localStorage` with SSR/Node memory fallback
+- `src/app/api/advance/lyrics/route.ts`: Implemented `POST /api/advance/lyrics` Route Handler with strict payload validation (`400`), Gemini 2.5 Flash REST call via `x-goog-api-key` header (`process.env.GEMINI_API_KEY`) when configured (`isSimulated: false`), and graceful offline Thai poetic simulation (`isSimulated: true`, HTTP `200`) when key is absent
+- `src/components/AdvanceModeModal.tsx`: Created Advance Mode modal featuring credit balance badge, 0-credit Thai Rhyme & Syllable Helper tab, AI Lyric Co-Pilot tab with explicit `ใช้ 1 เครดิต / Uses 1 Credit` Cost Preview Confirmation + `Apply Lyrics` action, and Credit Top-Up / Ledger tab with PromptPay QR Preview Dialog
+- `src/components/TransportBar.tsx`: Added compact Credit Wallet pill (`⚡ {creditBalance} Credits`) opening `AdvanceModeModal`
+- `src/components/SectionBuilder.tsx`: Added subtle section-level `✨` trigger (`onOpenAdvanceForSection`) in section action controls
+- `src/app/page.tsx`: Wired `creditBalance`, `advanceModalState`, `handleOpenAdvanceModal`, `handleApplyAiLyrics`, and `<AdvanceModeModal />` integration
+- `tests/phase4e.test.ts`: Added 5 unit tests covering `thaiRhymeHelper`, `creditManager`, `/api/advance/lyrics` POST validation/simulation/Gemini header security, and Phase 4E UI wiring contracts
+
+Tests:
+- `npx eslint src/lib/thaiRhymeHelper.ts src/lib/creditManager.ts src/app/api/advance/lyrics/route.ts src/components/AdvanceModeModal.tsx src/components/TransportBar.tsx src/components/SectionBuilder.tsx tests/phase4e.test.ts` → 0 errors, 0 warnings
+- `npx tsx --test tests/*.test.ts` → 78/78 passing (100%)
+- `npm run build` → Next.js 16.4.6 (Turbopack) + TypeScript checks exited with code 0 (`/api/advance/lyrics` + `/` rendered cleanly)

@@ -16,6 +16,7 @@ interface TransportBarProps {
   isZenMode?: boolean;
   cloudUser?: CloudUser;
   syncStatus?: CloudSyncStatus;
+  creditBalance?: number;
   onTogglePlay: () => void;
   onStop: () => void;
   onToggleCountIn: () => void;
@@ -23,6 +24,7 @@ interface TransportBarProps {
   onToggleSoundPanel: () => void;
   onToggleZenMode?: () => void;
   onOpenAccountModal?: () => void;
+  onOpenAdvanceModal?: () => void;
   onOpenExportModal: () => void;
   onOpenLibraryModal: () => void;
   onUpdateSong: (updater: (prev: SongProject) => SongProject) => void;
@@ -49,6 +51,7 @@ export const TransportBar: React.FC<TransportBarProps> = ({
   isZenMode = false,
   cloudUser,
   syncStatus = 'local-only',
+  creditBalance = 30,
   onTogglePlay,
   onStop,
   onToggleCountIn,
@@ -56,6 +59,7 @@ export const TransportBar: React.FC<TransportBarProps> = ({
   onToggleSoundPanel,
   onToggleZenMode,
   onOpenAccountModal,
+  onOpenAdvanceModal,
   onOpenExportModal,
   onOpenLibraryModal,
   onUpdateSong,
@@ -245,6 +249,19 @@ export const TransportBar: React.FC<TransportBarProps> = ({
               title={t.zenModeHint}
             >
               <span>{t.zenMode}</span>
+            </button>
+          )}
+
+          {/* Credit Wallet Pill */}
+          {onOpenAdvanceModal && (
+            <button
+              type="button"
+              onClick={onOpenAdvanceModal}
+              title={lang === 'th' ? 'คลังเครดิต & Advance AI / คำสัมผัสไทย' : 'Credit Wallet & Advance AI / Thai Rhyme'}
+              className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300/80 text-amber-900 font-black text-xs sm:text-sm transition cursor-pointer min-h-[38px] whitespace-nowrap shadow-xs"
+            >
+              <span>⚡ {creditBalance}</span>
+              <span className="hidden sm:inline">Credits</span>
             </button>
           )}
 

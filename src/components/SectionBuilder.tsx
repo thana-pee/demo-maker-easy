@@ -26,6 +26,7 @@ interface SectionBuilderProps {
   onOpenPresetsModal: (sectionId: string, sectionName: string) => void;
   onOpenMelodyPianoRoll: (sectionId: string, barId: string, globalBarIndex: number) => void;
   onOpenVocalRecorder: (sectionId: string, barId: string, globalBarIndex: number) => void;
+  onOpenAdvanceForSection?: (section: SongSection) => void;
   onSwitchToArranger?: () => void;
 }
 
@@ -48,6 +49,7 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
   onOpenPresetsModal,
   onOpenMelodyPianoRoll,
   onOpenVocalRecorder,
+  onOpenAdvanceForSection,
   onSwitchToArranger,
 }) => {
   const { lang, t } = useLanguage();
@@ -335,6 +337,18 @@ export const SectionBuilder: React.FC<SectionBuilderProps> = ({
 
                 {/* Section Action Buttons */}
                 <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                  {/* Subtle Advance Mode / Thai Rhyme & AI Lyric Co-Pilot Trigger */}
+                  {onOpenAdvanceForSection && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenAdvanceForSection(section)}
+                      title={lang === 'th' ? 'หาคำสัมผัสไทย (0 เครดิต) & AI ช่วยแต่งเนื้อ (1 เครดิต)' : 'Thai Rhyme (0 Credits) & AI Lyric Co-Pilot (1 Credit)'}
+                      className="px-2.5 py-1.5 rounded-xl bg-violet-50 hover:bg-violet-100 text-violet-900 border border-violet-200 font-bold transition flex items-center gap-1 cursor-pointer min-h-[34px]"
+                    >
+                      <span>✨</span>
+                    </button>
+                  )}
+
                   {/* Presets Button */}
                   <button
                     type="button"
