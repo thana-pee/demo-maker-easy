@@ -481,7 +481,7 @@ test('Phase 6B Energy Arc & Ending Resolution: blueprints, prompts & section-awa
 // ───────────── 8. Phase 6C Dynamic Few-Shot Bank, Chain-Rhyme Validator, Phrasing & Simulated Styles ─────────────
 
 test('Phase 6C Dynamic Few-Shot Bank & Style/Section Syllable Budget', () => {
-  // All 7 genres, 16+ songwriter styles (18 with Phase 7A), and 6 emotional resolutions exist in bank
+  // All 7 genres, 16+ songwriter styles (20 total), and 6 emotional resolutions exist in bank
   assert.equal(Object.keys(MASTER_LYRIC_FEW_SHOT_BANK.genres).length, 7);
   assert.ok(Object.keys(MASTER_LYRIC_FEW_SHOT_BANK.songwriters).length >= 16);
   assert.equal(Object.keys(MASTER_LYRIC_FEW_SHOT_BANK.resolutions).length, 6);

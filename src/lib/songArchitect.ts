@@ -267,6 +267,8 @@ export const VALID_SONGWRITER_STYLES = new Set<ThaiSongwriterStyle>([
   'tan-lipta',
   'aed-carabao',
   'asanee-chotikul',
+  'nga-caravan',
+  'kob-bigass',
 ]);
 
 const CHORD_TOKEN_REGEX =
@@ -744,6 +746,18 @@ function resolveSimulatedOutroLines(
       'จำไว้ทุกวันว่าฉันไม่เคยเปลี่ยนใจ',
     ];
   }
+  if (writer === 'nga-caravan') {
+    return [
+      'แสงดาวยังคงส่องทางกลางราตรี',
+      'ขอเพียงมีศรัทธาไม่ยอมแพ้พ่าย',
+    ];
+  }
+  if (writer === 'kob-bigass') {
+    return [
+      'เก็บแผลเป็นเอาไว้เป็นแรงก้าวต่อ',
+      'ไม่เคยท้อตราบที่หัวใจยังเต้นอยู่',
+    ];
+  }
   if (genre === 'thai-rock' || writer === 'sek-loso' || writer === 'suea-thanapol') {
     return [
       'ไม่ว่าจะล้มสักกี่ครา',
@@ -864,6 +878,58 @@ export function buildStyledSimulatedSongLyrics(
       'เจ็บแค่ไหนหัวใจก็ยอมรับมัน',
     ];
     rhymeNote = 'สไตล์อัสนี โชติกุล (ร็อกคำซ้ำ/จิ๊กโก๋อกหัก): ซ้ำวลีสั้นตอกย้ำใน Bar 1 & Bar 4 ส่งสัมผัสต่อเนื่อง';
+  } else if (writer === 'nga-caravan') {
+    verse = [
+      `${topicShort ? `มองเรื่อง${topicShort}ใต้ฟ้ากว้างไกล` : 'แสงดาวยังทอประกายบนฟ้าไกล'}`,
+      'ในความมืดหม่นยังมีคนก้าวเดิน',
+      'เพลินมองทุ่งรวงทองยามลมโชย',
+      'โปรยปรายสายฝนพรมผืนดินงดงาม',
+      'ถามใจตัวเองในยามค่ำคืน',
+      'ยืนเคียงข้างทางที่ใจใฝ่ฝัน',
+      'วันเวลาไม่เคยลบเลือนความหวัง',
+      'ฟังเสียงพิณแผ่วพริ้วปลอบใจคน',
+    ];
+    preChorus = [
+      'แม้หนทางชีวิตจะยาวแสนไกล',
+      'หัวใจยังศรัทธาในแสงตะวัน',
+    ];
+    chorus = [
+      'ฝากดอกไม้ให้คนเหนื่อยในคืนหนาว',
+      'ดาวส่องทางให้ใจยังมีความฝัน',
+      'วันพรุ่งนี้ยังมีแสงแห่งศรัทธา',
+      'พาหัวใจกลับคืนสู่ผืนแผ่นดิน',
+    ];
+    bridge = [
+      'ลมพัดผ่านทุ่งนาพาความทรงจำ',
+      'คำกวีปลอบใจไม่เคยจางหาย',
+    ];
+    rhymeNote = 'สไตล์หงา คาราวาน (เพื่อชีวิต-โฟล์กกวี): ภาษาสุภาพงดงาม ใช้ภาพธรรมชาติสื่อศรัทธา ส่งสัมผัสต่อเนื่องละเมียดละไม';
+  } else if (writer === 'kob-bigass') {
+    verse = [
+      `${topicShort ? `แบกเรื่อง${topicShort}` : 'แบกความจริง'}เดินคนเดียวในคืนมืดมน`,
+      'คนอย่างฉันมันก็แค่คนธรรมดา',
+      'ฟ้าไม่เคยเห็นใจคนอ่อนแอเลย',
+      'เคยทุ่มเทให้ไปหมดทั้งหัวใจ',
+      'ไม่เคยเสียดายแม้ต้องเจ็บร้าว',
+      'ก้าวต่อไปทั้งที่น้ำตายังริน',
+      'ดินจะกลบหน้าก็ยังไม่ยอมถอย',
+      'คอยพิสูจน์ด้วยลมหายใจที่มี',
+    ];
+    preChorus = [
+      'ล้มลงไปกี่ครั้งก็ยังลุกยืน',
+      'ฝืนทนเจ็บเพื่อวันที่ฟ้าเปิดทาง',
+    ];
+    chorus = [
+      'ต่อให้โลกทั้งใบไม่เหลือใครสักคน',
+      'อดทนไว้หัวใจอย่าเพิ่งยอมแพ้',
+      'แค่บาดแผลจะสอนให้เราเข้มแข็ง',
+      'แสงปลายทางยังรอคนไม่ถอดใจ',
+    ];
+    bridge = [
+      'หากพรุ่งนี้ยังมีลมหายใจอยู่',
+      'สู้จนกว่าความฝันจะเป็นความจริง',
+    ];
+    rhymeNote = 'สไตล์กบ บิ๊กแอส (Big Ass / Bodyslam / Labanoon): ภาษาตรงไปตรงมา กระแทกบีตสู้ชีวิต ฮุคติดหูร้องตามได้ทั้งฮอลล์';
   } else if (writer === 'joey-boy') {
     verse = [
       `คิดถึงจัดเลยหยิบโทรศัพท์มากดทัก${topicShort ? `เรื่อง${topicShort}` : ''}`,
@@ -1400,16 +1466,18 @@ export function applyGenreBandArrangement(song: SongProject): SongProject {
   const dialect = song.lyricDialect;
 
   const isLukThung =
-    genre === 'luk-thung' ||
-    genre === 'phuea-chiwit' ||
-    writer === 'aed-carabao' ||
-    writer === 'phaiboon-butkhan' ||
-    writer === 'suraphon-sombatcharoen' ||
-    writer === 'sala-khunawut' ||
-    dialect === 'isan' ||
-    dialect === 'suphan-central' ||
-    preset.includes('luk-thung') ||
-    preset.includes('phuea-chiwit');
+    writer !== 'nga-caravan' &&
+    writer !== 'kob-bigass' &&
+    (genre === 'luk-thung' ||
+      genre === 'phuea-chiwit' ||
+      writer === 'aed-carabao' ||
+      writer === 'phaiboon-butkhan' ||
+      writer === 'suraphon-sombatcharoen' ||
+      writer === 'sala-khunawut' ||
+      dialect === 'isan' ||
+      dialect === 'suphan-central' ||
+      preset.includes('luk-thung') ||
+      preset.includes('phuea-chiwit'));
 
   const isRnB =
     !isLukThung &&
@@ -1423,6 +1491,7 @@ export function applyGenreBandArrangement(song: SongProject): SongProject {
     !isLukThung &&
     !isRnB &&
     (genre === 'thai-rock' ||
+      writer === 'kob-bigass' ||
       writer === 'sek-loso' ||
       writer === 'asanee-chotikul' ||
       writer === 'suea-thanapol' ||
@@ -1615,15 +1684,20 @@ export function applyGenreBandArrangement(song: SongProject): SongProject {
   // Default: Thai Pop / Luk Krung / Acoustic Indie
   const isSlowPopBallad =
     song.bpm <= 72 || (song.bpm < 82 && song.easyConfig?.tempoFeel === 'slow');
-  const isAcoustic = genre === 'acoustic-indie' || genre === 'luk-krung';
+  const isAcoustic =
+    genre === 'acoustic-indie' || genre === 'luk-krung' || writer === 'nga-caravan';
   const defaultRhythm: GuitarStyle =
-    genre === 'acoustic-indie' || (isSlowPopBallad && song.bpm <= 72)
+    genre === 'acoustic-indie' ||
+    writer === 'nga-caravan' ||
+    (isSlowPopBallad && song.bpm <= 72)
       ? 'fingerpicking'
       : isSlowPopBallad
         ? 'soft-strum'
         : 'campfire-strum';
   const defaultBass: BassStyle =
-    genre === 'luk-krung' || isSlowPopBallad ? 'warm-sustain' : 'root-fifth';
+    genre === 'luk-krung' || writer === 'nga-caravan' || isSlowPopBallad
+      ? 'warm-sustain'
+      : 'root-fifth';
   const defaultPiano: PianoStyle =
     genre === 'luk-krung' || isSlowPopBallad ? 'gentle-arpeggio' : 'warm-pad';
   const defaultDrums: DrumStyle =

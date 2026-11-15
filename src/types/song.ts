@@ -32,7 +32,9 @@ export type ThaiSongwriterStyle =
   | 'the-toys'
   | 'tan-lipta'
   | 'aed-carabao'
-  | 'asanee-chotikul';
+  | 'asanee-chotikul'
+  | 'nga-caravan'
+  | 'kob-bigass';
 
 export type ThaiEmotionalResolution =
   | 'auto'

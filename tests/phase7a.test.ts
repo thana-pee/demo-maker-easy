@@ -12,6 +12,7 @@ import {
 } from '../src/lib/aiPrompts';
 import {
   VALID_SONGWRITER_STYLES,
+  applyGenreBandArrangement,
   buildSimulatedArchitectSong,
   buildStyledSimulatedSongLyrics,
   sanitizeArchitectSongProject,
@@ -21,8 +22,8 @@ import { validateThaiLyricCouplets } from '../src/lib/thaiRhymeHelper';
 import type { SongBar } from '../src/types/song';
 
 test('Phase 7A: aed-carabao and asanee-chotikul profiles, few-shot exemplars & syllable budgets', () => {
-  assert.equal(SONGWRITER_STYLE_PROFILES.length, 18);
-  assert.equal(Object.keys(MASTER_LYRIC_FEW_SHOT_BANK.songwriters).length, 18);
+  assert.equal(SONGWRITER_STYLE_PROFILES.length, 20);
+  assert.equal(Object.keys(MASTER_LYRIC_FEW_SHOT_BANK.songwriters).length, 20);
   assert.ok(VALID_SONGWRITER_STYLES.has('aed-carabao'));
   assert.ok(VALID_SONGWRITER_STYLES.has('asanee-chotikul'));
 
@@ -205,4 +206,70 @@ test('Phase 7A: SectionBuilder UI contract includes Real-Time HUD, Cross-Section
   assert.match(src, /สัมผัสขาดวรรค/);
   assert.match(src, /แก้แบบแผ่นเดียว/);
   assert.match(src, /ปัดคำลง/);
+});
+
+test('nga-caravan and kob-bigass songwriter guides, few-shots, budgets, simulated lyrics & band arrangement', () => {
+  assert.ok(VALID_SONGWRITER_STYLES.has('nga-caravan'));
+  assert.ok(VALID_SONGWRITER_STYLES.has('kob-bigass'));
+
+  const ngaProfile = SONGWRITER_STYLE_PROFILES.find((p) => p.id === 'nga-caravan');
+  const kobProfile = SONGWRITER_STYLE_PROFILES.find((p) => p.id === 'kob-bigass');
+  assert.ok(ngaProfile);
+  assert.ok(kobProfile);
+  assert.match(ngaProfile.label, /หงา คาราวาน/);
+  assert.match(kobProfile.label, /กบ บิ๊กแอส/);
+  assert.match(kobProfile.label, /Big Ass.*Bodyslam.*Labanoon/);
+
+  const ngaBudget = getSyllableBudgetForBpm(84, '4/4', { songwriterStyle: 'nga-caravan' });
+  assert.ok(ngaBudget.guidance.includes('หงา คาราวาน'));
+  assert.ok(ngaBudget.min >= 4 && ngaBudget.max <= 10);
+
+  const kobBudget = getSyllableBudgetForBpm(98, '4/4', { songwriterStyle: 'kob-bigass' });
+  assert.ok(kobBudget.guidance.includes('กบ บิ๊กแอส'));
+  assert.match(buildDynamicLyricFewShots({ songwriterStyle: 'nga-caravan' }), /หงา คาราวาน/);
+  assert.match(buildDynamicLyricFewShots({ songwriterStyle: 'kob-bigass' }), /กบ บิ๊กแอส/);
+  assert.match(buildLyricsSystemPrompt({ songwriterStyle: 'nga-caravan', sectionType: 'chorus' }), /หงา คาราวาน/);
+  assert.match(buildLyricsSystemPrompt({ songwriterStyle: 'kob-bigass', sectionType: 'chorus' }), /กบ บิ๊กแอส/);
+
+  for (const style of ['nga-caravan', 'kob-bigass'] as const) {
+    const genre = style === 'nga-caravan' ? 'phuea-chiwit' : 'thai-rock';
+    const bundle = buildStyledSimulatedSongLyrics({
+      topic: 'แสงดาวและศรัทธา',
+      mood: 'empowering',
+      language: 'th',
+      thaiGenre: genre,
+      songwriterStyle: style,
+    });
+    assert.ok(bundle.verse.length >= 4);
+    assert.ok(bundle.chorus.length >= 4);
+    assert.ok(bundle.outro.length >= 2);
+
+    const verseRhyme = validateThaiLyricCouplets(bundle.verse.slice(0, 4));
+    assert.equal(verseRhyme.passed, true, `Expected verse rhyme to pass for ${style}`);
+    assert.ok((verseRhyme.chainContinuityRatio ?? 0) >= 0.67);
+
+    const chorusRhyme = validateThaiLyricCouplets(bundle.chorus.slice(0, 4));
+    assert.equal(chorusRhyme.passed, true, `Expected chorus rhyme to pass for ${style}`);
+    assert.ok((chorusRhyme.chainContinuityRatio ?? 0) >= 0.67);
+
+    const simulated = buildSimulatedArchitectSong({
+      stylePreset: style === 'nga-caravan' ? 'phuea-chiwit-road' : 'thai-rock-90s',
+      vocalProfile: 'male',
+      tempoFeel: 'medium',
+      topic: 'บทเพลงแห่งชีวิต',
+      language: 'th',
+      thaiGenre: genre,
+      songwriterStyle: style,
+    });
+    assert.equal(simulated.songwriterStyle, style);
+
+    const arranged = applyGenreBandArrangement(simulated);
+    if (style === 'nga-caravan') {
+      assert.equal(arranged.mixer.guitarRhythm.style, 'fingerpicking');
+      assert.equal(arranged.mixer.drums.style, 'shaker-cajon');
+    } else {
+      assert.equal(arranged.mixer.guitarRhythm.style, 'rock-power');
+      assert.equal(arranged.mixer.drums.style, 'rock-drive');
+    }
+  }
 });
