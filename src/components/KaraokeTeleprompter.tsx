@@ -5,6 +5,7 @@ import { MicVocal, Music, Radio } from 'lucide-react';
 import { SongProject } from '@/types/song';
 import { transposeChord, getCapoFingeringChord } from '@/lib/chordUtils';
 import { useLanguage } from '@/context/LanguageContext';
+import { VocalBoothControls } from '@/components/VocalBoothControls';
 
 interface KaraokeTeleprompterProps {
   song: SongProject;
@@ -12,6 +13,11 @@ interface KaraokeTeleprompterProps {
   currentBeat: number;
   isPlaying: boolean;
   isCountIn: boolean;
+  isEngineReady?: boolean;
+  onInitEngine?: () => Promise<void>;
+  onUpdateSong?: (updater: (prev: SongProject) => SongProject) => void;
+  onStartBoothPlayback?: (fromBar: number, songOverride?: SongProject) => void;
+  onStopBoothPlayback?: () => void;
 }
 
 export function KaraokeTeleprompter({
@@ -20,6 +26,11 @@ export function KaraokeTeleprompter({
   currentBeat,
   isPlaying,
   isCountIn,
+  isEngineReady = false,
+  onInitEngine,
+  onUpdateSong,
+  onStartBoothPlayback,
+  onStopBoothPlayback,
 }: KaraokeTeleprompterProps) {
   const { t, lang } = useLanguage();
   const activeLineRef = useRef<HTMLDivElement | null>(null);
@@ -35,17 +46,26 @@ export function KaraokeTeleprompter({
     hasVocal: boolean;
   }[] = [];
 
+  const activeTakes = (song.vocalTakes || []).filter((tk) => tk.isActive && !!tk.audioDataUrl);
+
   let counter = 0;
   for (const sec of song.sections) {
     for (const bar of sec.bars) {
+      const globalIdx = counter++;
       const c1 = transposeChord(bar.chords[0] || 'C', song.transposeSemitones);
       const c2 =
         bar.chordsPerBar === 2
           ? transposeChord(bar.chords[1] || bar.chords[0] || 'C', song.transposeSemitones)
           : undefined;
 
+      const hasTakeForBar = activeTakes.some(
+        (tk) =>
+          globalIdx >= tk.startGlobalBarIndex &&
+          (tk.endGlobalBarIndex === undefined || globalIdx <= tk.endGlobalBarIndex)
+      );
+
       flatBars.push({
-        globalIndex: counter++,
+        globalIndex: globalIdx,
         sectionName: sec.name,
         chord1: c1,
         chord2: c2,
@@ -56,7 +76,7 @@ export function KaraokeTeleprompter({
             ? getCapoFingeringChord(c2, song.capoFret)
             : undefined,
         lyrics: bar.lyrics,
-        hasVocal: Boolean(bar.vocalAudio),
+        hasVocal: Boolean(bar.vocalAudio) || hasTakeForBar,
       });
     }
   }
@@ -123,6 +143,21 @@ export function KaraokeTeleprompter({
           </div>
         </div>
       </div>
+
+      {/* Continuous Real Vocal Recording Booth (Phase 5D - 0 Credits) */}
+      {onUpdateSong && (
+        <VocalBoothControls
+          song={song}
+          activeGlobalBarIndex={activeGlobalBarIndex}
+          isPlaying={isPlaying}
+          isCountIn={isCountIn}
+          isEngineReady={isEngineReady}
+          onInitEngine={onInitEngine}
+          onUpdateSong={onUpdateSong}
+          onStartBoothPlayback={onStartBoothPlayback}
+          onStopBoothPlayback={onStopBoothPlayback}
+        />
+      )}
 
       {/* Prompter Lines List */}
       <div className="space-y-3">

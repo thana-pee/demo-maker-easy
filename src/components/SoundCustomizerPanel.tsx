@@ -15,7 +15,10 @@ import {
   PianoStyle,
   DrumStyle,
   MelodySound,
+  VocalFxPreset,
 } from '@/types/song';
+import { VOCAL_FX_PRESETS } from '@/lib/vocalBoothUtils';
+import { applyGenreBandArrangement } from '@/lib/songArchitect';
 
 interface SoundCustomizerPanelProps {
   song: SongProject;
@@ -113,10 +116,13 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
 
   const latencyMs = song.vocalLatencyOffsetMs ?? 0;
   const melodyEnabled = song.mixer.melody?.enabled ?? true;
-  const melodyVolume = song.mixer.melody?.volume ?? 85;
+  const melodyVolume = song.mixer.melody?.volume ?? 56;
   const melodySound = song.mixer.melody?.sound ?? 'flute';
   const vocalEnabled = song.mixer.vocal?.enabled ?? true;
   const vocalVolume = song.mixer.vocal?.volume ?? 95;
+  const vocalFxPreset: VocalFxPreset = song.mixer.vocal?.fxPreset ?? 'studio-warm';
+  const vocalAutoDucking = song.mixer.vocal?.autoDucking ?? true;
+  const activeTakesCount = (song.vocalTakes || []).length;
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end items-end md:items-stretch">
@@ -280,12 +286,12 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
               <p className="text-xs text-ink-700">
                 {lang === 'th'
                   ? 'ขยับไทม์มิ่งเสียงร้องสดให้ตรงจังหวะบีทพอดี (แก้ดีเลย์จากหูฟังบลูทูธ/ไมค์)'
-                  : 'Compensate Bluetooth earphone and mic latency (-150ms to +150ms)'}
+                  : 'Compensate Bluetooth earphone and mic latency (-150ms to +250ms)'}
               </p>
               <input
                 type="range"
                 min="-150"
-                max="150"
+                max="250"
                 step="5"
                 value={latencyMs}
                 onChange={(e) => {
@@ -297,16 +303,34 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
               <div className="flex items-center justify-between text-xs text-ink-400 font-mono-tabular">
                 <span>-150ms</span>
                 <span>0ms</span>
-                <span>+150ms</span>
+                <span>+250ms</span>
               </div>
             </div>
           </section>
 
           {/* 5. 7-Track Master Mixer */}
           <section className="space-y-3">
-            <h3 className="text-xs font-semibold text-ink-400 uppercase tracking-wider">
-              {lang === 'th' ? '5. มิกเซอร์ 7 แทร็ก (7-Track Master Mixer)' : '5. 7-Track Master Mixer'}
-            </h3>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-xs font-semibold text-ink-400 uppercase tracking-wider">
+                {lang === 'th' ? '5. มิกเซอร์ 7 แทร็ก (7-Track Master Mixer)' : '5. 7-Track Master Mixer'}
+              </h3>
+              <button
+                type="button"
+                onClick={() => onUpdateSong((prev) => applyGenreBandArrangement(prev))}
+                title={
+                  lang === 'th'
+                    ? 'จัดสไตล์เครื่องดนตรีทั้ง 5 ชิ้น แอมป์ และวอลุ่มตามแนวเพลงให้อัตโนมัติ (0 เครดิต)'
+                    : 'Auto-arrange all 5 instruments, amp drive, and mix volumes by song genre (0 credits)'
+                }
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-accent-500/10 hover:bg-accent-500/20 text-accent-text border border-accent-500/30 text-[11px] font-semibold transition cursor-pointer"
+              >
+                <span>
+                  {lang === 'th'
+                    ? '🎚️ จัดวงอัตโนมัติตามสไตล์เพลง (0 เครดิต)'
+                    : '🎚️ Auto-Arrange Band by Genre (0 Credits)'}
+                </span>
+              </button>
+            </div>
 
             {/* Track 1: Rhythm Guitar */}
             <div className="p-3.5 rounded-xl border border-hairline bg-surface-2 space-y-2.5">
@@ -395,6 +419,12 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
                   </option>
                   <option value="fingerpicking">
                     {lang === 'th' ? 'เกาสายอะคูสติก' : 'Fingerpicking'}
+                  </option>
+                  <option value="lukthung-bounce">
+                    {lang === 'th' ? 'กระแทกขัดจังหวะลูกทุ่ง (Luk Thung Chop)' : 'Luk Thung Bounce Chop'}
+                  </option>
+                  <option value="rock-power">
+                    {lang === 'th' ? 'ตีร็อกสับสายหนักแน่น (Rock Chug)' : 'Rock Power Chug'}
                   </option>
                 </select>
               </div>
@@ -617,6 +647,12 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
                 <option value="warm-sustain">
                   {lang === 'th' ? 'เดินเบสค้างโน้ตต่ำ (Warm Sustain)' : 'Warm Sustain'}
                 </option>
+                <option value="lukthung-groove">
+                  {lang === 'th' ? 'เดินเบสเด้งลูกทุ่ง (Luk Thung Groove)' : 'Luk Thung Bounce Bass'}
+                </option>
+                <option value="rnb-syncopated">
+                  {lang === 'th' ? 'เบส R&B ขัดจังหวะ (R&B Pocket)' : 'R&B Syncopated Pocket'}
+                </option>
               </select>
               <div className="flex items-center gap-2 text-xs text-ink-700">
                 <span className="w-7">{lang === 'th' ? 'ดัง' : 'Vol'}</span>
@@ -688,6 +724,12 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
                 </option>
                 <option value="gentle-arpeggio">
                   {lang === 'th' ? 'พรมนิ้วเบาๆ (Gentle Arpeggio)' : 'Gentle Arpeggio'}
+                </option>
+                <option value="rnb-neo-chord">
+                  {lang === 'th' ? 'คอร์ดแจ๊ส/R&B นุ่มลึก (Neo-Soul 9th)' : 'R&B Neo-Soul Extended Chords'}
+                </option>
+                <option value="rock-organ-pad">
+                  {lang === 'th' ? 'คอร์ดออร์แกนร็อกอุ้มซาวด์ (Rock Organ)' : 'Rock Organ Sustain Pad'}
                 </option>
               </select>
               <div className="flex items-center gap-2 text-xs text-ink-700">
@@ -768,6 +810,15 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
                 <option value="simple-kit">
                   {lang === 'th' ? 'กลองชุดอะคูสติกเรียบๆ (Simple Kit)' : 'Simple Drum Kit'}
                 </option>
+                <option value="lukthung-3cha">
+                  {lang === 'th' ? 'กลองลูกทุ่ง/สามช่าสนุกๆ (3-Cha Kit)' : 'Luk Thung / 3-Cha Percussion'}
+                </option>
+                <option value="rnb-pocket">
+                  {lang === 'th' ? 'กลอง R&B หนึบๆ นุ่มลึก (R&B Pocket)' : 'R&B Laid-Back Pocket'}
+                </option>
+                <option value="rock-drive">
+                  {lang === 'th' ? 'กลองร็อกแน่นๆ พร้อมลูกส่งทอม (Rock Drive)' : 'Rock Drive Kit + Tom Fills'}
+                </option>
               </select>
               <div className="flex items-center gap-2 text-xs text-ink-700">
                 <span className="w-7">{lang === 'th' ? 'ดัง' : 'Vol'}</span>
@@ -791,12 +842,24 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
 
             {/* Track 6: Vocal Melody Guide */}
             <div className="p-3.5 rounded-xl border border-hairline bg-surface-2 space-y-2.5">
-              <div className="flex items-center justify-between">
-                <span className="font-semibold text-sm text-ink-900">
-                  {lang === 'th' ? '6. ทำนองร้องไกด์' : '6. Vocal Melody Guide'}
-                </span>
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <span className="font-semibold text-sm text-ink-900">
+                    {lang === 'th' ? '6. ทำนองร้องไกด์ (Guide Melody)' : '6. Vocal Melody Guide'}
+                  </span>
+                  <div className="text-[10px] text-ink-500">
+                    {melodyEnabled
+                      ? lang === 'th'
+                        ? 'กำลังเปิดเสียงทำนองไกด์คลอไปกับวง'
+                        : 'Guide melody active with band'
+                      : lang === 'th'
+                        ? 'Backing Track Only (ปิดเสียงเมโลดี้ไกด์เพื่อร้องจริง)'
+                        : 'Backing Track Only (Guide melody muted)'}
+                  </div>
+                </div>
                 <button
                   type="button"
+                  aria-pressed={!melodyEnabled}
                   onClick={() =>
                     onUpdateSong((prev) => ({
                       ...prev,
@@ -804,17 +867,23 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
                         ...prev.mixer,
                         melody: {
                           enabled: !(prev.mixer.melody?.enabled ?? true),
-                          volume: prev.mixer.melody?.volume ?? 85,
+                          volume: prev.mixer.melody?.volume ?? 56,
                           sound: prev.mixer.melody?.sound ?? 'flute',
                         },
                       },
                     }))
                   }
-                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer ${
-                    melodyEnabled ? 'bg-accent-500 text-white' : 'bg-surface-inset text-ink-400'
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition cursor-pointer shrink-0 ${
+                    melodyEnabled ? 'bg-accent-500 text-white' : 'bg-amber-600 text-white'
                   }`}
                 >
-                  {melodyEnabled ? (lang === 'th' ? 'เปิด' : 'ON') : lang === 'th' ? 'ปิด' : 'OFF'}
+                  {melodyEnabled
+                    ? lang === 'th'
+                      ? 'เปิดไกด์'
+                      : 'Guide ON'
+                    : lang === 'th'
+                      ? 'Backing Only'
+                      : 'Backing Only'}
                 </button>
               </div>
               <select
@@ -826,7 +895,7 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
                       ...prev.mixer,
                       melody: {
                         enabled: prev.mixer.melody?.enabled ?? true,
-                        volume: prev.mixer.melody?.volume ?? 85,
+                        volume: prev.mixer.melody?.volume ?? 56,
                         sound: e.target.value as MelodySound,
                       },
                     },
@@ -872,11 +941,11 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
             </div>
 
             {/* Track 7: Recorded Vocals */}
-            <div className="p-3.5 rounded-xl border border-hairline bg-surface-2 space-y-2.5">
+            <div className="p-3.5 rounded-xl border border-hairline bg-surface-2 space-y-3">
               <div className="flex items-center justify-between">
                 <span className="font-semibold text-sm text-ink-900 inline-flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-rec-500" />
-                  <span>{lang === 'th' ? '7. เสียงร้องสด (ไมค์)' : '7. Recorded Vocals (Mic)'}</span>
+                  <span>{lang === 'th' ? '7. เสียงร้องสด (ไมค์ & Booth)' : '7. Recorded Vocals (Mic & Booth)'}</span>
                 </span>
                 <button
                   type="button"
@@ -886,6 +955,7 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
                       mixer: {
                         ...prev.mixer,
                         vocal: {
+                          ...prev.mixer.vocal,
                           enabled: !(prev.mixer.vocal?.enabled ?? true),
                           volume: prev.mixer.vocal?.volume ?? 95,
                         },
@@ -899,8 +969,17 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
                   {vocalEnabled ? (lang === 'th' ? 'เปิด' : 'ON') : lang === 'th' ? 'ปิด' : 'OFF'}
                 </button>
               </div>
-              <div className="text-xs text-ink-700 bg-surface-1 border border-hairline rounded-lg px-2.5 py-1.5">
-                {lang === 'th' ? 'คลิปเสียงร้องจากห้องเพลง' : 'Bar Vocal Scratchpad'}
+              <div className="text-xs text-ink-700 bg-surface-1 border border-hairline rounded-lg px-2.5 py-1.5 flex items-center justify-between">
+                <span>
+                  {lang === 'th' ? 'คลิปห้องเพลง & บูธอัดต่อเนื่อง' : 'Bar Clips & Vocal Booth Takes'}
+                </span>
+                <span className="font-mono-tabular font-semibold text-accent-text">
+                  {activeTakesCount > 0
+                    ? `${activeTakesCount} ${lang === 'th' ? 'เทค' : 'take(s)'}`
+                    : lang === 'th'
+                      ? 'ฟรี 0 เหรียญ'
+                      : '0 Cr'}
+                </span>
               </div>
               <div className="flex items-center gap-2 text-xs text-ink-700">
                 <span className="w-7">{lang === 'th' ? 'ดัง' : 'Vol'}</span>
@@ -916,6 +995,7 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
                       mixer: {
                         ...prev.mixer,
                         vocal: {
+                          ...prev.mixer.vocal,
                           enabled: prev.mixer.vocal?.enabled ?? true,
                           volume: val,
                         },
@@ -926,6 +1006,74 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
                 />
                 <span className="font-mono-tabular w-9 text-right">{vocalVolume}%</span>
               </div>
+
+              {/* Vocal FX Preset Selector */}
+              <div className="space-y-1.5 pt-1 border-t border-hairline">
+                <div className="text-[11px] font-semibold text-ink-600">
+                  {lang === 'th' ? 'เอฟเฟกต์เสียงร้อง (Studio FX Preset)' : 'Studio Vocal FX Preset'}
+                </div>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {VOCAL_FX_PRESETS.map((preset) => {
+                    const active = vocalFxPreset === preset.id;
+                    return (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        title={lang === 'th' ? preset.descTh : preset.descEn}
+                        onClick={() =>
+                          onUpdateSong((prev) => ({
+                            ...prev,
+                            mixer: {
+                              ...prev.mixer,
+                              vocal: {
+                                ...prev.mixer.vocal,
+                                enabled: prev.mixer.vocal?.enabled ?? true,
+                                volume: prev.mixer.vocal?.volume ?? 95,
+                                fxPreset: preset.id,
+                              },
+                            },
+                          }))
+                        }
+                        className={`px-2 py-1.5 rounded-lg text-[11px] font-semibold border transition cursor-pointer ${
+                          active
+                            ? 'bg-accent-500 text-white border-accent-500 shadow-e1'
+                            : 'bg-surface-1 text-ink-700 border-hairline hover:border-accent-200'
+                        }`}
+                      >
+                        {lang === 'th' ? preset.labelTh : preset.labelEn}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Backing Auto-Ducking Toggle */}
+              <label className="flex items-center justify-between gap-2 pt-1 text-xs text-ink-700 cursor-pointer">
+                <span>
+                  {lang === 'th'
+                    ? 'Auto-Ducking (ลดดนตรี -2dB ตอนร้อง)'
+                    : 'Auto-Ducking (-2dB Backing Dip)'}
+                </span>
+                <input
+                  type="checkbox"
+                  checked={vocalAutoDucking}
+                  onChange={(e) =>
+                    onUpdateSong((prev) => ({
+                      ...prev,
+                      mixer: {
+                        ...prev.mixer,
+                        vocal: {
+                          ...prev.mixer.vocal,
+                          enabled: prev.mixer.vocal?.enabled ?? true,
+                          volume: prev.mixer.vocal?.volume ?? 95,
+                          autoDucking: e.target.checked,
+                        },
+                      },
+                    }))
+                  }
+                  className="accent-[#5B61EE] w-4 h-4 cursor-pointer"
+                />
+              </label>
             </div>
           </section>
         </div>

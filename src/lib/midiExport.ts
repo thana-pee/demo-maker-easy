@@ -49,6 +49,10 @@ const GM_DRUM_MAP: Record<DrumVoice, number> = {
   snare: 38,      // Acoustic Snare
   cajonSlap: 40,  // Electric Snare (แปร๊ดแหลมสไตล์สแลปคาฮอง)
   hat: 42,        // Closed Hi-Hat
+  openHat: 46,    // Open Hi-Hat
+  tomHigh: 48,    // Hi-Mid Tom
+  tomLow: 45,     // Low Tom
+  woodblock: 77,  // Low Wood Block (ไม้เคาะจังหวะสามช่า/ลูกทุ่ง)
   crash: 49,      // Crash Cymbal 1
   shaker: 69,     // Cabasa / Shaker
   click: 76,      // Hi Wood Block / Click

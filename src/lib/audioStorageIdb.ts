@@ -22,6 +22,11 @@ export function makeVocalBlobKey(songId: string, barId: string): string {
   return `${songId}_${barId}`;
 }
 
+/** สร้าง key มาตรฐานสำหรับจัดเก็บ VocalTake แบบต่อเนื่อง (Phase 5D) */
+export function makeVocalTakeBlobKey(songId: string, takeId: string): string {
+  return `${songId}_take_${takeId}`;
+}
+
 /** รีเซ็ต cache connection (ใช้ใน test หรือเมื่อปิด DB) */
 export function resetAudioDbForTests(): void {
   dbPromise = null;
@@ -184,6 +189,11 @@ export async function persistSongVocalsToIdb(song: SongProject): Promise<void> {
       }
     }
   }
+  for (const take of song.vocalTakes || []) {
+    if (take.audioDataUrl) {
+      tasks.push(saveVocalBlob(makeVocalTakeBlobKey(song.id, take.id), take.audioDataUrl));
+    }
+  }
   await Promise.all(tasks);
 }
 
@@ -206,5 +216,21 @@ export async function hydrateSongVocalsFromIdb(song: SongProject): Promise<SongP
       return { ...sec, bars };
     })
   );
-  return changed ? { ...song, sections } : song;
+
+  let vocalTakes = song.vocalTakes;
+  if (Array.isArray(song.vocalTakes) && song.vocalTakes.length > 0) {
+    vocalTakes = await Promise.all(
+      song.vocalTakes.map(async (take) => {
+        if (take.audioDataUrl) return take;
+        const stored = await getVocalBlob(makeVocalTakeBlobKey(song.id, take.id));
+        if (stored) {
+          changed = true;
+          return { ...take, audioDataUrl: stored };
+        }
+        return take;
+      })
+    );
+  }
+
+  return changed ? { ...song, sections, ...(vocalTakes !== undefined ? { vocalTakes } : {}) } : song;
 }

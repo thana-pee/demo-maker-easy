@@ -12,6 +12,8 @@ export interface CloudUser {
   email?: string;
   displayName: string;
   mode: 'guest' | 'authenticated';
+  avatarUrl?: string;
+  provider?: 'google' | 'email' | 'guest';
 }
 
 export interface CloudSongRecord {
@@ -181,11 +183,104 @@ export function getAuthAccessToken(): string | null {
   return getStoredSession()?.accessToken ?? null;
 }
 
-/** อ่านผลลัพธ์ Magic Link จาก URL Hash (#access_token=...) เมื่อผู้ใช้กดลิงก์จากอีเมล */
+/** ต่ออายุ Access Token จาก Refresh Token เมื่อ Session หมดอายุ (Supabase default 1 ชม.) */
+export async function refreshAuthSession(
+  fetchFn: typeof fetch = fetch
+): Promise<{ accessToken: string; user: CloudUser } | null> {
+  const session = getStoredSession();
+  const config = getCloudConfig();
+  if (!session?.refreshToken || !config.supabaseUrl?.trim() || !config.supabaseAnonKey?.trim()) {
+    return null;
+  }
+
+  try {
+    const baseUrl = config.supabaseUrl.trim().replace(/\/$/, '');
+    const res = await fetchFn(`${baseUrl}/auth/v1/token?grant_type=refresh_token`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: config.supabaseAnonKey,
+      },
+      body: JSON.stringify({ refresh_token: session.refreshToken }),
+    });
+
+    if (!res.ok) {
+      if (res.status === 400 || res.status === 401) {
+        saveStoredSession(null);
+      }
+      return null;
+    }
+
+    const data = (await res.json()) as {
+      access_token?: string;
+      refresh_token?: string;
+      user?: {
+        id?: string;
+        email?: string;
+        app_metadata?: { provider?: string };
+        user_metadata?: { full_name?: string; name?: string; avatar_url?: string; picture?: string };
+      };
+    };
+    if (!data.access_token) {
+      return null;
+    }
+
+    const email = data.user?.email || session.user.email;
+    const providerRaw = data.user?.app_metadata?.provider;
+    const nextUser: CloudUser = {
+      ...session.user,
+      id: data.user?.id || session.user.id,
+      ...(email ? { email } : {}),
+      displayName:
+        data.user?.user_metadata?.full_name ||
+        data.user?.user_metadata?.name ||
+        session.user.displayName,
+      mode: 'authenticated',
+      ...(data.user?.user_metadata?.avatar_url || data.user?.user_metadata?.picture
+        ? { avatarUrl: data.user?.user_metadata?.avatar_url || data.user?.user_metadata?.picture }
+        : {}),
+      ...(providerRaw === 'google' || providerRaw === 'email' ? { provider: providerRaw } : {}),
+    };
+
+    saveStoredSession({
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token || session.refreshToken,
+      user: nextUser,
+    });
+    return { accessToken: data.access_token, user: nextUser };
+  } catch {
+    return null;
+  }
+}
+
+/** อ่านผลลัพธ์ Google OAuth / Magic Link จาก URL Hash (#access_token=...) */
 export async function consumeAuthCallbackFromUrl(): Promise<CloudUser | null> {
-  if (typeof window === 'undefined' || !window.location.hash) return null;
+  if (typeof window === 'undefined') return null;
+
+  if (window.location.search) {
+    const queryParams = new URLSearchParams(window.location.search);
+    if (queryParams.get('error') || queryParams.get('error_description') || queryParams.get('error_code')) {
+      queryParams.delete('error');
+      queryParams.delete('error_code');
+      queryParams.delete('error_description');
+      const nextSearch = queryParams.toString();
+      window.history.replaceState(
+        {},
+        document.title,
+        window.location.pathname + (nextSearch ? `?${nextSearch}` : '') + window.location.hash
+      );
+      if (!window.location.hash) return null;
+    }
+  }
+
+  if (!window.location.hash) return null;
   const hash = window.location.hash.replace(/^#/, '');
   const params = new URLSearchParams(hash);
+  if (params.get('error') || params.get('error_description')) {
+    window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
+    return null;
+  }
+
   const accessToken = params.get('access_token');
   if (!accessToken) return null;
 
@@ -206,13 +301,26 @@ export async function consumeAuthCallbackFromUrl(): Promise<CloudUser | null> {
         },
       });
       if (res.ok) {
-        const data = (await res.json()) as { id?: string; email?: string; user_metadata?: { full_name?: string } };
+        const data = (await res.json()) as {
+          id?: string;
+          email?: string;
+          app_metadata?: { provider?: string };
+          user_metadata?: { full_name?: string; name?: string; avatar_url?: string; picture?: string };
+        };
         const email = data.email || undefined;
+        const providerRaw = data.app_metadata?.provider;
         user = {
           id: data.id || user.id,
           email,
-          displayName: data.user_metadata?.full_name || (email ? email.split('@')[0] : 'Cloud Member'),
+          displayName:
+            data.user_metadata?.full_name ||
+            data.user_metadata?.name ||
+            (email ? email.split('@')[0] : 'Cloud Member'),
           mode: 'authenticated',
+          ...(data.user_metadata?.avatar_url || data.user_metadata?.picture
+            ? { avatarUrl: data.user_metadata?.avatar_url || data.user_metadata?.picture }
+            : {}),
+          ...(providerRaw === 'google' || providerRaw === 'email' ? { provider: providerRaw } : {}),
         };
       }
     } catch {
@@ -223,6 +331,62 @@ export async function consumeAuthCallbackFromUrl(): Promise<CloudUser | null> {
   saveStoredSession({ accessToken, refreshToken, user });
   window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
   return user;
+}
+
+/** สร้างลิงก์ OAuth สำหรับเข้าสู่ระบบด้วย Google ผ่าน Supabase Auth */
+export function getGoogleOAuthAuthorizeUrl(redirectTo?: string): string | null {
+  const config = getCloudConfig();
+  if (!config.supabaseUrl?.trim() || !config.supabaseAnonKey?.trim()) {
+    return null;
+  }
+  const baseUrl = config.supabaseUrl.trim().replace(/\/$/, '');
+  const fallbackRedirect =
+    typeof window !== 'undefined' ? `${window.location.origin}${window.location.pathname}` : '';
+  const targetRedirect = redirectTo?.trim() || fallbackRedirect;
+  const params = new URLSearchParams({ provider: 'google' });
+  if (targetRedirect) {
+    params.set('redirect_to', targetRedirect);
+  }
+  return `${baseUrl}/auth/v1/authorize?${params.toString()}`;
+}
+
+/** เริ่มขั้นตอนเข้าสู่ระบบด้วย Google แบบ 1-Click OAuth (ยังคงใช้โหมด Guest ฟรีได้โดยไม่ต้องล็อกอิน) */
+export function signInWithGoogleOAuth(options?: {
+  redirectTo?: string;
+  navigate?: (url: string) => void;
+}): AuthActionResult {
+  if (!isDeviceOnline()) {
+    return {
+      success: false,
+      user: getCurrentUser(),
+      status: 'offline',
+      message: 'อุปกรณ์อยู่ในโหมดออฟไลน์ — ยังใช้งานโหมด Guest สร้างเพลง/อัดร้อง/Export MP3 ได้ฟรี 100%',
+    };
+  }
+
+  const oauthUrl = getGoogleOAuthAuthorizeUrl(options?.redirectTo);
+  if (!oauthUrl) {
+    return {
+      success: false,
+      user: getCurrentUser(),
+      status: 'local-only',
+      message:
+        'ยังไม่ได้ตั้งค่า Supabase Cloud สำหรับ Google Login — สามารถใช้งานโหมด Guest ฟรีได้เต็มรูปแบบ หรือกรอก Supabase Endpoint ด้านล่าง',
+    };
+  }
+
+  if (options?.navigate) {
+    options.navigate(oauthUrl);
+  } else if (typeof window !== 'undefined') {
+    window.location.assign(oauthUrl);
+  }
+
+  return {
+    success: true,
+    user: getCurrentUser(),
+    status: 'syncing',
+    message: 'กำลังเชื่อมต่อไปยังหน้าต่างเข้าสู่ระบบ Google...',
+  };
 }
 
 /** ส่ง Email OTP / Magic Link ผ่าน Supabase Auth REST หรือคืน Guest fallback อย่างปลอดภัยเมื่อไม่พบ Cloud/Offline */
@@ -472,6 +636,22 @@ export function mergeSongLists(localSongs: SongProject[], cloudSongs: SongProjec
   );
 }
 
+function buildSupabaseRestHeaders(
+  supabaseAnonKey: string,
+  accessToken: string | null,
+  extraHeaders?: Record<string, string>
+): Record<string, string> {
+  const bearer = accessToken || supabaseAnonKey;
+  const headers: Record<string, string> = {
+    apikey: supabaseAnonKey,
+    ...extraHeaders,
+  };
+  if (accessToken || !bearer.startsWith('sb_publishable_')) {
+    headers.Authorization = `Bearer ${bearer}`;
+  }
+  return headers;
+}
+
 /**
  * Syncs a SongProject to the cloud.
  * Falls back gracefully to local storage if cloud is not yet configured or device is offline.
@@ -489,7 +669,10 @@ export async function syncSongToCloud(song: SongProject): Promise<{ success: boo
 
   try {
     const user = getCurrentUser();
-    const bearer = getAuthAccessToken() || config.supabaseAnonKey;
+    const headers = buildSupabaseRestHeaders(config.supabaseAnonKey, getAuthAccessToken(), {
+      'Content-Type': 'application/json',
+      Prefer: 'resolution=merge-duplicates',
+    });
     const lightProject = stripVocalsFromSong(song);
     const record: CloudSongRecord = {
       id: song.id,
@@ -503,14 +686,10 @@ export async function syncSongToCloud(song: SongProject): Promise<{ success: boo
       updated_at: song.updatedAt || new Date().toISOString(),
     };
 
-    const res = await fetch(`${config.supabaseUrl.replace(/\/$/, '')}/rest/v1/songs`, {
+    const conflictQuery = user.mode === 'authenticated' ? '?on_conflict=user_id,id' : '';
+    const res = await fetch(`${config.supabaseUrl.replace(/\/$/, '')}/rest/v1/songs${conflictQuery}`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        apikey: config.supabaseAnonKey,
-        Authorization: `Bearer ${bearer}`,
-        Prefer: 'resolution=merge-duplicates',
-      },
+      headers,
       body: JSON.stringify(record),
     });
 
@@ -537,17 +716,12 @@ export async function fetchSongsFromCloud(): Promise<SongProject[]> {
 
   try {
     const user = getCurrentUser();
-    const bearer = getAuthAccessToken() || config.supabaseAnonKey;
+    const headers = buildSupabaseRestHeaders(config.supabaseAnonKey, getAuthAccessToken());
     const baseUrl = config.supabaseUrl.replace(/\/$/, '');
     const userFilter = user.mode === 'authenticated' ? `&user_id=eq.${encodeURIComponent(user.id)}` : '';
     const res = await fetch(
       `${baseUrl}/rest/v1/songs?select=project_data${userFilter}&order=updated_at.desc`,
-      {
-        headers: {
-          apikey: config.supabaseAnonKey,
-          Authorization: `Bearer ${bearer}`,
-        },
-      }
+      { headers }
     );
 
     if (!res.ok) return [];

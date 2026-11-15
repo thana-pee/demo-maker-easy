@@ -1,6 +1,47 @@
 export type AppViewMode = 'songwriter' | 'arranger' | 'karaoke';
 export type SongStatusTag = 'draft' | 'arranged' | 'vocal-recorded' | 'mastered';
 
+export type ThaiSongGenre =
+  | 'thai-pop'
+  | 'thai-rock'
+  | 'phuea-chiwit'
+  | 'luk-thung'
+  | 'luk-krung'
+  | 'acoustic-indie'
+  | 'thai-rnb';
+
+export type ThaiLyricEra = 'modern-indie' | 'era-80s' | 'era-90s' | 'era-2000s' | 'gen-z';
+
+export type ThaiLyricDialect = 'standard' | 'northern' | 'isan' | 'suphan-central' | 'southern';
+
+export type ThaiSongwriterStyle =
+  | 'none'
+  | 'boy-kosiyabong'
+  | 'dee-nitipong'
+  | 'seefa'
+  | 'sek-loso'
+  | 'suea-thanapol'
+  | 'phaiboon-butkhan'
+  | 'suraphon-sombatcharoen'
+  | 'chali-intrawichit'
+  | 'sala-khunawut'
+  | 'chonlathi-thanthong'
+  | 'wasu-haohan'
+  | 'joey-boy'
+  | 'stamp-apiwat'
+  | 'the-toys'
+  | 'tan-lipta'
+  | 'aed-carabao'
+  | 'asanee-chotikul';
+
+export type ThaiEmotionalResolution =
+  | 'auto'
+  | 'piercing-sting'
+  | 'fulfilling-warm'
+  | 'empowering-anthem'
+  | 'catchy-earworm'
+  | 'nostalgic-fade';
+
 export interface SongSnapshot {
   id: string;
   name: string;
@@ -22,12 +63,12 @@ export type GuitarModel =
 export type StringGauge = 'standard-010' | 'heavy-012';
 export type Ambience3DMode = 'living-room' | 'wood-studio' | 'unplugged-hall';
 
-export type GuitarStyle = 'campfire-strum' | 'soft-strum' | 'fingerpicking';
+export type GuitarStyle = 'campfire-strum' | 'soft-strum' | 'fingerpicking' | 'lukthung-bounce' | 'rock-power';
 export type LeadGuitarStyle = 'melodic-solo' | 'riff-fills' | 'soft-arpeggio';
 export type LeadGuitarDrive = 'clean' | 'crunch' | 'overdrive' | 'distortion' | 'fuzz';
-export type BassStyle = 'root-fifth' | 'warm-sustain';
-export type PianoStyle = 'warm-pad' | 'gentle-arpeggio';
-export type DrumStyle = 'off' | 'shaker-cajon' | 'simple-kit';
+export type BassStyle = 'root-fifth' | 'warm-sustain' | 'lukthung-groove' | 'rnb-syncopated';
+export type PianoStyle = 'warm-pad' | 'gentle-arpeggio' | 'rnb-neo-chord' | 'rock-organ-pad';
+export type DrumStyle = 'off' | 'shaker-cajon' | 'simple-kit' | 'lukthung-3cha' | 'rnb-pocket' | 'rock-drive';
 export type MelodySound = 'flute' | 'piano' | 'bell';
 
 export interface MelodyNote {
@@ -79,6 +120,24 @@ export interface SongSection {
   bars: SongBar[];
 }
 
+export type VocalFxPreset = 'dry-natural' | 'studio-warm' | 'wide-chorus';
+
+export interface VocalTake {
+  id: string;
+  name: string;
+  scope: 'full-song' | 'section';
+  source?: 'mic' | 'ai-tts';
+  sectionId?: string;
+  startGlobalBarIndex: number;
+  endGlobalBarIndex?: number;
+  preRollOffsetSec: number;
+  latencyOffsetMs?: number;
+  audioDataUrl?: string;
+  fxPreset: VocalFxPreset;
+  isActive: boolean;
+  createdAt: string;
+}
+
 export interface InstrumentMixerConfig {
   guitarRhythm: { enabled: boolean; volume: number; style: GuitarStyle; model: GuitarModel };
   guitarLead:   { enabled: boolean; volume: number; style: LeadGuitarStyle; model: GuitarModel; drive?: LeadGuitarDrive };
@@ -86,7 +145,7 @@ export interface InstrumentMixerConfig {
   piano:        { enabled: boolean; volume: number; style: PianoStyle };
   drums:        { enabled: boolean; volume: number; style: DrumStyle };
   melody?:      { enabled: boolean; volume: number; sound?: MelodySound };
-  vocal?:       { enabled: boolean; volume: number };
+  vocal?:       { enabled: boolean; volume: number; fxPreset?: VocalFxPreset; autoDucking?: boolean };
 }
 
 export interface SongProject {
@@ -105,8 +164,20 @@ export interface SongProject {
   ambience3D: Ambience3DMode;
   mixer: InstrumentMixerConfig;
   sections: SongSection[];
-  vocalLatencyOffsetMs?: number;       // -150 ถึง +150 ms สำหรับเฟส 2B
+  vocalLatencyOffsetMs?: number;       // -150 ถึง +250 ms สำหรับเฟส 2B / 5D
+  vocalTakes?: VocalTake[];            // เทคเสียงร้องต่อเนื่องในบูธอัดเสียงจริง (Phase 5D)
   folder?: string;                     // ชื่อโฟลเดอร์/อัลบั้มสำหรับจัดหมวดหมู่เพลง (Phase 4C)
   statusTag?: SongStatusTag;           // สถานะของเพลงในเวิร์กโฟลว์ (Phase 4C)
   snapshots?: SongSnapshot[];          // ประวัติเวอร์ชัน (Version Snapshots) ของเพลง (Phase 4C)
+  thaiGenre?: ThaiSongGenre;           // แนวเพลงไทย (ไทยป๊อป/ไทยร็อก/เพื่อชีวิต/ลูกทุ่ง/ลูกกรุง ฯลฯ)
+  lyricEra?: ThaiLyricEra;             // ยุคสมัยของภาษาเพลง
+  lyricDialect?: ThaiLyricDialect;     // กลิ่นอายภาษาถิ่น (กลาง/เหนือ/อีสาน/สุพรรณ/ใต้)
+  songwriterStyle?: ThaiSongwriterStyle; // แรงบันดาลใจสไตล์นักแต่งเพลง
+  emotionalResolution?: ThaiEmotionalResolution; // รูปแบบการปิดอารมณ์ท่อนจบ / พลังท่อนฮุค
+  easyConfig?: {                       // ข้อมูลตั้งต้นจาก Easy Mode AI Architect (Phase 5B)
+    stylePreset: string;
+    vocalProfile: 'female' | 'male' | 'neutral';
+    tempoFeel: 'slow' | 'medium' | 'fast';
+    generatedAt?: string;
+  };
 }

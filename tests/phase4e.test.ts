@@ -80,43 +80,43 @@ test('thaiRhymeHelper: นับพยางค์ไทย/อังกฤษ �
 
 // ───────────────────────── 2. Credit Wallet Manager ─────────────────────────
 
-test('creditManager: เริ่มต้น 30 เครดิต หักเครดิต ป้องกันยอดติดลบ และเติมแพ็กเกจพร้อมประวัติได้', () => {
+test('creditManager: เริ่มต้น 15 เครดิต หักเครดิต ป้องกันยอดติดลบ และเติมแพ็กเกจพร้อมประวัติได้', () => {
   const store = installMockLocalStorage();
   resetCreditWalletForTests();
 
-  assert.equal(DEFAULT_STARTER_CREDITS, 30);
-  assert.equal(getCreditBalance(), 30);
+  assert.equal(DEFAULT_STARTER_CREDITS, 15);
+  assert.equal(getCreditBalance(), 15);
   assert.equal(canAfford(1), true);
-  assert.equal(canAfford(30), true);
-  assert.equal(canAfford(31), false);
+  assert.equal(canAfford(15), true);
+  assert.equal(canAfford(16), false);
   assert.equal(canAfford(-5), false);
 
   const starterTx = getCreditTransactions();
   assert.equal(starterTx.length, 1);
   assert.equal(starterTx[0].type, 'starter');
-  assert.equal(starterTx[0].amount, 30);
+  assert.equal(starterTx[0].amount, 15);
 
   // Spend 1 credit for AI lyrics
   const spend = deductCredits(1, 'AI Lyric Co-Pilot: Chorus');
   assert.equal(spend.success, true);
-  assert.equal(spend.balance, 29);
+  assert.equal(spend.balance, 14);
   assert.equal(spend.transaction?.amount, -1);
 
   // Prevent overdraft / negative balance
   const failSpend = deductCredits(99, 'Too expensive');
   assert.equal(failSpend.success, false);
-  assert.equal(failSpend.balance, 29);
+  assert.equal(failSpend.balance, 14);
 
   // Invalid negative/zero spend rejected
   assert.equal(deductCredits(0, 'Zero').success, false);
   assert.equal(deductCredits(-2, 'Neg').success, false);
 
-  // Top-up Starter Pack (+100 Credits)
+  // Top-up Mini Pack (+50 Credits / 49 THB)
   const topUp = topUpCredits(CREDIT_PACKAGES[0]);
   assert.equal(topUp.success, true);
-  assert.equal(topUp.balance, 129);
+  assert.equal(topUp.balance, 64);
   assert.equal(topUp.transaction.type, 'topup');
-  assert.equal(topUp.transaction.amount, 100);
+  assert.equal(topUp.transaction.amount, 50);
 
   const txs = getCreditTransactions();
   assert.equal(txs.length, 3);
@@ -188,40 +188,58 @@ test('/api/advance/lyrics POST: คืน 400 เมื่อ Payload ไม่�
   }
 });
 
-test('/api/advance/lyrics POST: เรียก Gemini 4 Hydrogen เมื่อมี Key โดยส่งผ่าน Header (ไม่รั่ว Secret)', async () => {
+test('/api/advance/lyrics POST: เรียก @google/genai (gemini-3.5-flash-lite) เมื่อมี Key โดยส่งผ่าน Header (ไม่รั่ว Secret)', async () => {
   const prevKey = process.env.GEMINI_API_KEY;
   const origFetch = globalThis.fetch;
   process.env.GEMINI_API_KEY = 'secret-test-gemini-key-xyz';
 
-  const captured: { url: string; apiKeyHeader: string | null } = { url: '', apiKeyHeader: null };
+  const captured: { url: string; apiKeyHeader: string | null; bodyText: string } = {
+    url: '',
+    apiKeyHeader: null,
+    bodyText: '',
+  };
 
   try {
     globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-      captured.url = typeof input === 'string' ? input : input.toString();
-      const headers = new Headers(init?.headers);
+      captured.url = input instanceof Request ? input.url : input.toString();
+      const headers = input instanceof Request ? input.headers : new Headers(init?.headers);
       captured.apiKeyHeader = headers.get('x-goog-api-key');
+      captured.bodyText =
+        input instanceof Request ? await input.clone().text() : String(init?.body ?? '');
 
       return new Response(
         JSON.stringify({
-          candidates: [
+          id: 'v1_lyrics_test',
+          object: 'interaction',
+          model: 'gemini-3.5-flash-lite',
+          status: 'completed',
+          steps: [
             {
-              content: {
-                parts: [
-                  {
-                    text: JSON.stringify({
-                      lines: [
-                        'แสงไฟริมทางส่องใจให้เดินต่อ',
-                        'แม้คืนเหน็บหนาวก็ยังเฝ้ารอ',
-                        'แค่มีเสียงเพลงปลอบโยนหัวใจ',
-                        'พรุ่งนี้ท้องฟ้าจะสดใสกว่าเดิม',
-                      ],
-                      tip: 'เน้นจังหวะลงคำท้ายที่สระออและสระไอ',
-                    }),
-                  },
-                ],
-              },
+              type: 'model_output',
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    lines: [
+                      'แสงไฟริมทางส่องใจให้เดินต่อ',
+                      'แม้คืนเหน็บหนาวก็ยังเฝ้ารอ',
+                      'แค่มีเสียงเพลงปลอบโยนหัวใจ',
+                      'พรุ่งนี้ท้องฟ้าจะสดใสกว่าเดิม',
+                    ],
+                    rhymeNotes: ['ส่งสัมผัส -อ ต่อ -> รอ และ -ไอ ใจ -> ใส'],
+                    suggestedChords: ['G', 'D', 'Em', 'C'],
+                  }),
+                },
+              ],
             },
           ],
+          usage: {
+            total_input_tokens: 140,
+            total_cached_tokens: 0,
+            total_output_tokens: 80,
+            total_thought_tokens: 10,
+            total_tokens: 230,
+          },
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }
       );
@@ -250,8 +268,9 @@ test('/api/advance/lyrics POST: เรียก Gemini 4 Hydrogen เมื่�
       lines: Array<{ chord: string; text: string; syllables: number }>;
     };
     assert.equal(body.isSimulated, false);
-    assert.equal(body.model, 'gemini-4-hydrogen');
-    assert.ok(captured.url.includes('gemini-4-hydrogen'));
+    assert.equal(body.model, 'gemini-3.5-flash-lite');
+    assert.ok(captured.url.includes('interactions'));
+    assert.ok(captured.bodyText.includes('gemini-3.5-flash-lite'));
     assert.equal(body.lines.length, 4);
     assert.deepEqual(
       body.lines.map((l) => l.chord),

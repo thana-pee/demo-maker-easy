@@ -290,7 +290,7 @@ export const SongLibraryModal: React.FC<SongLibraryModalProps> = ({
     document.body.appendChild(a);
     a.click();
     a.remove();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
     showFeedback(lang === 'th' ? 'ดาวน์โหลดไฟล์สำรองข้อมูลเพลงเรียบร้อย' : 'Backup downloaded successfully');
   };
 

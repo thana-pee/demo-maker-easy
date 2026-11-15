@@ -1,11 +1,24 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Info, CheckCircle2, X } from 'lucide-react';
-import { SongProject, SongSection, MelodyNote, AppViewMode } from '@/types/song';
+import { Info, CheckCircle2, X, Sparkles } from 'lucide-react';
+import {
+  SongProject,
+  SongSection,
+  SectionType,
+  MelodyNote,
+  AppViewMode,
+  ThaiSongGenre,
+  ThaiLyricEra,
+  ThaiLyricDialect,
+  ThaiSongwriterStyle,
+  ThaiEmotionalResolution,
+} from '@/types/song';
 import { createDefaultSong } from '@/lib/defaultSong';
+import { generateUniqueId } from '@/lib/sectionUtils';
 import { ProgressionPreset } from '@/lib/chordUtils';
 import { useAudioEngine } from '@/hooks/useAudioEngine';
+import type { LoopRange } from '@/lib/audioEngine';
 import {
   getSavedSongs,
   saveSong,
@@ -35,26 +48,77 @@ import {
   AdvanceModeModal,
   type AdvanceTargetSectionContext,
 } from '@/components/AdvanceModeModal';
+import { EasyModeStarterModal } from '@/components/EasyModeStarterModal';
 import { PwaInstallPrompt } from '@/components/PwaInstallPrompt';
 import {
   DEFAULT_STARTER_CREDITS,
   getCreditBalance,
+  syncWalletFromServer,
 } from '@/lib/creditManager';
 import {
   GUEST_USER,
   type CloudUser,
   type CloudSyncStatus,
+  getAuthAccessToken,
   getCurrentUser,
   getLastSyncedAt,
   isCloudConfigured,
   consumeAuthCallbackFromUrl,
+  refreshAuthSession,
   syncLibraryNow,
 } from '@/lib/cloudSync';
 import { useLanguage } from '@/context/LanguageContext';
 
+const MAX_HISTORY = 30;
+
+function buildSongHistoryFingerprint(s: SongProject): string {
+  return JSON.stringify({
+    title: s.title,
+    bpm: s.bpm,
+    timeSignature: s.timeSignature,
+    baseKey: s.baseKey,
+    transposeSemitones: s.transposeSemitones,
+    capoFret: s.capoFret,
+    sections: s.sections,
+    mixer: s.mixer,
+    thaiGenre: s.thaiGenre,
+    songwriterStyle: s.songwriterStyle,
+    emotionalResolution: s.emotionalResolution,
+  });
+}
+
 export default function Home() {
   const { lang, t } = useLanguage();
   const [song, setSong] = useState<SongProject>(() => createDefaultSong());
+  const songRef = useRef<SongProject>(song);
+  const undoStackRef = useRef<SongProject[]>([]);
+  const redoStackRef = useRef<SongProject[]>([]);
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+
+  useEffect(() => {
+    songRef.current = song;
+  }, [song]);
+
+  const updateSongWithHistory = useCallback(
+    (updater: SongProject | ((prev: SongProject) => SongProject)) => {
+      const prev = songRef.current;
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      if (next === prev) return;
+
+      if (buildSongHistoryFingerprint(prev) !== buildSongHistoryFingerprint(next)) {
+        const snapshot = structuredClone(prev);
+        undoStackRef.current = [...undoStackRef.current, snapshot].slice(-MAX_HISTORY);
+        redoStackRef.current = [];
+        setCanUndo(undoStackRef.current.length > 0);
+        setCanRedo(false);
+      }
+
+      songRef.current = next;
+      setSong(next);
+    },
+    []
+  );
   const [activeMode, setActiveMode] = useState<AppViewMode>('songwriter');
   const [isZenMode, setIsZenMode] = useState(false);
   const [currentBeat, setCurrentBeat] = useState(1);
@@ -96,7 +160,40 @@ export default function Home() {
   }, []);
   const [shareToastMsg, setShareToastMsg] = useState<string | null>(null);
 
+  const handleUndo = useCallback(() => {
+    const stack = undoStackRef.current;
+    if (stack.length === 0) return;
+    const prevSnapshot = stack[stack.length - 1];
+    undoStackRef.current = stack.slice(0, -1);
+    const currentSnapshot = structuredClone(songRef.current);
+    redoStackRef.current = [...redoStackRef.current, currentSnapshot].slice(-MAX_HISTORY);
+    songRef.current = prevSnapshot;
+    setSong(prevSnapshot);
+    setCanUndo(undoStackRef.current.length > 0);
+    setCanRedo(redoStackRef.current.length > 0);
+    setShareToastMsg(lang === 'th' ? '↩ ย้อนกลับ 1 ขั้นแล้ว' : '↩ Undid last edit');
+  }, [lang]);
+
+  const handleRedo = useCallback(() => {
+    const stack = redoStackRef.current;
+    if (stack.length === 0) return;
+    const nextSnapshot = stack[stack.length - 1];
+    redoStackRef.current = stack.slice(0, -1);
+    const currentSnapshot = structuredClone(songRef.current);
+    undoStackRef.current = [...undoStackRef.current, currentSnapshot].slice(-MAX_HISTORY);
+    songRef.current = nextSnapshot;
+    setSong(nextSnapshot);
+    setCanUndo(undoStackRef.current.length > 0);
+    setCanRedo(redoStackRef.current.length > 0);
+    setShareToastMsg(lang === 'th' ? '↪ ทำซ้ำ 1 ขั้นแล้ว' : '↪ Redid edit');
+  }, [lang]);
+
   const selectSongWithVocals = useCallback((nextSong: SongProject) => {
+    undoStackRef.current = [];
+    redoStackRef.current = [];
+    setCanUndo(false);
+    setCanRedo(false);
+    songRef.current = nextSong;
     setSong(nextSong);
     void hydrateSongVocalsFromIdb(nextSong).then((hydrated) => {
       if (hydrated !== nextSong) {
@@ -148,7 +245,8 @@ export default function Home() {
   }, [song]);
 
   // ── Audio Engine (real smplr playback) ──
-  const engine = useAudioEngine(song);
+  const [previewAudioSong, setPreviewAudioSong] = useState<SongProject | null>(null);
+  const engine = useAudioEngine(previewAudioSong ?? song);
   const isPlaying = engine.isPlaying;
   const currentBarIndex = engine.activeBarIndex >= 0 ? engine.activeBarIndex : 0;
   const isCountIn = false; // count-in handled internally by engine
@@ -205,13 +303,17 @@ export default function Home() {
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isLibraryModalOpen, setIsLibraryModalOpen] = useState(false);
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
+  const [isEasyModalOpen, setIsEasyModalOpen] = useState(false);
   const [creditBalance, setCreditBalance] = useState<number>(DEFAULT_STARTER_CREDITS);
   const [advanceModalState, setAdvanceModalState] = useState<{
     isOpen: boolean;
     targetSection: AdvanceTargetSectionContext | null;
+    initialMode?: 'quick' | 'deep';
+    initialTab?: 'rhyme' | 'ai-lyrics' | 'ai-director' | 'wallet';
   }>({
     isOpen: false,
     targetSection: null,
+    initialMode: 'quick',
   });
   const [cloudUser, setCloudUser] = useState<CloudUser>(GUEST_USER);
   const [syncStatus, setSyncStatus] = useState<CloudSyncStatus>('local-only');
@@ -229,6 +331,25 @@ export default function Home() {
       setCloudUser(resolvedUser);
       setLastSyncedAt(getLastSyncedAt());
       setCreditBalance(getCreditBalance());
+      if (resolvedUser.mode === 'authenticated') {
+        let token = getAuthAccessToken();
+        if (token) {
+          let syncedWallet = await syncWalletFromServer(token);
+          if (active && !syncedWallet.ok && syncedWallet.status === 401) {
+            const refreshed = await refreshAuthSession();
+            if (active && refreshed?.accessToken) {
+              token = refreshed.accessToken;
+              setCloudUser(refreshed.user);
+              syncedWallet = await syncWalletFromServer(token);
+            } else if (active && !refreshed) {
+              setCloudUser(getCurrentUser());
+            }
+          }
+          if (active && syncedWallet.ok && syncedWallet.wallet) {
+            setCreditBalance(syncedWallet.wallet.balance);
+          }
+        }
+      }
       if (!navigator.onLine) {
         setSyncStatus('offline');
       } else if (resolvedUser.mode === 'authenticated' && isCloudConfigured()) {
@@ -305,9 +426,32 @@ export default function Home() {
     setCurrentBeat(1);
   }, [engine]);
 
+  const handleToggleLoopRange = useCallback(
+    (range: LoopRange | null) => {
+      engine.setLoopRange(range);
+    },
+    [engine]
+  );
+
+  const handlePlayBarFromIndex = useCallback(
+    (globalBarIndex: number, songOverride?: SongProject) => {
+      setCurrentBeat(1);
+      engine.play(globalBarIndex, songOverride ?? song);
+    },
+    [engine, song]
+  );
+
+  const handlePlaySectionOnce = useCallback(
+    (startBar: number, endBar: number, songOverride?: SongProject) => {
+      setCurrentBeat(1);
+      engine.playSectionOnce(startBar, endBar, songOverride ?? song);
+    },
+    [engine, song]
+  );
+
   const handleToggleCountIn = useCallback(() => {
-    setSong((prev) => ({ ...prev, countInEnabled: !prev.countInEnabled }));
-  }, []);
+    updateSongWithHistory((prev) => ({ ...prev, countInEnabled: !prev.countInEnabled }));
+  }, [updateSongWithHistory]);
 
   // Open Chord Picker
   const handleOpenChordPicker = useCallback((
@@ -328,7 +472,7 @@ export default function Home() {
   const handleSelectChord = useCallback((newChord: string) => {
     setChordPickerState((pickerState) => {
       const { sectionId, barId, chordIndex } = pickerState;
-      setSong((prev) => ({
+      updateSongWithHistory((prev) => ({
         ...prev,
         sections: prev.sections.map((sec) => {
           if (sec.id !== sectionId) return sec;
@@ -345,7 +489,7 @@ export default function Home() {
       }));
       return { ...pickerState, isOpen: false };
     });
-  }, []);
+  }, [updateSongWithHistory]);
 
   // Open Progression Presets Modal
   const handleOpenPresetsModal = useCallback((sectionId: string, sectionName: string) => {
@@ -359,7 +503,7 @@ export default function Home() {
   const handleApplyPreset = useCallback((preset: ProgressionPreset) => {
     setPresetsModalState((presetState) => {
       const { sectionId } = presetState;
-      setSong((prev) => ({
+      updateSongWithHistory((prev) => ({
         ...prev,
         sections: prev.sections.map((sec) => {
           if (sec.id !== sectionId) return sec;
@@ -376,7 +520,7 @@ export default function Home() {
       }));
       return { ...presetState, isOpen: false };
     });
-  }, []);
+  }, [updateSongWithHistory]);
 
   // Open Mini Piano Roll Modal
   const handleOpenMelodyPianoRoll = useCallback((sectionId: string, barId: string, globalBarIndex: number) => {
@@ -389,7 +533,7 @@ export default function Home() {
   }, []);
 
   const handleUpdateBarNotes = useCallback((sectionId: string, barId: string, notes: MelodyNote[]) => {
-    setSong((prev) => ({
+    updateSongWithHistory((prev) => ({
       ...prev,
       sections: prev.sections.map((sec) => {
         if (sec.id !== sectionId) return sec;
@@ -399,7 +543,7 @@ export default function Home() {
         };
       }),
     }));
-  }, []);
+  }, [updateSongWithHistory]);
 
   // Flattened bars for smooth prev/next navigation inside Mini Piano Roll
   const flatBarsList = useMemo(() => {
@@ -442,9 +586,13 @@ export default function Home() {
 
   const handleSaveVocal = useCallback((sectionId: string, barId: string, vocalAudio: string, latencyOffsetMs: number) => {
     void saveVocalBlob(makeVocalBlobKey(song.id, barId), vocalAudio);
-    setSong((prev) => ({
+    updateSongWithHistory((prev) => ({
       ...prev,
       vocalLatencyOffsetMs: latencyOffsetMs,
+      statusTag:
+        !prev.statusTag || prev.statusTag === 'draft' || prev.statusTag === 'arranged'
+          ? 'vocal-recorded'
+          : prev.statusTag,
       sections: prev.sections.map((sec) => {
         if (sec.id !== sectionId) return sec;
         return {
@@ -453,11 +601,11 @@ export default function Home() {
         };
       }),
     }));
-  }, [song.id]);
+  }, [song.id, updateSongWithHistory]);
 
   const handleClearVocal = useCallback((sectionId: string, barId: string) => {
     void deleteVocalBlob(makeVocalBlobKey(song.id, barId));
-    setSong((prev) => ({
+    updateSongWithHistory((prev) => ({
       ...prev,
       sections: prev.sections.map((sec) => {
         if (sec.id !== sectionId) return sec;
@@ -472,53 +620,253 @@ export default function Home() {
         };
       }),
     }));
-  }, [song.id]);
+  }, [song.id, updateSongWithHistory]);
 
-  const handleOpenAdvanceModal = useCallback((section?: SongSection) => {
-    if (!section) {
-      setAdvanceModalState({ isOpen: true, targetSection: null });
-      return;
-    }
-    const chords = section.bars
-      .flatMap((bar) => bar.chords)
-      .filter((c): c is string => Boolean(c && c.trim()));
-    const existingLyrics = section.bars
-      .map((bar) => bar.lyrics.trim())
-      .filter(Boolean)
-      .join(' / ');
-    setAdvanceModalState({
-      isOpen: true,
-      targetSection: {
-        sectionId: section.id,
-        sectionName: section.name,
-        sectionType: section.type,
-        chords: chords.length > 0 ? chords.slice(0, 8) : ['C', 'G', 'Am', 'F'],
-        existingLyrics,
-      },
-    });
-  }, []);
+  const openAdvanceSectionModal = useCallback(
+    (section?: SongSection, mode: 'quick' | 'deep' = 'quick') => {
+      if (!section) {
+        setAdvanceModalState({ isOpen: true, targetSection: null, initialMode: mode });
+        return;
+      }
+      const chords = section.bars
+        .flatMap((bar) => bar.chords)
+        .filter((c): c is string => Boolean(c && c.trim()));
+      const existingLyrics = section.bars
+        .map((bar) => bar.lyrics.trim())
+        .filter(Boolean)
+        .join(' / ');
+      setAdvanceModalState({
+        isOpen: true,
+        initialMode: mode,
+        targetSection: {
+          sectionId: section.id,
+          sectionName: section.name,
+          sectionType: section.type,
+          chords: chords.length > 0 ? chords.slice(0, 8) : ['C', 'G', 'Am', 'F'],
+          existingLyrics,
+        },
+      });
+    },
+    []
+  );
 
-  const handleApplyAiLyrics = useCallback((sectionId: string, lines: string[]) => {
-    if (lines.length === 0) return;
-    setSong((prev) => ({
-      ...prev,
-      sections: prev.sections.map((sec) => {
-        if (sec.id !== sectionId) return sec;
+  const handleOpenAdvanceModal = useCallback(
+    (section?: SongSection) => openAdvanceSectionModal(section, 'quick'),
+    [openAdvanceSectionModal]
+  );
+
+  const handleOpenInlineAiSection = useCallback(
+    (section: SongSection, mode: 'quick' | 'deep') => openAdvanceSectionModal(section, mode),
+    [openAdvanceSectionModal]
+  );
+
+  const handleApplyAiLyrics = useCallback(
+    (
+      sectionId: string,
+      lines: string[],
+      melodyNotesPerBar?: MelodyNote[][],
+      suggestedChords?: string[],
+      selectedBarIndices?: number[]
+    ) => {
+      if (lines.length === 0) return;
+      const allowedIndices = selectedBarIndices
+        ? new Set(selectedBarIndices)
+        : new Set(lines.map((_, i) => i));
+
+      updateSongWithHistory((prev) => ({
+        ...prev,
+        updatedAt: new Date().toISOString(),
+        sections: prev.sections.map((sec) => {
+          if (sec.id !== sectionId) return sec;
+          const updatedBars = sec.bars.map((bar, idx) => {
+            if (!allowedIndices.has(idx) || idx >= lines.length) return bar;
+            const nextNotes =
+              melodyNotesPerBar &&
+              Array.isArray(melodyNotesPerBar[idx]) &&
+              melodyNotesPerBar[idx].length > 0
+                ? melodyNotesPerBar[idx]
+                : bar.melodyNotes;
+            const suggestedChord = suggestedChords?.[idx]?.trim();
+            return {
+              ...bar,
+              lyrics: lines[idx],
+              melodyNotes: nextNotes,
+              ...(suggestedChord
+                ? { chords: [suggestedChord], chordsPerBar: 1 as const }
+                : {}),
+            };
+          });
+
+          // If user requested more bars than section currently has (e.g. 6-8 bars)
+          for (let idx = sec.bars.length; idx < lines.length && idx < 8; idx++) {
+            if (!allowedIndices.has(idx)) continue;
+            const templateBar = sec.bars[idx % Math.max(1, sec.bars.length)];
+            const suggestedChord = suggestedChords?.[idx]?.trim();
+            const nextNotes =
+              melodyNotesPerBar &&
+              Array.isArray(melodyNotesPerBar[idx]) &&
+              melodyNotesPerBar[idx].length > 0
+                ? melodyNotesPerBar[idx]
+                : [];
+            updatedBars.push({
+              id: generateUniqueId('bar'),
+              chordsPerBar: suggestedChord ? 1 : (templateBar?.chordsPerBar ?? 1),
+              chords: suggestedChord
+                ? [suggestedChord]
+                : templateBar?.chords?.length
+                  ? [...templateBar.chords]
+                  : ['C'],
+              playStyle: 'normal',
+              lyrics: lines[idx],
+              melodyNotes: nextNotes,
+            });
+          }
+
+          return {
+            ...sec,
+            bars: updatedBars,
+          };
+        }),
+      }));
+    },
+    [updateSongWithHistory]
+  );
+
+  const handleApplySectionVocalAudio = useCallback(
+    (sectionId: string, barIndex: number, audioDataUrl: string) => {
+      const targetBar = song.sections.find((s) => s.id === sectionId)?.bars[barIndex];
+      if (!targetBar) return;
+      handleSaveVocal(sectionId, targetBar.id, audioDataUrl, song.vocalLatencyOffsetMs ?? 0);
+    },
+    [song.sections, song.vocalLatencyOffsetMs, handleSaveVocal]
+  );
+
+  const handleUpdateSongStyleMeta = useCallback(
+    (meta: {
+      thaiGenre?: ThaiSongGenre;
+      lyricEra?: ThaiLyricEra;
+      lyricDialect?: ThaiLyricDialect;
+      songwriterStyle?: ThaiSongwriterStyle;
+      emotionalResolution?: ThaiEmotionalResolution;
+    }) => {
+      updateSongWithHistory((prev) => ({
+        ...prev,
+        ...meta,
+        updatedAt: new Date().toISOString(),
+      }));
+    },
+    [updateSongWithHistory]
+  );
+
+  const handleAddNextAiStorySection = useCallback(
+    (afterSectionId: string) => {
+      const currentIdx = song.sections.findIndex((s) => s.id === afterSectionId);
+      const afterSec = currentIdx >= 0 ? song.sections[currentIdx] : undefined;
+      const nextMap: Record<
+        SectionType,
+        { type: SectionType; name: string; intensity: 'low' | 'medium' | 'high' }
+      > = {
+        intro: { type: 'verse', name: 'Verse (ท่อนร้อง)', intensity: 'low' },
+        verse: { type: 'pre-chorus', name: 'Pre-Chorus (ท่อนส่ง)', intensity: 'medium' },
+        'pre-chorus': { type: 'chorus', name: 'Chorus (ท่อนฮุก)', intensity: 'high' },
+        chorus: { type: 'bridge', name: 'Bridge (ท่อนแยก)', intensity: 'medium' },
+        bridge: { type: 'chorus', name: 'Chorus (ท่อนฮุก)', intensity: 'high' },
+        solo: { type: 'chorus', name: 'Chorus (ท่อนฮุก)', intensity: 'high' },
+        outro: { type: 'chorus', name: 'Chorus (ท่อนฮุก)', intensity: 'high' },
+      };
+      const spec = afterSec ? nextMap[afterSec.type] : nextMap.verse;
+      const seedChords = ['C', 'G', 'Am', 'F'];
+      const newBars = Array.from({ length: 4 }, (_, idx) => {
+        const templateBar = afterSec?.bars[idx % Math.max(1, afterSec.bars.length)];
         return {
-          ...sec,
-          bars: sec.bars.map((bar, idx) => {
-            if (idx < lines.length) {
-              return { ...bar, lyrics: lines[idx] };
-            }
-            if (idx === sec.bars.length - 1 && lines.length > sec.bars.length) {
-              return { ...bar, lyrics: lines.slice(idx).join(' ') };
-            }
-            return bar;
-          }),
+          id: generateUniqueId('bar'),
+          chordsPerBar: 1 as const,
+          chords: [templateBar?.chords?.[0] || seedChords[idx % seedChords.length]],
+          playStyle: 'normal' as const,
+          lyrics: '',
+          melodyNotes: [],
         };
-      }),
-    }));
-  }, []);
+      });
+      const newSection: SongSection = {
+        id: generateUniqueId('sec'),
+        type: spec.type,
+        name: spec.name,
+        intensity: spec.intensity,
+        bars: newBars,
+        instruments: {
+          guitarRhythm: true,
+          guitarRhythmStyle: spec.type === 'chorus' ? 'campfire-strum' : 'soft-strum',
+          guitarLead: false,
+          bass: true,
+          bassStyle: 'root-fifth',
+          piano: spec.type !== 'verse',
+          pianoStyle: 'warm-pad',
+          drums: spec.type === 'chorus',
+          drumsStyle: spec.type === 'chorus' ? 'simple-kit' : 'shaker-cajon',
+        },
+      };
+
+      updateSongWithHistory((prev) => {
+        const idx = prev.sections.findIndex((s) => s.id === afterSectionId);
+        const insertAt = idx >= 0 ? idx + 1 : prev.sections.length;
+        const nextSections = [...prev.sections];
+        nextSections.splice(insertAt, 0, newSection);
+        return {
+          ...prev,
+          updatedAt: new Date().toISOString(),
+          sections: nextSections,
+        };
+      });
+
+      setAdvanceModalState({
+        isOpen: true,
+        initialMode: 'quick',
+        initialTab: 'ai-lyrics',
+        targetSection: {
+          sectionId: newSection.id,
+          sectionName: newSection.name,
+          sectionType: newSection.type,
+          chords: newSection.bars.flatMap((b) => b.chords),
+          existingLyrics: '',
+        },
+      });
+    },
+    [song.sections, updateSongWithHistory]
+  );
+
+  const handlePreviewEasySongToggle = useCallback(
+    (previewSong: SongProject) => {
+      if (isPlaying) {
+        engine.stop();
+        setPreviewAudioSong(null);
+        return;
+      }
+      setPreviewAudioSong(previewSong);
+      setCurrentBeat(1);
+      engine.play(0, previewSong);
+    },
+    [isPlaying, engine]
+  );
+
+  const handleStopEasyAudio = useCallback(() => {
+    engine.stop();
+    setPreviewAudioSong(null);
+    setCurrentBeat(1);
+  }, [engine]);
+
+  const handleApplyEasySong = useCallback(
+    (generatedSong: SongProject, targetView: 'songwriter' | 'arranger') => {
+      engine.stop();
+      engine.setLoopRange(null);
+      setPreviewAudioSong(null);
+      updateSongWithHistory(generatedSong);
+      saveSong(generatedSong);
+      setActiveSongId(generatedSong.id);
+      setActiveMode(targetView);
+      setIsEasyModalOpen(false);
+    },
+    [engine, updateSongWithHistory]
+  );
 
   return (
     <div className="min-h-screen bg-canvas text-ink-900 pb-28 md:pb-20 safe-bottom transition-colors">
@@ -594,7 +942,11 @@ export default function Home() {
         onOpenAdvanceModal={() => handleOpenAdvanceModal()}
         onOpenExportModal={() => setIsExportModalOpen(true)}
         onOpenLibraryModal={() => setIsLibraryModalOpen(true)}
-        onUpdateSong={setSong}
+        onUpdateSong={updateSongWithHistory}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
       />
 
       {/* Main Content Area */}
@@ -603,9 +955,36 @@ export default function Home() {
         <SoundCustomizerPanel
           song={song}
           isOpen={isSoundPanelOpen}
-          onUpdateSong={setSong}
+          onUpdateSong={updateSongWithHistory}
           onClose={() => setIsSoundPanelOpen(false)}
         />
+
+        {/* Easy Mode Starter CTA Banner (hidden in Zen & Karaoke modes) */}
+        {!isZenMode && activeMode !== 'karaoke' && (
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl border border-indigo-200 bg-linear-to-r from-indigo-50 via-white to-amber-50/70 px-4 py-3 shadow-2xs">
+            <div className="flex items-start sm:items-center gap-3 min-w-0">
+              <div className="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-2xs">
+                <Sparkles className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-sm font-bold text-ink-900">
+                  {t.easyModeTitle}
+                </div>
+                <p className="text-xs text-ink-600">
+                  {t.easyModeSubtitle}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsEasyModalOpen(true)}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-semibold shadow-e1 transition cursor-pointer shrink-0"
+            >
+              <Sparkles className="w-4 h-4" />
+              <span>{t.easyModeBtn.replace(/^✨\s*/, '')}</span>
+            </button>
+          </div>
+        )}
 
         {/* View Switching: Songwriter / Arranger / Stage (Karaoke) */}
         {activeMode !== 'karaoke' ? (
@@ -613,13 +992,29 @@ export default function Home() {
             song={song}
             viewMode={activeMode === 'arranger' ? 'arranger' : 'songwriter'}
             activeGlobalBarIndex={isPlaying ? currentBarIndex : -1}
-            onUpdateSong={setSong}
+            loopRange={engine.loopRange}
+            onToggleLoopRange={handleToggleLoopRange}
+            onPlayBarFromIndex={handlePlayBarFromIndex}
+            onPlaySectionOnce={handlePlaySectionOnce}
+            onOpenKaraoke={() => setActiveMode('karaoke')}
+            onUpdateSong={updateSongWithHistory}
             onOpenChordPicker={handleOpenChordPicker}
             onOpenPresetsModal={handleOpenPresetsModal}
             onOpenMelodyPianoRoll={handleOpenMelodyPianoRoll}
             onOpenVocalRecorder={handleOpenVocalRecorder}
             onOpenAdvanceForSection={handleOpenAdvanceModal}
+            onOpenInlineAiSection={handleOpenInlineAiSection}
+            onAddNextAiStorySection={handleAddNextAiStorySection}
             onSwitchToArranger={() => setActiveMode('arranger')}
+            onCreditsChange={setCreditBalance}
+            onOpenWallet={() =>
+              setAdvanceModalState({
+                isOpen: true,
+                targetSection: null,
+                initialMode: 'quick',
+                initialTab: 'wallet',
+              })
+            }
           />
         ) : (
           <KaraokeTeleprompter
@@ -628,6 +1023,14 @@ export default function Home() {
             currentBeat={currentBeat}
             isPlaying={isPlaying}
             isCountIn={isCountIn}
+            isEngineReady={engine.isReady}
+            onInitEngine={engine.initEngine}
+            onUpdateSong={updateSongWithHistory}
+            onStartBoothPlayback={(fromBar, songOverride) => {
+              setCurrentBeat(1);
+              engine.play(fromBar, songOverride);
+            }}
+            onStopBoothPlayback={handleStop}
           />
         )}
       </main>
@@ -652,7 +1055,18 @@ export default function Home() {
       <ExportModal
         isOpen={isExportModalOpen}
         song={song}
+        onUpdateSong={updateSongWithHistory}
         onClose={() => setIsExportModalOpen(false)}
+        onCreditsChange={setCreditBalance}
+        onOpenTopUpWallet={() => {
+          setIsExportModalOpen(false);
+          setAdvanceModalState({
+            isOpen: true,
+            targetSection: null,
+            initialMode: 'quick',
+            initialTab: 'wallet',
+          });
+        }}
       />
 
       <SongLibraryModal
@@ -671,6 +1085,18 @@ export default function Home() {
         onAuthChange={(nextUser, nextStatus) => {
           setCloudUser(nextUser);
           setSyncStatus(nextStatus);
+          if (nextUser.mode === 'authenticated') {
+            const token = getAuthAccessToken();
+            if (token) {
+              void syncWalletFromServer(token).then((synced) => {
+                if (synced.ok && synced.wallet) {
+                  setCreditBalance(synced.wallet.balance);
+                }
+              });
+            }
+          } else {
+            setCreditBalance(getCreditBalance());
+          }
         }}
         onClose={() => setIsAccountModalOpen(false)}
       />
@@ -683,6 +1109,17 @@ export default function Home() {
           sectionId={melodyModalState.sectionId}
           barId={melodyModalState.barId}
           globalBarIndex={melodyModalState.globalBarIndex}
+          creditBalance={creditBalance}
+          thaiGenre={song.thaiGenre}
+          onCreditsChange={setCreditBalance}
+          onSaveVocalToBar={(audioDataUrl) =>
+            handleSaveVocal(
+              melodyModalState.sectionId,
+              melodyModalState.barId,
+              audioDataUrl,
+              song.vocalLatencyOffsetMs ?? 0
+            )
+          }
           onUpdateBarNotes={handleUpdateBarNotes}
           onNavigateBar={handleNavigateBar}
           canPrev={currentFlatBarIdx > 0}
@@ -705,13 +1142,46 @@ export default function Home() {
         />
       )}
 
+      {isEasyModalOpen && (
+        <EasyModeStarterModal
+          isOpen={isEasyModalOpen}
+          creditBalance={creditBalance}
+          isPlaying={isPlaying}
+          onCreditsChange={setCreditBalance}
+          onPreviewAudioToggle={handlePreviewEasySongToggle}
+          onStopAudio={handleStopEasyAudio}
+          onApplySong={handleApplyEasySong}
+          onOpenWallet={() => {
+            handleStopEasyAudio();
+            setIsEasyModalOpen(false);
+            setAdvanceModalState({
+              isOpen: true,
+              targetSection: null,
+              initialMode: 'quick',
+              initialTab: 'wallet',
+            });
+          }}
+          onClose={() => {
+            handleStopEasyAudio();
+            setIsEasyModalOpen(false);
+          }}
+        />
+      )}
+
       {advanceModalState.isOpen && (
         <AdvanceModeModal
+          key={`${advanceModalState.targetSection?.sectionId ?? 'global'}-${advanceModalState.initialMode ?? 'quick'}-${advanceModalState.initialTab ?? 'auto'}`}
           targetSection={advanceModalState.targetSection}
           song={song}
+          initialMode={advanceModalState.initialMode}
+          initialTab={advanceModalState.initialTab}
+          cloudUser={cloudUser}
+          onOpenAccountModal={() => setIsAccountModalOpen(true)}
           onCreditsChange={setCreditBalance}
           onApplyLyrics={handleApplyAiLyrics}
-          onApplySongUpdate={setSong}
+          onApplySectionVocalAudio={handleApplySectionVocalAudio}
+          onUpdateSongStyleMeta={handleUpdateSongStyleMeta}
+          onApplySongUpdate={updateSongWithHistory}
           onClose={() => setAdvanceModalState((prev) => ({ ...prev, isOpen: false }))}
         />
       )}

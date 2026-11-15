@@ -1,5 +1,22 @@
-import { callGeminiJson, DEFAULT_GEMINI_MODEL } from '@/lib/geminiClient';
+import {
+  buildDirectorSystemPrompt,
+  buildDirectorUserPrompt,
+  DIRECTOR_RESPONSE_SCHEMA,
+} from '@/lib/aiPrompts';
+import {
+  callGeminiJson,
+  GEMINI_MODEL_LITE,
+  type GeminiTokenUsage,
+} from '@/lib/geminiClient';
+import { CREDIT_COST_TABLE } from '@/lib/creditManager';
+import {
+  refundServerBillingOnFailure,
+  tryServerBillingPreDeduct,
+  type WalletBalanceSummary,
+} from '@/lib/serverWallet';
 import type { AiDirectorPatch, AiDirectorSongSummary } from '@/lib/aiSongDirector';
+
+export const maxDuration = 60;
 
 export interface AdvanceDirectorRequestBody {
   prompt: string;
@@ -11,6 +28,9 @@ export interface AdvanceDirectorResponseBody {
   model: string;
   patch: AiDirectorPatch | null;
   tip: string;
+  usage?: GeminiTokenUsage;
+  wallet?: WalletBalanceSummary;
+  failureReason?: string;
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -39,48 +59,58 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  const systemPrompt = [
-    'You are the AI Music Producer & Studio Mixer Director for Demo Maker Easy.',
-    'Convert the user natural-language instruction (Thai or English) into a compact JSON configuration patch matching the exact allowed values below.',
-    'Allowed global enums:',
-    '- bpm: integer 40..220',
-    '- baseKey: valid key root (e.g. "C", "G", "D", "A", "E", "F", "Am", "Em", "Dm")',
-    '- timeSignature: "4/4" | "3/4" | "6/8"',
-    '- guitarModel: "classical-nylon" | "dreadnought-steel" | "ovation-roundback" | "gibson-les-paul"',
-    '- ambience3D: "living-room" | "wood-studio" | "unplugged-hall"',
-    'Allowed per-section patch fields inside sectionPatches[]:',
-    '- sectionId (prefer exact matching id from songSummary) OR sectionType ("intro"|"verse"|"pre-chorus"|"chorus"|"solo"|"bridge"|"outro")',
-    '- intensity: "low" | "medium" | "high"',
-    '- boolean toggles: guitarRhythm, guitarLead, bass, piano, drums',
-    '- guitarRhythmStyle: "campfire-strum" | "soft-strum" | "fingerpicking"',
-    '- guitarLeadStyle: "melodic-solo" | "riff-fills" | "soft-arpeggio"',
-    '- guitarLeadDrive: "clean" | "crunch" | "overdrive" | "distortion"',
-    '- bassStyle: "root-fifth" | "warm-sustain"',
-    '- pianoStyle: "warm-pad" | "gentle-arpeggio"',
-    '- drumsStyle: "off" | "shaker-cajon" | "simple-kit"',
-    '- volumes (0..100 integer): guitarRhythmVolume, guitarLeadVolume, bassVolume, pianoVolume, drumsVolume',
-    '- chords: optional string[] like ["G", "D", "Em", "C"]',
-    '- summaryNotes: string[] of short Thai summary bullets describing what you changed.',
-    '',
-    `Current Song Summary JSON: ${JSON.stringify(songSummary)}`,
-    `User Prompt: ${JSON.stringify(prompt)}`,
-    '',
-    'Respond ONLY with strict valid JSON matching AiDirectorPatch (omit unchanged fields).',
-  ].join('\n');
+  const directorCost = CREDIT_COST_TABLE.aiDirectorComplex;
+  const billing = await tryServerBillingPreDeduct(
+    request,
+    directorCost,
+    `AI Director (${GEMINI_MODEL_LITE}): ${prompt.slice(0, 28)}`,
+    { modelId: GEMINI_MODEL_LITE }
+  );
+  if (billing.active && 'errorStatus' in billing) {
+    return Response.json(
+      { error: billing.error, code: billing.errorCode },
+      { status: billing.errorStatus }
+    );
+  }
 
-  const gemini = await callGeminiJson<AiDirectorPatch>(systemPrompt, { temperature: 0.25 });
+  const systemInstruction = buildDirectorSystemPrompt();
+  const userPrompt = buildDirectorUserPrompt(prompt, songSummary);
+
+  const gemini = await callGeminiJson<AiDirectorPatch>(userPrompt, {
+    model: GEMINI_MODEL_LITE,
+    systemInstruction,
+    responseSchema: DIRECTOR_RESPONSE_SCHEMA,
+    maxOutputTokens: 2048,
+    thinkingLevel: 'minimal',
+  });
 
   if (!gemini.ok) {
-    const tip =
-      gemini.reason === 'http-error'
-        ? `Gemini API unavailable (HTTP ${gemini.status}) — ใช้ Offline Parser แทนอัตโนมัติ`
-        : `Offline Mode (ยังไม่ได้ตั้งค่า GEMINI_API_KEY ใน .env.local หรือ Vercel) — ใช้ตัววิเคราะห์ในเครื่องแทนอัตโนมัติ (ตั้งค่า key เพื่อเปิดใช้ ${DEFAULT_GEMINI_MODEL})`;
+    let tip: string;
+    if (gemini.reason === 'missing-key') {
+      tip = `โหมดออฟไลน์ในเครื่อง (ยังไม่ได้ตั้งค่า GEMINI_API_KEY ใน .env.local) — ใช้ตัววิเคราะห์ในเครื่องแทนโดยไม่หักเครดิต (ใส่คีย์เพื่อใช้ ${GEMINI_MODEL_LITE})`;
+    } else if (gemini.reason === 'rate-limit') {
+      tip = 'โควตาคำขอ Gemini API เต็มชั่วคราว (429) — ใช้ตัววิเคราะห์ในเครื่องแทนโดยไม่หักเครดิต';
+    } else if (gemini.reason === 'auth-error') {
+      tip = 'GEMINI_API_KEY ไม่ถูกต้องหรือไม่มีสิทธิ์เข้าถึงโมเดล — ใช้ตัววิเคราะห์ในเครื่องแทนและไม่หักเครดิต';
+    } else {
+      tip = `${gemini.failureReason} — ใช้ตัววิเคราะห์ในเครื่องแทนอย่างปลอดภัย (ไม่หักเครดิต)`;
+    }
+
+    const refundedWallet = await refundServerBillingOnFailure(
+      billing,
+      directorCost,
+      `Auto-refund AI Director (${gemini.reason})`,
+      { modelId: GEMINI_MODEL_LITE }
+    );
+
     return Response.json(
       {
         isSimulated: true,
         model: 'demo-offline-director',
         patch: null,
         tip,
+        ...(refundedWallet ? { wallet: refundedWallet } : {}),
+        failureReason: gemini.reason,
       } satisfies AdvanceDirectorResponseBody,
       { status: 200 }
     );
@@ -89,9 +119,11 @@ export async function POST(request: Request): Promise<Response> {
   return Response.json(
     {
       isSimulated: false,
-      model: gemini.model,
+      model: gemini.modelUsed,
       patch: gemini.data,
-      tip: `จัดมิกซ์และตั้งค่าเพลงด้วย ${gemini.model} เรียบร้อยแล้ว`,
+      tip: `จัดมิกซ์และเรียบเรียงดนตรีด้วย ${gemini.modelUsed} เรียบร้อยแล้ว`,
+      usage: gemini.usage,
+      ...(billing.active ? { wallet: billing.wallet } : {}),
     } satisfies AdvanceDirectorResponseBody,
     { status: 200 }
   );

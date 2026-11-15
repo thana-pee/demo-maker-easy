@@ -117,6 +117,40 @@ export interface Translations {
   iosInstallTapShare: string;
   iosInstallAddHome: string;
   installAppBtn: string;
+
+  // Phase 5B: Easy Mode & Songwriter Progress
+  easyModeBtn: string;
+  easyModeTitle: string;
+  easyModeSubtitle: string;
+  stageDraft: string;
+  stageArranged: string;
+  stageVocal: string;
+  stageMastered: string;
+  inlineAiQuick: string;
+  inlineAiDeep: string;
+  inlineSplitLyrics: string;
+
+  // Phase 5C: Hum-to-Song & Vocal Guide Synth
+  easyTabIdea: string;
+  easyTabHum: string;
+  humRecordBtn: string;
+  humStopBtn: string;
+  humSubmitBtn: string;
+  generateGuideBtn: string;
+  ttsCueBtn: string;
+
+  // Phase 5D: Real Vocal Recording Booth
+  vocalBoothTitle: string;
+  vocalBoothFreeBadge: string;
+  scopeFullSong: string;
+  scopeSelectedSection: string;
+  preRollToggle: string;
+  studioMicToggle: string;
+  headphoneTip: string;
+  startRecBooth: string;
+  stopRecBooth: string;
+  fxPresetLabel: string;
+  autoDuckingLabel: string;
 }
 
 export const translations: Record<Language, Translations> = {
@@ -226,6 +260,36 @@ export const translations: Record<Language, Translations> = {
     iosInstallTapShare: 'แตะปุ่มแชร์ 📤',
     iosInstallAddHome: 'เลือก "เพิ่มไปยังหน้าจอโฮม"',
     installAppBtn: '📲 ติดตั้งแอปบนอุปกรณ์นี้',
+
+    easyModeBtn: '✨ เริ่มเร็ว Easy Mode (4 เหรียญ)',
+    easyModeTitle: 'Easy Mode — เสกโครงเพลงทั้งเพลงใน 1 คลิก',
+    easyModeSubtitle: 'เลือกแนวเพลง โทนเสียงร้อง และเล่าไอเดีย 1 ประโยค AI จะจัดคอร์ด เนื้อร้อง เมโลดี้ และวงดนตรีให้ครบพร้อมฟังทันที',
+    stageDraft: '1. ร่างเนื้อ & คอร์ด',
+    stageArranged: '2. เรียบเรียงวง',
+    stageVocal: '3. อัดเสียงร้อง',
+    stageMastered: '4. มาสเตอร์ MP3',
+    inlineAiQuick: 'แต่งเนื้อท่อนนี้ (1 เหรียญ)',
+    inlineAiDeep: 'แต่งเนื้อ + เมโลดี้ไกด์ (2 เหรียญ)',
+    inlineSplitLyrics: 'วางเนื้อร้องยาวๆ แบ่งลงห้องอัตโนมัติ (ฟรี 0 เหรียญ)',
+    easyTabIdea: '✨ เล่าไอเดีย 1 ประโยค (4 เหรียญ)',
+    easyTabHum: '🎙️ ฮัมทำนอง 10–45 วิ (3 เหรียญ)',
+    humRecordBtn: '🎙️ กดอัดเสียงฮัมทำนอง',
+    humStopBtn: '⏹ หยุดอัดเสียง',
+    humSubmitBtn: '🎙️ แกะฮัมเป็นโครงเพลง (ใช้ 3 เหรียญ)',
+    generateGuideBtn: '✨ สร้างโน้ตไกด์ให้ตรงคอร์ด (ฟรี)',
+    ttsCueBtn: '🗣️ AI นับจังหวะ & ไกด์ร้อง (2 เหรียญ)',
+
+    vocalBoothTitle: '🎙️ บูธอัดเสียงร้องจริง (Vocal Booth)',
+    vocalBoothFreeBadge: 'ฟรี 0 เหรียญ • อัดในเครื่อง 100%',
+    scopeFullSong: 'ทั้งเพลง (Full Song)',
+    scopeSelectedSection: 'เฉพาะท่อน (Section)',
+    preRollToggle: 'เล่นนำ 1 ห้องก่อนเข้าท่อน (1-Bar Pre-Roll)',
+    studioMicToggle: 'Raw Studio Mic (โหมดหูฟัง)',
+    headphoneTip: 'แนะนำใส่หูฟังเพื่อเสียงร้องชัดระดับห้องอัดและกันเสียงหอน',
+    startRecBooth: '🎙️ เริ่มอัดเสียงร้อง',
+    stopRecBooth: '⏹ หยุดและบันทึกเทค',
+    fxPresetLabel: 'โทนเอฟเฟกต์เสียงร้อง (Vocal FX)',
+    autoDuckingLabel: 'Auto-Ducking (ลดเสียงดนตรี -2dB ตอนร้อง)',
   },
   en: {
     appName: 'Demo Maker Easy — Acoustic Songwriting Studio & Karaoke',
@@ -333,6 +397,36 @@ export const translations: Record<Language, Translations> = {
     iosInstallTapShare: 'Tap Share 📤',
     iosInstallAddHome: 'Choose "Add to Home Screen"',
     installAppBtn: '📲 Install App on this device',
+
+    easyModeBtn: '✨ Quick Start: Easy Mode (4 Cr)',
+    easyModeTitle: 'Easy Mode — Generate a Full Song in 1 Click',
+    easyModeSubtitle: 'Pick a vibe, vocal range, and a 1-sentence story. AI composes chords, coupled lyrics, guide melody, and studio mix ready to preview.',
+    stageDraft: '1. Draft',
+    stageArranged: '2. Arranged',
+    stageVocal: '3. Vocal',
+    stageMastered: '4. Mastered',
+    inlineAiQuick: 'Polish Lyrics (1 Credit)',
+    inlineAiDeep: 'Lyrics + Guide Melody (2 Credits)',
+    inlineSplitLyrics: 'Auto-Split Pasted Lyrics into Bars (0 Credits)',
+    easyTabIdea: '✨ 1-Sentence Idea (4 Credits)',
+    easyTabHum: '🎙️ Hum / Sing 10–45s (3 Credits)',
+    humRecordBtn: '🎙️ Start Recording Hum',
+    humStopBtn: '⏹ Stop Recording',
+    humSubmitBtn: '🎙️ Hum-to-Song Draft (3 Credits)',
+    generateGuideBtn: '✨ Generate Guide Notes (Free)',
+    ttsCueBtn: '🗣️ AI Spoken Phrasing Cue (2 Credits)',
+
+    vocalBoothTitle: '🎙️ Real Vocal Recording Booth',
+    vocalBoothFreeBadge: 'Free 0 Credits • 100% Local',
+    scopeFullSong: 'Full Song',
+    scopeSelectedSection: 'Selected Section',
+    preRollToggle: '1-Bar Backing Pre-Roll',
+    studioMicToggle: 'Raw Studio Mic (Headphones)',
+    headphoneTip: 'Headphones recommended for clean studio vocal capture',
+    startRecBooth: '🎙️ Start Booth Take',
+    stopRecBooth: '⏹ Stop & Save Take',
+    fxPresetLabel: 'Vocal Studio FX Preset',
+    autoDuckingLabel: 'Auto-Ducking (-2dB Backing Dip)',
   },
 };
 

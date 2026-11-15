@@ -5,13 +5,18 @@
  *  - ตรวจสอบสิทธิ์ไมค์ (Microphone Permissions)
  *  - Live VU Meter (Peak / RMS Level Meter 0-100%) สำหรับแสดงกราฟิกขณะร้อง
  *  - บันทึกเป็น Data URL และ Blob
- *  - คำนวณชดเชย Latency Offset (-150ms ถึง +150ms)
+ *  - คำนวณชดเชย Latency Offset (-150ms ถึง +250ms)
  */
 
 export interface RecordedAudioResult {
   blob: Blob;
   dataUrl: string;
   durationSec: number;
+}
+
+export interface MicStartOptions {
+  /** true = Studio Headphones (ปิด DSP เพื่อเสียงธรรมชาติ), false = ลำโพงแท็บเล็ต/มือถือ (เปิดตัดเสียงสะท้อน) */
+  rawStudioMic?: boolean;
 }
 
 export class MicRecorder {
@@ -22,6 +27,22 @@ export class MicRecorder {
   private analyser: AnalyserNode | null = null;
   private vuTimer: number | null = null;
   private startTime = 0;
+
+  /** สร้าง MediaTrackConstraints สำหรับโหมดหูฟัง Studio (ดิบ) vs โหมดลำโพง (กันหอน) */
+  static buildAudioConstraints(rawStudioMic = true): MediaTrackConstraints {
+    if (rawStudioMic) {
+      return {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      };
+    }
+    return {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: false,
+    };
+  }
 
   /** ตรวจสอบว่าเบราว์เซอร์รองรับการอัดเสียงผ่านไมค์หรือไม่ */
   static isSupported(): boolean {
@@ -49,18 +70,15 @@ export class MicRecorder {
   }
 
   /** เริ่มบันทึกเสียงไมค์ พร้อมส่งระดับเสียง VU Meter (0–100%) แบบ real-time */
-  async start(onVolumeLevel?: (level: number) => void): Promise<void> {
+  async start(onVolumeLevel?: (level: number) => void, startOptions?: MicStartOptions): Promise<void> {
     if (!MicRecorder.isSupported()) {
       throw new Error('เบราว์เซอร์นี้ไม่รองรับการบันทึกเสียงไมโครโฟน');
     }
 
-    // ขออนุญาตใช้ไมค์ (ตั้งค่าเสียงสำหรับการบันทึกร้องเพลง ไม่ตัดความถี่ต่ำ)
+    const rawStudioMic = startOptions?.rawStudioMic ?? true;
+    // ขออนุญาตใช้ไมค์ (Studio Headphones ปิด DSP เพื่อให้เสียงธรรมชาติ, Speaker เปิดตัดสะท้อนกันหอน)
     this.mediaStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
-      },
+      audio: MicRecorder.buildAudioConstraints(rawStudioMic),
     });
 
     // ตั้งค่า AnalyserNode สำหรับทำ VU Meter

@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState, useMemo, useEffect } from 'react';
-import { SongProject, SongBar, MelodyNote } from '@/types/song';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { SongProject, SongBar, MelodyNote, ThaiSongGenre } from '@/types/song';
 import {
   midiToNoteName,
   isBlackKey,
@@ -9,10 +9,28 @@ import {
   getChordPitchClasses,
   getPitchRange,
   getRootPitchClass,
+  generateChordGuideMelodyNotes,
+  splitThaiLyricSyllables,
+  generateLyricAlignedGuideMelody,
+  type GuideContourPattern,
 } from '@/lib/melodyUtils';
+import { analyzeThaiSyllablePhonetics } from '@/lib/thaiRhymeHelper';
 import { transposeChord } from '@/lib/chordUtils';
 import { getAudioEngine } from '@/lib/audioEngine';
 import { useLanguage } from '@/context/LanguageContext';
+import {
+  CREDIT_COST_TABLE,
+  applyServerWalletSnapshot,
+  deductCredits,
+  getCreditBalance,
+  type WalletBreakdown,
+} from '@/lib/creditManager';
+import { getAuthAccessToken } from '@/lib/cloudSync';
+import { playAudioDataUrl } from '@/lib/micRecorder';
+import { speakBrowserLyrics, isBrowserSpeechSupported } from '@/lib/browserSpeechCue';
+import { trimAudioDataUrlLeadingSilence } from '@/lib/audioTrim';
+
+const TTS_CUE_COST = CREDIT_COST_TABLE.aiTtsCue;
 
 interface MiniPianoRollModalProps {
   isOpen: boolean;
@@ -20,6 +38,10 @@ interface MiniPianoRollModalProps {
   sectionId: string;
   barId: string;
   globalBarIndex: number;
+  creditBalance?: number;
+  thaiGenre?: ThaiSongGenre;
+  onCreditsChange?: (balance: number) => void;
+  onSaveVocalToBar?: (audioDataUrl: string) => void;
   onUpdateBarNotes: (sectionId: string, barId: string, notes: MelodyNote[]) => void;
   onNavigateBar?: (direction: 'prev' | 'next') => void;
   canPrev?: boolean;
@@ -33,13 +55,17 @@ export const MiniPianoRollModal: React.FC<MiniPianoRollModalProps> = ({
   sectionId,
   barId,
   globalBarIndex,
+  creditBalance,
+  thaiGenre,
+  onCreditsChange,
+  onSaveVocalToBar,
   onUpdateBarNotes,
   onNavigateBar,
   canPrev = false,
   canNext = false,
   onClose,
 }) => {
-  const { lang } = useLanguage();
+  const { lang, t } = useLanguage();
   // Find section & bar
   const section = song.sections.find((s) => s.id === sectionId);
   const bar = section?.bars.find((b) => b.id === barId);
@@ -52,6 +78,17 @@ export const MiniPianoRollModal: React.FC<MiniPianoRollModalProps> = ({
   const [resolution16, setResolution16] = useState<boolean>(false); // 8 steps (false) or 16 steps (true)
   const [defaultDuration, setDefaultDuration] = useState<number>(2); // 2 steps default (quarter/eighth depending on grid)
   const [isAuditioning, setIsAuditioning] = useState<boolean>(false);
+  const [guidePattern, setGuidePattern] = useState<GuideContourPattern>('gentle-arch');
+  const [ttsConfirmOpen, setTtsConfirmOpen] = useState<boolean>(false);
+  const [isGeneratingTts, setIsGeneratingTts] = useState<boolean>(false);
+  const [ttsStatusMsg, setTtsStatusMsg] = useState<string | null>(null);
+  const [ttsAudioUrl, setTtsAudioUrl] = useState<string | null>(null);
+  const [ttsVoice, setTtsVoice] = useState<'Kore' | 'Aoede' | 'Puck' | 'Charon' | 'Fenrir'>('Kore');
+  const [ttsModelTier, setTtsModelTier] = useState<'pro-tts' | 'lite-tts'>('pro-tts');
+  const [autoSaveVocalToBar, setAutoSaveVocalToBar] = useState<boolean>(true);
+  const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  const currentCredits = creditBalance ?? getCreditBalance();
 
   // Pitch Classes for scale and chords (All hooks must be declared before any return)
   const effectiveKey = song.baseKey || 'C';
@@ -78,18 +115,46 @@ export const MiniPianoRollModal: React.FC<MiniPianoRollModalProps> = ({
     if (!bar) return;
     const rafId = requestAnimationFrame(() => {
       setDraftNotes([...bar.melodyNotes]);
+      if (
+        song.timeSignature === '4/4' &&
+        bar.melodyNotes.some((n) => n.step >= 8 || n.step % 2 === 1 || n.durationSteps % 2 === 1)
+      ) {
+        setResolution16(true);
+      }
     });
     return () => cancelAnimationFrame(rafId);
-  }, [bar]);
+  }, [bar, song.timeSignature]);
 
-  // Stop auditioning when closing
+  // Reset TTS preview URL when navigating to a different bar
   useEffect(() => {
-    if (!isOpen && isAuditioning) {
-      getAudioEngine().stop();
-      const rafId = requestAnimationFrame(() => {
-        setIsAuditioning(false);
-      });
-      return () => cancelAnimationFrame(rafId);
+    const rafId = requestAnimationFrame(() => {
+      setTtsAudioUrl(null);
+      setTtsStatusMsg(null);
+      setTtsConfirmOpen(false);
+    });
+    return () => cancelAnimationFrame(rafId);
+  }, [barId]);
+
+  const lyricSyllableGuides = useMemo(() => {
+    const text = bar?.lyrics?.trim() || '';
+    if (!text) return [];
+    return splitThaiLyricSyllables(text).map((syllable) => ({
+      syllable,
+      phonetics: analyzeThaiSyllablePhonetics(syllable),
+    }));
+  }, [bar?.lyrics]);
+
+  // Stop auditioning and TTS audio when closing
+  useEffect(() => {
+    if (!isOpen) {
+      ttsAudioRef.current?.pause();
+      if (isAuditioning) {
+        getAudioEngine().stop();
+        const rafId = requestAnimationFrame(() => {
+          setIsAuditioning(false);
+        });
+        return () => cancelAnimationFrame(rafId);
+      }
     }
   }, [isOpen, isAuditioning]);
 
@@ -208,6 +273,143 @@ export const MiniPianoRollModal: React.FC<MiniPianoRollModalProps> = ({
       setDraftNotes([...prevBar.melodyNotes]);
     } else {
       alert(lang === 'th' ? 'ห้องก่อนหน้าไม่มีโน้ตเมโลดี้ครับ' : 'Previous bar has no melody notes.');
+    }
+  };
+
+  // Phase 5C / 6 (0 Credits): Generate singable guide notes locked to active bar chords + Thai lyric syllables & tones
+  const handleGenerateGuideNotes = () => {
+    const trimmedLyrics = bar.lyrics.trim();
+    const effectiveTotalSteps = is68 || is34 ? 12 : 16;
+    const effectiveStepsPerBeat = effectiveTotalSteps / uiBeats;
+
+    if (is44 && !resolution16) {
+      setResolution16(true);
+    }
+
+    const generated =
+      trimmedLyrics.length > 0
+        ? generateLyricAlignedGuideMelody({
+            lyrics: trimmedLyrics,
+            chord1,
+            chord2,
+            baseKey: effectiveKey,
+            totalSteps: effectiveTotalSteps,
+            stepsPerBeat: effectiveStepsPerBeat,
+            pattern: guidePattern,
+            barIndex: globalBarIndex,
+            sectionType: section.type,
+          })
+        : generateChordGuideMelodyNotes({
+            chord1,
+            chord2,
+            baseKey: effectiveKey,
+            totalSteps: effectiveTotalSteps,
+            stepsPerBeat: effectiveStepsPerBeat,
+            pattern: guidePattern,
+          });
+
+    setDraftNotes(generated);
+    if (generated[0]) {
+      getAudioEngine().previewNote(generated[0].midiPitch, 0.35);
+    }
+    setTtsStatusMsg(
+      lang === 'th'
+        ? trimmedLyrics.length > 0
+          ? `สร้างโน้ตไกด์ ${generated.length} ตัวตามพยางค์และวรรณยุกต์ไทยตรงคอร์ด ${chord1}${chord2 ? ` → ${chord2}` : ''} (ฟรี 0 เหรียญ)`
+          : `สร้างโน้ตไกด์ ${generated.length} ตัวตรงคอร์ด ${chord1}${chord2 ? ` → ${chord2}` : ''} เรียบร้อย (ฟรี 0 เหรียญ)`
+        : `Generated ${generated.length} ${trimmedLyrics.length > 0 ? 'lyric-aligned' : 'chord-locked'} guide notes for ${chord1}${chord2 ? ` → ${chord2}` : ''} (Free)`
+    );
+  };
+
+  const speakBrowserCueFallback = (cueText: string) => {
+    speakBrowserLyrics(cueText, {
+      bpm: song.bpm,
+      lang: lang === 'en' ? 'en' : 'th',
+    });
+  };
+
+  // Phase 5C / 7E (2 Credits): Request Gemini 3.8 TTS singing/phrasing guide for this bar
+  const handleConfirmTtsCue = async () => {
+    const lyricText = bar.lyrics.trim().slice(0, 240);
+    if (!lyricText || isGeneratingTts) return;
+
+    setIsGeneratingTts(true);
+    setTtsStatusMsg(null);
+
+    try {
+      const accessToken = getAuthAccessToken();
+      const response = await fetch('/api/advance/tts-cue', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        },
+        body: JSON.stringify({
+          text: lyricText,
+          bpm: song.bpm,
+          language: lang,
+          includeCountIn: true,
+          voice: ttsVoice,
+          modelTier: ttsModelTier,
+          vocalMode: 'singing-demo',
+          thaiGenre: thaiGenre ?? song.thaiGenre,
+        }),
+      });
+      const data = (await response.json()) as {
+        isSimulated?: boolean;
+        audioDataUrl?: string | null;
+        cueText?: string;
+        tip?: string;
+        wallet?: WalletBreakdown;
+        error?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(data.error || 'TTS request failed');
+      }
+
+      if (data.wallet) {
+        const synced = applyServerWalletSnapshot(data.wallet);
+        onCreditsChange?.(synced.balance);
+      } else if (!data.isSimulated) {
+        const spend = deductCredits(
+          TTS_CUE_COST,
+          `TTS vocal phrasing cue (${song.bpm} BPM): "${lyricText.slice(0, 24)}"`
+        );
+        if (spend.success) {
+          onCreditsChange?.(spend.balance);
+        }
+      }
+
+      setTtsConfirmOpen(false);
+      let nextStatus = data.tip || null;
+
+      if (data.audioDataUrl) {
+        ttsAudioRef.current?.pause();
+        const { dataUrl: cleanAudioUrl } = await trimAudioDataUrlLeadingSilence(data.audioDataUrl);
+        setTtsAudioUrl(cleanAudioUrl);
+        ttsAudioRef.current = playAudioDataUrl(cleanAudioUrl);
+        if (autoSaveVocalToBar && onSaveVocalToBar) {
+          onSaveVocalToBar(cleanAudioUrl);
+          nextStatus =
+            lang === 'th'
+              ? '✅ สังเคราะห์และบันทึกเสียงร้องไกด์ AI ลงในห้องนี้แล้ว พร้อมฟังพรีวิวและส่งออก MP3!'
+              : '✅ AI vocal guide trimmed & auto-saved to this bar for playback & MP3 export!';
+        }
+      } else if (data.cueText) {
+        speakBrowserCueFallback(data.cueText);
+      }
+      setTtsStatusMsg(nextStatus);
+    } catch (err) {
+      setTtsStatusMsg(
+        err instanceof Error
+          ? err.message
+          : lang === 'th'
+            ? 'สร้างเสียงไกด์ไม่สำเร็จ'
+            : 'Unable to generate TTS cue'
+      );
+    } finally {
+      setIsGeneratingTts(false);
     }
   };
 
@@ -378,6 +580,186 @@ export const MiniPianoRollModal: React.FC<MiniPianoRollModalProps> = ({
               {lang === 'th' ? `🗑️ ล้างโน้ต (${draftNotes.length})` : `🗑️ Clear (${draftNotes.length})`}
             </button>
           </div>
+
+          {/* Phase 5C Guide Helpers: 0-Cr Chord Guide Melody + Optional 2-Cr AI Phrasing TTS */}
+          <div className="w-full pt-2 border-t border-slate-200/70 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="inline-flex items-center gap-1.5 text-[11px] font-bold text-slate-600">
+                <span>{lang === 'th' ? 'ทรงเมโลดี้:' : 'Contour:'}</span>
+                <select
+                  value={guidePattern}
+                  onChange={(e) => setGuidePattern(e.target.value as GuideContourPattern)}
+                  className="px-2 py-1 rounded-lg bg-white border border-slate-200 text-slate-800 text-[11px] font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                >
+                  <option value="gentle-arch">{lang === 'th' ? 'โค้งป๊อปนุ่ม' : 'Gentle Arch'}</option>
+                  <option value="rising-hook">{lang === 'th' ? 'ไต่ส่งฮุค' : 'Rising Hook'}</option>
+                  <option value="call-response">{lang === 'th' ? 'ถาม-ตอบ' : 'Call & Response'}</option>
+                  <option value="arpeggio">{lang === 'th' ? 'ไล่คอร์ด' : 'Chord Arpeggio'}</option>
+                </select>
+              </label>
+
+              <button
+                type="button"
+                onClick={handleGenerateGuideNotes}
+                className="px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-900 font-bold transition cursor-pointer flex items-center gap-1"
+              >
+                <span>{t.generateGuideBtn}</span>
+              </button>
+            </div>
+
+            {bar.lyrics.trim().length > 0 && (
+              <div className="flex flex-wrap items-center gap-2">
+                {isBrowserSpeechSupported() && (
+                  <button
+                    type="button"
+                    onClick={() => speakBrowserCueFallback(bar.lyrics.trim())}
+                    title={
+                      lang === 'th'
+                        ? 'ให้เบราว์เซอร์อ่านเนื้อร้องห้องนี้ตามจังหวะ (ฟรี 0 เครดิต)'
+                        : 'Read bar lyrics aloud via browser Web Speech API (0 Credits)'
+                    }
+                    className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-800 text-[11px] font-bold transition cursor-pointer"
+                  >
+                    {lang === 'th' ? '🗣️ อ่านเนื้อห้องนี้ (0 Cr)' : '🗣️ Read Bar (0 Cr)'}
+                  </button>
+                )}
+
+                <label className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-600">
+                  <span>{lang === 'th' ? 'โมเดล:' : 'Model:'}</span>
+                  <select
+                    value={ttsModelTier}
+                    onChange={(e) => setTtsModelTier(e.target.value as 'pro-tts' | 'lite-tts')}
+                    className="px-2 py-1 rounded-lg bg-white border border-slate-200 text-slate-800 text-[11px] font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
+                  >
+                    <option value="pro-tts">
+                      {lang === 'th' ? 'gemini-3.8-flash-tts (Pro ร้องไกด์)' : 'gemini-3.8-flash-tts (Pro)'}
+                    </option>
+                    <option value="lite-tts">
+                      {lang === 'th' ? 'gemini-3.8-flash-lite-tts (Lite)' : 'gemini-3.8-flash-lite-tts (Lite)'}
+                    </option>
+                  </select>
+                </label>
+
+                <label className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-600">
+                  <span>{lang === 'th' ? 'เสียงร้อง AI:' : 'AI Voice:'}</span>
+                  <select
+                    value={ttsVoice}
+                    onChange={(e) =>
+                      setTtsVoice(
+                        e.target.value as 'Kore' | 'Aoede' | 'Puck' | 'Charon' | 'Fenrir'
+                      )
+                    }
+                    className="px-2 py-1 rounded-lg bg-white border border-slate-200 text-slate-800 text-[11px] font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
+                  >
+                    <option value="Kore">Kore ({lang === 'th' ? 'หญิง อบอุ่น' : 'Female Warm'})</option>
+                    <option value="Aoede">Aoede ({lang === 'th' ? 'หญิง ใสโปร่ง' : 'Female Bright'})</option>
+                    <option value="Puck">Puck ({lang === 'th' ? 'วัยรุ่น สดใส' : 'Youthful'})</option>
+                    <option value="Charon">Charon ({lang === 'th' ? 'ชาย นุ่มลึก' : 'Male Deep'})</option>
+                    <option value="Fenrir">Fenrir ({lang === 'th' ? 'ชาย หนักแน่น' : 'Male Rock'})</option>
+                  </select>
+                </label>
+
+                {onSaveVocalToBar && (
+                  <label className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-800 bg-emerald-50/80 border border-emerald-200 rounded-lg px-2 py-1 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={autoSaveVocalToBar}
+                      onChange={(e) => setAutoSaveVocalToBar(e.target.checked)}
+                      className="accent-emerald-600 rounded"
+                    />
+                    <span>{lang === 'th' ? 'บันทึกเข้าห้องนี้อัตโนมัติ' : 'Auto-save to bar'}</span>
+                  </label>
+                )}
+
+                {ttsAudioUrl && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        ttsAudioRef.current?.pause();
+                        ttsAudioRef.current = playAudioDataUrl(ttsAudioUrl);
+                      }}
+                      className="px-2.5 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 font-bold transition cursor-pointer"
+                    >
+                      {lang === 'th' ? '🔊 ฟังซ้ำ' : '🔊 Replay TTS'}
+                    </button>
+                    {onSaveVocalToBar && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onSaveVocalToBar(ttsAudioUrl);
+                          setTtsStatusMsg(
+                            lang === 'th'
+                              ? '✅ บันทึกเสียงร้อง AI ประจำห้องนี้แล้ว พร้อมฟังพรีวิวและมิกซ์ส่งออก!'
+                              : '✅ Saved AI vocal take to this bar for playback & export!'
+                          );
+                        }}
+                        className="px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold transition cursor-pointer shadow-xs"
+                      >
+                        {lang === 'th'
+                          ? bar.vocalAudio === ttsAudioUrl
+                            ? '✓ บันทึกเป็นเสียงร้องประจำห้องแล้ว'
+                            : '💾 ใช้เสียง AI นี้เป็นเสียงร้องประจำห้อง'
+                          : bar.vocalAudio === ttsAudioUrl
+                            ? '✓ Saved as Bar Vocal'
+                            : '💾 Save as Bar Vocal'}
+                      </button>
+                    )}
+                  </>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setTtsConfirmOpen((prev) => !prev)}
+                  disabled={isGeneratingTts}
+                  className="px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-800 font-bold transition cursor-pointer disabled:opacity-50"
+                >
+                  {isGeneratingTts
+                    ? (lang === 'th' ? '⏳ กำลังสังเคราะห์...' : '⏳ Generating...')
+                    : t.ttsCueBtn}
+                </button>
+              </div>
+            )}
+
+            {ttsConfirmOpen && bar.lyrics.trim().length > 0 && (
+              <div className="w-full rounded-2xl bg-indigo-50/90 border border-indigo-200 px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                <div className="text-indigo-950 font-medium min-w-0">
+                  <span className="font-bold">
+                    {lang === 'th'
+                      ? `ยืนยันให้ ${ttsModelTier === 'pro-tts' ? 'gemini-3.8-flash-tts' : 'gemini-3.8-flash-lite-tts'} ร้องไกด์/แบ่งจังหวะ (${TTS_CUE_COST} เหรียญ):`
+                      : `Confirm ${ttsModelTier === 'pro-tts' ? 'gemini-3.8-flash-tts' : 'gemini-3.8-flash-lite-tts'} singing cue (${TTS_CUE_COST} Credits):`}
+                  </span>{' '}
+                  <span className="text-indigo-700">&ldquo;{bar.lyrics.trim().slice(0, 60)}&rdquo;</span>{' '}
+                  <span className="text-slate-500">
+                    ({lang === 'th' ? `คงเหลือ ${currentCredits} เหรียญ · ไม่คิดเงินหากจำลอง` : `Balance ${currentCredits} Cr · Free if simulated`})
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setTtsConfirmOpen(false)}
+                    className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-600 font-bold hover:bg-slate-100 cursor-pointer"
+                  >
+                    {lang === 'th' ? 'ยกเลิก' : 'Cancel'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isGeneratingTts || currentCredits < TTS_CUE_COST}
+                    onClick={handleConfirmTtsCue}
+                    className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white font-bold cursor-pointer"
+                  >
+                    {lang === 'th' ? `ยืนยันใช้ ${TTS_CUE_COST} เหรียญ` : `Confirm (${TTS_CUE_COST} Cr)`}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {ttsStatusMsg && (
+              <div className="w-full text-[11px] font-medium text-emerald-800 bg-emerald-50/80 border border-emerald-200 rounded-xl px-3 py-1.5">
+                {ttsStatusMsg}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Legend / Helper Info */}
@@ -413,6 +795,11 @@ export const MiniPianoRollModal: React.FC<MiniPianoRollModalProps> = ({
               <div className="h-8 border-b border-slate-300 bg-slate-100 flex items-center justify-center font-bold text-[10px] text-slate-500 uppercase">
                 Pitch
               </div>
+              {lyricSyllableGuides.length > 0 && (
+                <div className="h-9 border-b border-blue-200 bg-blue-50/90 flex items-center justify-center font-bold text-[10px] text-blue-700 px-1 text-center">
+                  {lang === 'th' ? 'พยางค์/เสียง' : 'Syllable/Tone'}
+                </div>
+              )}
               {visiblePitches.map((pitch) => {
                 const isBlack = isBlackKey(pitch);
                 const noteName = midiToNoteName(pitch);
@@ -467,6 +854,26 @@ export const MiniPianoRollModal: React.FC<MiniPianoRollModalProps> = ({
                   );
                 })}
               </div>
+
+              {/* Aligned Thai Syllable + Tone & Liveness Strip */}
+              {lyricSyllableGuides.length > 0 && (
+                <div className="h-9 border-b border-blue-200 bg-blue-50/80 flex items-stretch sticky top-8 z-10 overflow-hidden">
+                  {lyricSyllableGuides.map((g, idx) => (
+                    <div
+                      key={`${g.syllable}-${idx}`}
+                      title={`${g.syllable} • วรรณยุกต์${g.phonetics.tone} • ${g.phonetics.livenessLabel} (${g.phonetics.codaFamily}) • ${g.phonetics.melodyAdvice}`}
+                      className="flex-1 min-w-0 border-r border-blue-200/70 px-1 flex flex-col items-center justify-center leading-tight"
+                    >
+                      <span className="text-[11px] font-bold text-slate-900 truncate max-w-full">
+                        {g.syllable}
+                      </span>
+                      <span className="text-[9px] font-semibold text-blue-700 truncate max-w-full">
+                        {g.phonetics.tone}·{g.phonetics.isLiveSyllable ? 'เป็น' : 'ตาย'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {/* Grid Rows for each pitch */}
               {visiblePitches.map((pitch) => {

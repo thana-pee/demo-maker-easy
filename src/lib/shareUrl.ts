@@ -155,6 +155,7 @@ export function generateShareUrl(song: SongProject): string {
     })),
   };
   delete lightweightSong.snapshots;
+  delete lightweightSong.vocalTakes;
   const jsonStr = JSON.stringify(lightweightSong);
   const compressed = compressToUrlSafe(jsonStr);
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
@@ -209,6 +210,8 @@ export function parseSongFromUrl(search: string | URLSearchParams): SongProject 
           ...(parsed.mixer?.guitarLead || {}),
         },
       },
+      snapshots: undefined,
+      vocalTakes: undefined,
       sections: parsed.sections.map((sec, idx) => ({
         ...sec,
         id: typeof sec.id === 'string' ? sec.id : `sec-${idx}`,

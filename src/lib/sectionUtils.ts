@@ -1,4 +1,5 @@
-import type { SongSection } from '@/types/song';
+import type { SongBar, SongSection } from '@/types/song';
+import { segmentThaiWordToSyllables } from './thaiRhymeHelper';
 
 let uniqueIdCounter = 0;
 
@@ -119,6 +120,7 @@ function countThaiWordSyllables(rawWord: string): number {
     if (
       leadingConsonants.length >= 3 &&
       leadingConsonants[1] !== 'อ' &&
+      !(leadingConsonants.length === 3 && leadingConsonants[1] === 'ว') &&
       !(leadingConsonants[1] === 'ร' && leadingConsonants[2] === 'ร') &&
       !VALID_THAI_CLUSTERS.has(leadingConsonants[0] + leadingConsonants[1])
     ) {
@@ -206,3 +208,231 @@ export function countThaiEnglishSyllables(text: string): number {
 }
 
 export const countSyllables = countThaiEnglishSyllables;
+
+/**
+ * แบ่งเนื้อร้องที่ผู้ใช้พิมพ์/วางยาวๆ (หลายบรรทัดหรือคั่นด้วย / ) ลงในช่องเนื้อร้องของแต่ละห้อง
+ * โดยคงข้อมูลคอร์ด, chordsPerBar, playStyle, melodyNotes และ vocalAudio ของแต่ละห้องไว้ครบ 100%
+ */
+export function splitLyricsToSectionBars(
+  rawText: string,
+  existingBars: SongBar[]
+): SongBar[] {
+  if (existingBars.length === 0) return existingBars;
+
+  const trimmed = rawText.trim();
+  if (!trimmed) return existingBars;
+
+  let lines = trimmed
+    .split(/\r?\n+/)
+    .flatMap((line) => {
+      const part = line.trim();
+      if (!part) return [];
+      // รองรับกรณีผสมขึ้นบรรทัดใหม่ + คั่นด้วย " / " หรือ "|" ในบรรทัดเดียวกัน
+      if (/\s+[/|]\s+|\s*\|\s*/.test(part)) {
+        return part
+          .split(/\s*[/|]\s*/)
+          .map((seg) => seg.trim())
+          .filter(Boolean);
+      }
+      return [part];
+    });
+
+  if (lines.length === 1 && existingBars.length > 1) {
+    const slashSplit = trimmed
+      .split(/\s*[/|]\s*/)
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    if (slashSplit.length > 1) {
+      lines = slashSplit;
+    } else {
+      const words = trimmed.split(/\s+/).filter(Boolean);
+      if (words.length >= existingBars.length) {
+        const chunked: string[] = [];
+        const baseCount = Math.floor(words.length / existingBars.length);
+        let remainder = words.length % existingBars.length;
+        let cursor = 0;
+
+        for (let b = 0; b < existingBars.length; b += 1) {
+          const take = baseCount + (remainder > 0 ? 1 : 0);
+          if (remainder > 0) remainder -= 1;
+          chunked.push(words.slice(cursor, cursor + take).join(' '));
+          cursor += take;
+        }
+        lines = chunked.filter(Boolean);
+      }
+    }
+  }
+
+  return existingBars.map((bar, idx) => {
+    if (idx < lines.length - 1 || (idx === lines.length - 1 && lines.length <= existingBars.length)) {
+      return { ...bar, lyrics: lines[idx] };
+    }
+    if (idx === existingBars.length - 1 && lines.length > existingBars.length) {
+      return { ...bar, lyrics: lines.slice(idx).join(' ') };
+    }
+    return bar;
+  });
+}
+
+/**
+ * ปัดคำหรือพยางค์สุดท้ายจาก `bars[fromBarIndex].lyrics` ไปวางไว้หน้าสุดของ `bars[fromBarIndex + 1].lyrics`
+ * โดยคงข้อมูลคอร์ด, chordsPerBar, playStyle, melodyNotes และ vocalAudio ของทุกห้องไว้ครบถ้วน
+ */
+export function shiftLastTokenToNextBar(bars: SongBar[], fromBarIndex: number): SongBar[] {
+  const cloneBars = (source: SongBar[]): SongBar[] =>
+    source.map((bar) => ({
+      ...bar,
+      chords: [...bar.chords],
+      melodyNotes: (bar.melodyNotes || []).map((note) => ({ ...note })),
+    }));
+
+  if (fromBarIndex < 0 || fromBarIndex >= bars.length - 1) {
+    return cloneBars(bars);
+  }
+
+  const currentLyrics = (bars[fromBarIndex].lyrics ?? '').trim();
+  if (!currentLyrics) {
+    return cloneBars(bars);
+  }
+
+  let headText = '';
+  let shiftedToken = '';
+
+  const spaceTokens = currentLyrics.split(/\s+/).filter(Boolean);
+  if (spaceTokens.length >= 2) {
+    const lastChunk = spaceTokens[spaceTokens.length - 1];
+    const prefix = spaceTokens.slice(0, -1).join(' ');
+    if (countThaiEnglishSyllables(lastChunk) > 2) {
+      const syllables = segmentThaiWordToSyllables(lastChunk).filter((s) => s.trim().length > 0);
+      if (syllables.length >= 2) {
+        shiftedToken = syllables[syllables.length - 1];
+        headText = `${prefix} ${syllables.slice(0, -1).join('')}`;
+      } else {
+        shiftedToken = lastChunk;
+        headText = prefix;
+      }
+    } else {
+      shiftedToken = lastChunk;
+      headText = prefix;
+    }
+  } else {
+    const syllables = segmentThaiWordToSyllables(currentLyrics).filter((s) => s.trim().length > 0);
+    if (syllables.length < 2) {
+      return cloneBars(bars);
+    }
+    shiftedToken = syllables[syllables.length - 1];
+    headText = syllables.slice(0, -1).join('');
+  }
+
+  const nextLyrics = (bars[fromBarIndex + 1].lyrics ?? '').trim();
+  const mergedNextLyrics = nextLyrics ? `${shiftedToken} ${nextLyrics}` : shiftedToken;
+
+  const cloned = cloneBars(bars);
+  cloned[fromBarIndex] = {
+    ...cloned[fromBarIndex],
+    lyrics: headText,
+  };
+  cloned[fromBarIndex + 1] = {
+    ...cloned[fromBarIndex + 1],
+    lyrics: mergedNextLyrics,
+  };
+
+  return cloned;
+}
+
+export interface SectionTtsTextPlan {
+  text: string;
+  wasTruncated: boolean;
+  includedBarsCount: number;
+  omittedBarsCount: number;
+  fullCharCount: number;
+}
+
+/**
+ * สร้างข้อความสำหรับส่งเข้า Gemini TTS โดยจำกัดไม่เกิน maxChars (ค่าเริ่มต้น 240 ตัวอักษร)
+ * แต่ตัดแบ่งบนขอบเขตห้อง (bar boundary) หรือขอบเขตคำ (Intl.Segmenter) เพื่อไม่ให้คำขาดครึ่ง
+ */
+export function buildSectionTtsTextPlan(
+  bars: SongBar[],
+  maxChars = 240
+): SectionTtsTextPlan {
+  const cap = Math.max(20, Math.floor(maxChars));
+  const lines = bars.map((b) => (b.lyrics ?? '').trim()).filter(Boolean);
+  if (lines.length === 0) {
+    return {
+      text: '',
+      wasTruncated: false,
+      includedBarsCount: 0,
+      omittedBarsCount: 0,
+      fullCharCount: 0,
+    };
+  }
+
+  const fullText = lines.join(', ');
+  if (fullText.length <= cap) {
+    return {
+      text: fullText,
+      wasTruncated: false,
+      includedBarsCount: lines.length,
+      omittedBarsCount: 0,
+      fullCharCount: fullText.length,
+    };
+  }
+
+  const chosenLines: string[] = [];
+  let runningLength = 0;
+
+  for (const line of lines) {
+    const sepLen = chosenLines.length > 0 ? 2 : 0; // ', '
+    if (runningLength + sepLen + line.length <= cap) {
+      chosenLines.push(line);
+      runningLength += sepLen + line.length;
+    } else {
+      break;
+    }
+  }
+
+  if (chosenLines.length > 0) {
+    return {
+      text: chosenLines.join(', '),
+      wasTruncated: true,
+      includedBarsCount: chosenLines.length,
+      omittedBarsCount: lines.length - chosenLines.length,
+      fullCharCount: fullText.length,
+    };
+  }
+
+  // กรณีที่เพียงแค่ 1 ห้องแรกก็เกิน cap แล้ว ให้ตัดตามขอบเขตคำภาษาไทย (Intl.Segmenter)
+  const firstLine = lines[0];
+  let safeWordSlice = '';
+  if (typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function') {
+    const seg = new Intl.Segmenter('th', { granularity: 'word' });
+    for (const part of seg.segment(firstLine)) {
+      if (safeWordSlice.length + part.segment.length <= cap) {
+        safeWordSlice += part.segment;
+      } else {
+        break;
+      }
+    }
+  } else {
+    const tokens = firstLine.split(/\s+/);
+    for (const token of tokens) {
+      const candidate = safeWordSlice ? `${safeWordSlice} ${token}` : token;
+      if (candidate.length <= cap) {
+        safeWordSlice = candidate;
+      } else {
+        break;
+      }
+    }
+  }
+
+  const finalSlice = (safeWordSlice.trim() || Array.from(firstLine).slice(0, cap).join('')).trim();
+  return {
+    text: finalSlice,
+    wasTruncated: true,
+    includedBarsCount: 1,
+    omittedBarsCount: lines.length - 1,
+    fullCharCount: fullText.length,
+  };
+}

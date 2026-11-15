@@ -19,6 +19,51 @@ export interface AiDirectorResult {
   summaryActions: string[];
 }
 
+export interface DirectorPromptClassification {
+  mode: 'local' | 'ai';
+  localResult: AiDirectorResult;
+  reason: string;
+}
+
+/**
+ * จำแนกคำสั่ง AI Song Director ระหว่างโหมดประมวลผลในเครื่อง (0 เหรียญ)
+ * กับโหมดวิเคราะห์เชิงสร้างสรรค์ผ่าน Gemini AI (1 เหรียญ)
+ */
+export function classifyDirectorPromptMode(
+  prompt: string,
+  currentSong: SongProject
+): DirectorPromptClassification {
+  const localResult = applyNaturalPromptToSong(prompt, currentSong);
+  const trimmed = prompt.trim();
+
+  if (!trimmed) {
+    return {
+      mode: 'local',
+      localResult,
+      reason: 'คำสั่งว่าง (ไม่ส่งไปยัง AI)',
+    };
+  }
+
+  const hasCreativeMoodKeywords =
+    /(?:ฟีล|บรรยากาศ|อารมณ์|เหมือน|แนวเพลง|เศร้า|เหงา|อบอุ่น|อุ่นๆ|ร้านกาแฟ|พุ่งกว่าเดิม|ไคลแมกซ์|ค่อยๆ\s*ไต่|เรียบเรียง|contrast|vintage|lofi|lo-fi|indie|cinematic|dreamy|90s|2000s|ballad)/i.test(
+      trimmed
+    );
+
+  if (hasCreativeMoodKeywords || localResult.summaryActions.length === 0) {
+    return {
+      mode: 'ai',
+      localResult,
+      reason: 'คำสั่งเชิงสร้างสรรค์/อารมณ์เพลง (เหมาะกับ Gemini AI Producer — 1 เหรียญ)',
+    };
+  }
+
+  return {
+    mode: 'local',
+    localResult,
+    reason: 'คำสั่งปรับแต่งโดยตรงในสตูดิโอ (ประมวลผลทันทีในเครื่อง — 0 เหรียญ)',
+  };
+}
+
 type InstrumentKey = 'guitarRhythm' | 'guitarLead' | 'bass' | 'piano' | 'drums';
 
 const SECTION_TYPE_PATTERNS: Array<{ type: SectionType; regex: RegExp }> = [
@@ -505,12 +550,12 @@ const VALID_GUITAR_MODELS = new Set<GuitarModel>([
 ]);
 const VALID_AMBIENCES = new Set<Ambience3DMode>(['living-room', 'wood-studio', 'unplugged-hall']);
 const VALID_INTENSITIES = new Set(['low', 'medium', 'high']);
-const VALID_RHYTHM_STYLES = new Set<GuitarStyle>(['campfire-strum', 'soft-strum', 'fingerpicking']);
+const VALID_RHYTHM_STYLES = new Set<GuitarStyle>(['campfire-strum', 'soft-strum', 'fingerpicking', 'lukthung-bounce', 'rock-power']);
 const VALID_LEAD_STYLES = new Set<LeadGuitarStyle>(['melodic-solo', 'riff-fills', 'soft-arpeggio']);
 const VALID_LEAD_DRIVES = new Set<LeadGuitarDrive>(['clean', 'crunch', 'overdrive', 'distortion', 'fuzz']);
-const VALID_BASS_STYLES = new Set<BassStyle>(['root-fifth', 'warm-sustain']);
-const VALID_PIANO_STYLES = new Set<PianoStyle>(['warm-pad', 'gentle-arpeggio']);
-const VALID_DRUM_STYLES = new Set<DrumStyle>(['off', 'shaker-cajon', 'simple-kit']);
+const VALID_BASS_STYLES = new Set<BassStyle>(['root-fifth', 'warm-sustain', 'lukthung-groove', 'rnb-syncopated']);
+const VALID_PIANO_STYLES = new Set<PianoStyle>(['warm-pad', 'gentle-arpeggio', 'rnb-neo-chord', 'rock-organ-pad']);
+const VALID_DRUM_STYLES = new Set<DrumStyle>(['off', 'shaker-cajon', 'simple-kit', 'lukthung-3cha', 'rnb-pocket', 'rock-drive']);
 
 const TRACK_KEYS: readonly InstrumentKey[] = ['guitarRhythm', 'guitarLead', 'bass', 'piano', 'drums'];
 const VOLUME_FIELDS: Record<InstrumentKey, keyof SectionInstruments> = {
@@ -521,7 +566,7 @@ const VOLUME_FIELDS: Record<InstrumentKey, keyof SectionInstruments> = {
   drums: 'drumsVolume',
 };
 
-/** สร้างข้อมูลสรุปขนาดกะทัดรัดของ SongProject เพื่อส่งให้ Gemini 4 Hydrogen ประมวลผลประหยัด Token */
+/** สร้างข้อมูลสรุปขนาดกะทัดรัดของ SongProject เพื่อส่งให้ Gemini AI (@google/genai) ประมวลผลประหยัด Token */
 export function buildSongDirectorSummary(song: SongProject): AiDirectorSongSummary {
   return {
     bpm: song.bpm,
@@ -541,7 +586,7 @@ export function buildSongDirectorSummary(song: SongProject): AiDirectorSongSumma
   };
 }
 
-/** นำ Patch JSON ที่ได้จาก Gemini 4 Hydrogen มาตรวจสอบความถูกต้องแล้วอัปเดตลงใน SongProject */
+/** นำ Patch JSON ที่ได้จาก Gemini AI (@google/genai) มาตรวจสอบความถูกต้องแล้วอัปเดตลงใน SongProject */
 export function applyDirectorPatchToSong(
   patch: AiDirectorPatch,
   currentSong: SongProject

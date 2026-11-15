@@ -203,11 +203,11 @@ test('Cross-Phase E2E (4A->4E): Duplicate Section + Slash/WalkingBass Planning +
   assert.equal(merged.length, 1);
   assert.equal(merged[0].title, 'Local Newer');
 
-  // Phase 4E: Credit flow
-  assert.equal(getCreditBalance(), 30);
+  // Phase 4E / 5A: Credit flow (15 starter credits + Starter Pack 110 credits)
+  assert.equal(getCreditBalance(), 15);
   const spend = deductCredits(1, 'E2E AI Chorus');
-  assert.equal(spend.balance, 29);
+  assert.equal(spend.balance, 14);
   const top = topUpCredits(CREDIT_PACKAGES[1]);
-  assert.equal(top.balance, 329);
+  assert.equal(top.balance, 124);
   resetCreditWalletForTests();
 });

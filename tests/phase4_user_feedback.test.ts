@@ -163,7 +163,7 @@ test('AI Song Director: empty or non-matching prompt leaves original song untouc
   assert.equal(res.updatedSong.baseKey, base.baseKey);
 });
 
-test('AI Song Director Patch & /api/advance/director: uses Gemini 4 Hydrogen with key, clamps values, and degrades gracefully offline', async () => {
+test('AI Song Director Patch & /api/advance/director: uses @google/genai (gemini-3.5-flash-lite) with key, clamps values, and degrades gracefully offline', async () => {
   const base = createDefaultSong();
   const prevKey = process.env.GEMINI_API_KEY;
   const prevModel = process.env.GEMINI_MODEL;
@@ -186,40 +186,61 @@ test('AI Song Director Patch & /api/advance/director: uses Gemini 4 Hydrogen wit
     assert.equal(simData.isSimulated, true);
     assert.equal(simData.patch, null);
 
-    // 2. With GEMINI_API_KEY -> calls gemini-4-hydrogen with x-goog-api-key header & applies patch safely
+    // 2. With GEMINI_API_KEY -> calls @google/genai Interactions API with x-goog-api-key header & applies patch safely
     process.env.GEMINI_API_KEY = 'secret-director-key-test';
-    const captured: { url: string; headerKey: string | null } = { url: '', headerKey: null };
+    const captured: { url: string; headerKey: string | null; bodyText: string } = {
+      url: '',
+      headerKey: null,
+      bodyText: '',
+    };
 
     globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-      captured.url = typeof input === 'string' ? input : input.toString();
-      captured.headerKey = new Headers(init?.headers).get('x-goog-api-key');
+      captured.url = input instanceof Request ? input.url : input.toString();
+      captured.headerKey =
+        input instanceof Request
+          ? input.headers.get('x-goog-api-key')
+          : new Headers(init?.headers).get('x-goog-api-key');
+      captured.bodyText =
+        input instanceof Request ? await input.clone().text() : String(init?.body ?? '');
+
       return new Response(
         JSON.stringify({
-          candidates: [
+          id: 'v1_director_test',
+          object: 'interaction',
+          model: 'gemini-3.5-flash-lite',
+          status: 'completed',
+          steps: [
             {
-              content: {
-                parts: [
-                  {
-                    text: JSON.stringify({
-                      bpm: 999, // over-range -> clamped to 220
-                      baseKey: 'A',
-                      ambience3D: 'unplugged-hall',
-                      sectionPatches: [
-                        {
-                          sectionType: 'chorus',
-                          guitarLeadDrive: 'fuzz', // normalized to distortion
-                          guitarLeadVolume: 140, // clamped to 100
-                          drumsStyle: 'simple-kit',
-                          drumsVolume: 85,
-                        },
-                      ],
-                      summaryNotes: ['ตั้งค่าสไตล์ Concert Rock ด้วย Gemini 4 Hydrogen'],
-                    }),
-                  },
-                ],
-              },
+              type: 'model_output',
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    bpm: 999, // over-range -> clamped to 220
+                    baseKey: 'A',
+                    ambience3D: 'unplugged-hall',
+                    sectionPatches: [
+                      {
+                        sectionType: 'chorus',
+                        guitarLeadDrive: 'fuzz', // normalized to distortion
+                        guitarLeadVolume: 140, // clamped to 100
+                        drumsStyle: 'simple-kit',
+                        drumsVolume: 85,
+                      },
+                    ],
+                    summaryNotes: ['ตั้งค่าสไตล์ Concert Rock ด้วย Gemini Studio Producer'],
+                  }),
+                },
+              ],
             },
           ],
+          usage: {
+            total_input_tokens: 180,
+            total_cached_tokens: 0,
+            total_output_tokens: 95,
+            total_thought_tokens: 15,
+            total_tokens: 290,
+          },
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }
       );
@@ -236,7 +257,8 @@ test('AI Song Director Patch & /api/advance/director: uses Gemini 4 Hydrogen wit
       })
     );
     assert.equal(liveRes.status, 200);
-    assert.ok(captured.url.includes('gemini-4-hydrogen'));
+    assert.ok(captured.url.includes('interactions'));
+    assert.ok(captured.bodyText.includes('gemini-3.5-flash-lite'));
     assert.ok(!captured.url.includes('secret-director-key-test'));
     assert.equal(captured.headerKey, 'secret-director-key-test');
 
@@ -246,9 +268,11 @@ test('AI Song Director Patch & /api/advance/director: uses Gemini 4 Hydrogen wit
       isSimulated: boolean;
       model: string;
       patch: Parameters<typeof applyDirectorPatchToSong>[0];
+      usage?: { totalTokens?: number };
     };
     assert.equal(liveData.isSimulated, false);
-    assert.equal(liveData.model, 'gemini-4-hydrogen');
+    assert.equal(liveData.model, 'gemini-3.5-flash-lite');
+    assert.equal(liveData.usage?.totalTokens, 290);
 
     const applied = applyDirectorPatchToSong(liveData.patch, base);
     assert.equal(applied.updatedSong.bpm, 220);

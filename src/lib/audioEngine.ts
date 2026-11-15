@@ -14,14 +14,13 @@
  *   getState()               → ดึง EngineState ปัจจุบัน
  */
 
-import { Soundfont, type Smplr } from 'smplr';
+import { Soundfont, CacheStorage, type Smplr } from 'smplr';
 import {
   planBar,
   planCountIn,
   flattenSong,
   getTiming,
   isTrackOn,
-  getSectionTrackVolume,
   type TrackId,
   type PlannedEvent,
   type FlatBar,
@@ -34,894 +33,140 @@ import type {
   MelodySound,
   StringGauge,
   Ambience3DMode,
+  VocalFxPreset,
 } from '../types/song';
+import {
+  computeAutoDuckFactor,
+  computeTakePlaybackSlice,
+  computeVocalTakePlaybackPlan,
+  isAiTtsVocalTake,
+  resolveVocalTakeBarSpan,
+} from './vocalBoothUtils';
+import {
+  trimAudioBufferLeadingSilence,
+  trimAudioBufferTrailingSilence,
+  prepareAiTtsAudioBufferForSpan,
+} from './audioTrim';
+import {
+  GUITAR_INSTRUMENT,
+  TRACK_PAN,
+  TRACK_DEFAULT_VOL,
+  resolveLeadSoundfontInstrument,
+  getAmbienceWetGain,
+  buildRoomImpulseBuffer,
+  DrumSynth,
+  MelodySynth,
+  TrackGainNode,
+  GuitarRhythmTrackGainNode,
+  makeGuitarDistortionCurve,
+  makeGuitarFuzzCurve,
+  getLeadDriveDSPParams,
+  LeadGuitarTrackGainNode,
+  BassTrackGainNode,
+  PianoTrackGainNode,
+  VocalStudioTrackGainNode,
+  computeEffectiveBarMix,
+  type LeadDriveDSPParams,
+} from './audioDspShared';
+
+export {
+  GUITAR_INSTRUMENT,
+  TRACK_PAN,
+  TRACK_DEFAULT_VOL,
+  resolveLeadSoundfontInstrument,
+  getAmbienceWetGain,
+  buildRoomImpulseBuffer,
+  DrumSynth,
+  MelodySynth,
+  TrackGainNode,
+  GuitarRhythmTrackGainNode,
+  makeGuitarDistortionCurve,
+  makeGuitarFuzzCurve,
+  getLeadDriveDSPParams,
+  LeadGuitarTrackGainNode,
+  BassTrackGainNode,
+  PianoTrackGainNode,
+  VocalStudioTrackGainNode,
+  type LeadDriveDSPParams,
+};
+export { computeAutoDuckFactor };
 
 // ─────────────────────────── Types ───────────────────────────
 
 export type EngineState = 'idle' | 'loading' | 'ready' | 'playing' | 'error';
 
+export interface LoopRange {
+  startBar: number;
+  endBar: number; // inclusive 0-based global bar index
+}
+
 export interface EngineStatus {
   state: EngineState;
   loadProgress: number;    // 0–1
   activeBarIndex: number;  // -1 = ไม่ได้เล่น, 0+ = ห้องที่กำลังเล่น
+  loopRange?: LoopRange | null;
   error?: string;
+}
+
+export interface PlayOptions {
+  /** เล่นเฉพาะช่วงท่อนนี้แล้วหยุดอัตโนมัติ (ไม่วนลูป) */
+  playRangeOnce?: LoopRange | null;
+}
+
+/** คำนวณ index ของห้องถัดไปแบบ Pure (รองรับ Single-Bar / Section Loop) */
+export function resolveNextBarIndex(
+  currentBar: number,
+  totalBars: number,
+  loopRange?: LoopRange | null
+): number {
+  if (totalBars <= 0) return -1;
+  if (
+    loopRange &&
+    loopRange.startBar >= 0 &&
+    loopRange.startBar < totalBars &&
+    loopRange.endBar >= loopRange.startBar
+  ) {
+    const effectiveEnd = Math.min(loopRange.endBar, totalBars - 1);
+    if (currentBar >= effectiveEnd) {
+      return loopRange.startBar;
+    }
+    if (currentBar < loopRange.startBar) {
+      return loopRange.startBar;
+    }
+    return currentBar + 1;
+  }
+  const next = currentBar + 1;
+  return next < totalBars ? next : -1;
+}
+
+/** คำนวณ index ของห้องถัดไป โดยเคารพ playBounds (Play-Section-Once) ก่อน loopRange */
+export function resolvePlaybackNextBar(
+  currentBar: number,
+  totalBars: number,
+  loopRange?: LoopRange | null,
+  playBounds?: LoopRange | null
+): number {
+  if (totalBars <= 0) return -1;
+  if (
+    playBounds &&
+    playBounds.startBar >= 0 &&
+    playBounds.startBar < totalBars &&
+    playBounds.endBar >= playBounds.startBar
+  ) {
+    const effectiveEnd = Math.min(playBounds.endBar, totalBars - 1);
+    if (currentBar >= effectiveEnd) {
+      return -1;
+    }
+    if (currentBar < playBounds.startBar) {
+      return playBounds.startBar;
+    }
+    return currentBar + 1;
+  }
+  return resolveNextBarIndex(currentBar, totalBars, loopRange);
 }
 
 type BarChangeCb = (barIndex: number) => void;
 type StatusChangeCb = (status: EngineStatus) => void;
-
-// ─────────────────────────── Constants ───────────────────────────
-
-/** แมปโมเดลกีตาร์ → ชื่อ instrument ใน smplr Soundfont */
-const GUITAR_INSTRUMENT: Record<GuitarModel, string> = {
-  'dreadnought-steel':  'acoustic_guitar_steel',
-  'classical-nylon':    'acoustic_guitar_nylon',
-  'ovation-roundback':  'acoustic_guitar_steel',
-  'gibson-les-paul':    'overdriven_guitar',
-};
-
-/** Pan ประจำ track (ค่า smplr: -1 ถึง 1) */
-const TRACK_PAN: Record<TrackId, number> = {
-  guitarRhythm: -0.3,
-  guitarLead:    0.4,
-  bass:          0.0,
-  piano:        -0.2,
-  drums:         0.0,
-  melody:        0.0,
-};
-
-/** ระดับเสียงเริ่มต้นสำหรับแต่ละ track (0–127) */
-const TRACK_DEFAULT_VOL: Record<TrackId, number> = {
-  guitarRhythm: 100,
-  guitarLead:    90,
-  bass:         100,
-  piano:         85,
-  drums:         95,
-  melody:        90,
-};
-
-// ─────────────────────────── Drum Synthesis ───────────────────────────
-
-/**
- * สร้างเสียงกลอง/เพอร์คัชชันด้วย Web Audio synthesis
- * เราไม่ใช้ smplr DrumMachine เพราะต้องการ cajon + shaker เฉพาะทาง
- */
-class DrumSynth {
-  private ctx: AudioContext;
-  private out: GainNode;
-  private noiseBuf: AudioBuffer;
-
-  constructor(ctx: AudioContext, destination: AudioNode) {
-    this.ctx = ctx;
-    this.out = ctx.createGain();
-    this.out.gain.value = 1;
-    this.out.connect(destination);
-
-    // Pre-allocate shared noise buffer (1.0 sec) to eliminate GC spikes on every drum hit
-    const len = Math.max(1, Math.floor(ctx.sampleRate * 1.0));
-    this.noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
-    const data = this.noiseBuf.getChannelData(0);
-    for (let i = 0; i < len; i++) {
-      data[i] = Math.random() * 2 - 1;
-    }
-  }
-
-  setVolume(v: number) {
-    // v: 0–127
-    this.out.gain.value = (v / 127) ** 1.5;
-  }
-
-  /** t = AudioContext absolute time */
-  hit(voice: PlannedEvent & { kind: 'drum' }, t: number) {
-    const ctx = this.ctx;
-    const vel = voice.vel / 127;
-    const pan = voice.pan;
-
-    const panner = ctx.createStereoPanner();
-    panner.pan.value = pan;
-    panner.connect(this.out);
-
-    switch (voice.voice) {
-      case 'kick':        this.kick(t, vel, panner); break;
-      case 'snare':       this.snare(t, vel, panner); break;
-      case 'hat':         this.hat(t, vel, panner); break;
-      case 'crash':       this.crash(t, vel, panner); break;
-      case 'cajonThump':  this.cajonThump(t, vel, panner); break;
-      case 'cajonSlap':   this.cajonSlap(t, vel, panner); break;
-      case 'shaker':      this.shaker(t, vel, panner); break;
-      case 'click':       this.click(t, vel, panner); break;
-    }
-  }
-
-  private kick(t: number, vel: number, out: StereoPannerNode) {
-    const ctx = this.ctx;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(150, t);
-    osc.frequency.exponentialRampToValueAtTime(45, t + 0.08);
-    gain.gain.setValueAtTime(vel * 1.4, t);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
-    osc.connect(gain); gain.connect(out);
-    osc.onended = () => {
-      try { osc.disconnect(); } catch {}
-      try { gain.disconnect(); } catch {}
-      try { out.disconnect(); } catch {}
-    };
-    osc.start(t); osc.stop(t + 0.36);
-  }
-
-  private snare(t: number, vel: number, out: StereoPannerNode) {
-    const ctx = this.ctx;
-    const noise = ctx.createBufferSource();
-    noise.buffer = this.noiseBuf;
-    const hpf = ctx.createBiquadFilter();
-    hpf.type = 'highpass'; hpf.frequency.value = 1800;
-    const nGain = ctx.createGain();
-    nGain.gain.setValueAtTime(vel * 0.8, t);
-    nGain.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
-    noise.connect(hpf); hpf.connect(nGain); nGain.connect(out);
-
-    noise.onended = () => {
-      try { noise.disconnect(); } catch {}
-      try { hpf.disconnect(); } catch {}
-      try { nGain.disconnect(); } catch {}
-      try { out.disconnect(); } catch {}
-    };
-    noise.start(t); noise.stop(t + 0.19);
-
-    // body
-    const osc = ctx.createOscillator();
-    const oGain = ctx.createGain();
-    osc.type = 'triangle'; osc.frequency.value = 220;
-    oGain.gain.setValueAtTime(vel * 0.4, t);
-    oGain.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
-    osc.connect(oGain); oGain.connect(out);
-    osc.onended = () => {
-      try { osc.disconnect(); } catch {}
-      try { oGain.disconnect(); } catch {}
-    };
-    osc.start(t); osc.stop(t + 0.08);
-  }
-
-  private hat(t: number, vel: number, out: StereoPannerNode) {
-    const ctx = this.ctx;
-    const noise = ctx.createBufferSource();
-    noise.buffer = this.noiseBuf;
-    const hpf = ctx.createBiquadFilter();
-    hpf.type = 'highpass'; hpf.frequency.value = 7000;
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(vel * 0.5, t);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
-    noise.connect(hpf); hpf.connect(gain); gain.connect(out);
-    noise.onended = () => {
-      try { noise.disconnect(); } catch {}
-      try { hpf.disconnect(); } catch {}
-      try { gain.disconnect(); } catch {}
-      try { out.disconnect(); } catch {}
-    };
-    noise.start(t); noise.stop(t + 0.08);
-  }
-
-  private crash(t: number, vel: number, out: StereoPannerNode) {
-    const ctx = this.ctx;
-    const dur = 0.6;
-    const noise = ctx.createBufferSource();
-    noise.buffer = this.noiseBuf;
-    const hpf = ctx.createBiquadFilter();
-    hpf.type = 'highpass'; hpf.frequency.value = 5000;
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(vel * 0.6, t);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    noise.connect(hpf); hpf.connect(gain); gain.connect(out);
-    noise.onended = () => {
-      try { noise.disconnect(); } catch {}
-      try { hpf.disconnect(); } catch {}
-      try { gain.disconnect(); } catch {}
-      try { out.disconnect(); } catch {}
-    };
-    noise.start(t); noise.stop(t + dur + 0.01);
-  }
-
-  private cajonThump(t: number, vel: number, out: StereoPannerNode) {
-    const ctx = this.ctx;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine'; osc.frequency.setValueAtTime(130, t);
-    osc.frequency.exponentialRampToValueAtTime(60, t + 0.1);
-    gain.gain.setValueAtTime(vel * 1.2, t);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
-    osc.connect(gain); gain.connect(out);
-    osc.onended = () => {
-      try { osc.disconnect(); } catch {}
-      try { gain.disconnect(); } catch {}
-      try { out.disconnect(); } catch {}
-    };
-    osc.start(t); osc.stop(t + 0.29);
-  }
-
-  private cajonSlap(t: number, vel: number, out: StereoPannerNode) {
-    const ctx = this.ctx;
-    const noise = ctx.createBufferSource();
-    noise.buffer = this.noiseBuf;
-    const bpf = ctx.createBiquadFilter();
-    bpf.type = 'bandpass'; bpf.frequency.value = 900; bpf.Q.value = 1.4;
-    const nGain = ctx.createGain();
-    nGain.gain.setValueAtTime(vel * 0.9, t);
-    nGain.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
-    noise.connect(bpf); bpf.connect(nGain); nGain.connect(out);
-    noise.onended = () => {
-      try { noise.disconnect(); } catch {}
-      try { bpf.disconnect(); } catch {}
-      try { nGain.disconnect(); } catch {}
-      try { out.disconnect(); } catch {}
-    };
-    noise.start(t); noise.stop(t + 0.13);
-
-    // attack click
-    const osc = ctx.createOscillator();
-    const oGain = ctx.createGain();
-    osc.type = 'triangle'; osc.frequency.value = 400;
-    oGain.gain.setValueAtTime(vel * 0.3, t);
-    oGain.gain.exponentialRampToValueAtTime(0.001, t + 0.03);
-    osc.connect(oGain); oGain.connect(out);
-    osc.onended = () => {
-      try { osc.disconnect(); } catch {}
-      try { oGain.disconnect(); } catch {}
-    };
-    osc.start(t); osc.stop(t + 0.04);
-  }
-
-  private shaker(t: number, vel: number, out: StereoPannerNode) {
-    const ctx = this.ctx;
-    const dur = 0.05;
-    const noise = ctx.createBufferSource();
-    noise.buffer = this.noiseBuf;
-    const hpf = ctx.createBiquadFilter();
-    hpf.type = 'highpass'; hpf.frequency.value = 5500;
-    const bpf = ctx.createBiquadFilter();
-    bpf.type = 'bandpass'; bpf.frequency.value = 9000; bpf.Q.value = 0.8;
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(vel * 0.4, t);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    noise.connect(hpf); hpf.connect(bpf); bpf.connect(gain); gain.connect(out);
-    noise.onended = () => {
-      try { noise.disconnect(); } catch {}
-      try { hpf.disconnect(); } catch {}
-      try { bpf.disconnect(); } catch {}
-      try { gain.disconnect(); } catch {}
-      try { out.disconnect(); } catch {}
-    };
-    noise.start(t); noise.stop(t + dur + 0.01);
-  }
-
-  private click(t: number, vel: number, out: StereoPannerNode) {
-    const ctx = this.ctx;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine'; osc.frequency.value = 1200;
-    gain.gain.setValueAtTime(vel * 0.6, t);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.025);
-    osc.connect(gain); gain.connect(out);
-    osc.onended = () => {
-      try { osc.disconnect(); } catch {}
-      try { gain.disconnect(); } catch {}
-      try { out.disconnect(); } catch {}
-    };
-    osc.start(t); osc.stop(t + 0.03);
-  }
-
-  dispose() {
-    this.out.disconnect();
-  }
-}
-
-// ─────────────────────────── Melody Synthesis ───────────────────────────
-
-/**
- * MelodySynth — เครื่องยนต์สร้างเสียงทำนองไกด์ (Vocal Melody Guide Synth)
- *
- * ทำงานด้วย Web Audio oscillator + envelope คุณภาพสูง:
- *  - 'flute': เสียงขลุ่ย/ผิวปาก นุ่มนวล มี Vibrato อ่อนๆ นำเสียงร้องได้ชัด ไม่กลบอะคูสติก
- *  - 'piano': โทนเปียโนใส คมชัด
- *  - 'bell': เสียงกระดิ่งระฆังแก้ว กังวาน อบอุ่น
- */
-class MelodySynth {
-  private ctx: AudioContext;
-  private out: GainNode;
-  private currentSound: MelodySound = 'flute';
-
-  constructor(ctx: AudioContext, destination: AudioNode) {
-    this.ctx = ctx;
-    this.out = ctx.createGain();
-    this.out.gain.value = 1.0;
-    this.out.connect(destination);
-  }
-
-  setSound(sound: MelodySound) {
-    this.currentSound = sound;
-  }
-
-  playNote(midi: number, vel: number, t: number, dur: number) {
-    const ctx = this.ctx;
-    const freq = 440 * Math.pow(2, (midi - 69) / 12);
-    const v = (vel / 127) * 0.75;
-    const endT = t + Math.max(0.08, dur);
-
-    switch (this.currentSound) {
-      case 'flute': {
-        const osc1 = ctx.createOscillator();
-        const osc2 = ctx.createOscillator();
-        const filter = ctx.createBiquadFilter();
-        const gain = ctx.createGain();
-
-        osc1.type = 'sine';
-        osc1.frequency.setValueAtTime(freq, t);
-
-        osc2.type = 'triangle';
-        osc2.frequency.setValueAtTime(freq, t);
-
-        // Singing Vibrato LFO (4.8 Hz, ramp in after 80ms)
-        const lfo = ctx.createOscillator();
-        const lfoGain = ctx.createGain();
-        lfo.frequency.setValueAtTime(4.8, t);
-        lfoGain.gain.setValueAtTime(0, t);
-        lfoGain.gain.setValueAtTime(0, t + 0.08);
-        lfoGain.gain.linearRampToValueAtTime(freq * 0.012, t + 0.22);
-        lfo.connect(lfoGain);
-        lfoGain.connect(osc1.frequency);
-        lfoGain.connect(osc2.frequency);
-        lfo.start(t);
-        lfo.stop(endT + 0.15);
-
-        filter.type = 'lowpass';
-        filter.frequency.setValueAtTime(2800, t);
-
-        const attack = 0.035;
-        const release = 0.09;
-        gain.gain.setValueAtTime(0.0001, t);
-        gain.gain.linearRampToValueAtTime(v * 0.85, t + attack);
-        gain.gain.setValueAtTime(v * 0.85, Math.max(t + attack, endT - release));
-        gain.gain.exponentialRampToValueAtTime(0.0001, endT + release);
-
-        const osc1Gain = ctx.createGain();
-        osc1Gain.gain.value = 0.7;
-        const osc2Gain = ctx.createGain();
-        osc2Gain.gain.value = 0.3;
-
-        osc1.connect(osc1Gain);
-        osc2.connect(osc2Gain);
-        osc1Gain.connect(filter);
-        osc2Gain.connect(filter);
-        filter.connect(gain);
-        gain.connect(this.out);
-
-        osc1.onended = () => {
-          try { osc1.disconnect(); } catch {}
-          try { osc2.disconnect(); } catch {}
-          try { osc1Gain.disconnect(); } catch {}
-          try { osc2Gain.disconnect(); } catch {}
-          try { lfo.disconnect(); } catch {}
-          try { lfoGain.disconnect(); } catch {}
-          try { filter.disconnect(); } catch {}
-          try { gain.disconnect(); } catch {}
-        };
-
-        osc1.start(t);
-        osc2.start(t);
-        osc1.stop(endT + release + 0.05);
-        osc2.stop(endT + release + 0.05);
-        break;
-      }
-      case 'piano': {
-        const osc1 = ctx.createOscillator();
-        const osc2 = ctx.createOscillator();
-        const filter = ctx.createBiquadFilter();
-        const gain = ctx.createGain();
-
-        osc1.type = 'triangle';
-        osc1.frequency.setValueAtTime(freq, t);
-        osc2.type = 'sawtooth';
-        osc2.frequency.setValueAtTime(freq * 1.0015, t);
-
-        filter.type = 'lowpass';
-        filter.frequency.setValueAtTime(3200, t);
-        filter.frequency.exponentialRampToValueAtTime(800, endT);
-
-        const attack = 0.008;
-        const release = 0.12;
-        gain.gain.setValueAtTime(0.0001, t);
-        gain.gain.linearRampToValueAtTime(v * 0.8, t + attack);
-        gain.gain.exponentialRampToValueAtTime(v * 0.4, t + Math.min(dur * 0.5, 0.4));
-        gain.gain.exponentialRampToValueAtTime(0.0001, endT + release);
-
-        const m1 = ctx.createGain(); m1.gain.value = 0.65;
-        const m2 = ctx.createGain(); m2.gain.value = 0.35;
-        osc1.connect(m1); osc2.connect(m2);
-        m1.connect(filter); m2.connect(filter);
-        filter.connect(gain); gain.connect(this.out);
-
-        osc1.onended = () => {
-          try { osc1.disconnect(); } catch {}
-          try { osc2.disconnect(); } catch {}
-          try { m1.disconnect(); } catch {}
-          try { m2.disconnect(); } catch {}
-          try { filter.disconnect(); } catch {}
-          try { gain.disconnect(); } catch {}
-        };
-
-        osc1.start(t); osc2.start(t);
-        osc1.stop(endT + release + 0.05); osc2.stop(endT + release + 0.05);
-        break;
-      }
-      case 'bell': {
-        const ratios = [1.0, 2.76, 5.4];
-        const weights = [0.7, 0.25, 0.1];
-        ratios.forEach((r, idx) => {
-          const osc = ctx.createOscillator();
-          const g = ctx.createGain();
-          osc.type = 'sine';
-          osc.frequency.setValueAtTime(freq * r, t);
-          const decay = Math.min(1.8, dur + 0.4) / (idx + 1);
-          g.gain.setValueAtTime(v * weights[idx], t);
-          g.gain.exponentialRampToValueAtTime(0.0001, t + decay);
-          osc.connect(g);
-          g.connect(this.out);
-
-          osc.onended = () => {
-            try { osc.disconnect(); } catch {}
-            try { g.disconnect(); } catch {}
-          };
-
-          osc.start(t);
-          osc.stop(t + decay + 0.05);
-        });
-        break;
-      }
-    }
-  }
-
-  dispose() {
-    this.out.disconnect();
-  }
-}
-
-// ─────────────────────────── TrackGain ───────────────────────────
-
-/** GainNode ต่อ track สำหรับ fade/restore/mixer volume */
-export class TrackGainNode {
-  protected masterGain: GainNode;
-  protected fadeGain: GainNode;
-  protected panner: StereoPannerNode;
-  readonly input: GainNode; // ต่อกับ smplr destination หรือ DrumSynth
-
-  constructor(ctx: AudioContext, destination: AudioNode, vol: number, pan: number) {
-    this.masterGain = ctx.createGain();
-    this.fadeGain   = ctx.createGain();
-    this.input      = ctx.createGain();
-
-    // เชื่อม: input → masterGain → fadeGain → panner → destination
-    this.panner = ctx.createStereoPanner();
-    this.panner.pan.value = pan;
-
-    this.input.connect(this.masterGain);
-    this.masterGain.connect(this.fadeGain);
-    this.fadeGain.connect(this.panner);
-    this.panner.connect(destination);
-
-    this.setVolume(vol);
-  }
-
-  setVolume(v: number) {
-    // v: 0–127
-    this.masterGain.gain.value = (v / 127) ** 1.5;
-  }
-
-  fade(t: number, dur: number) {
-    this.fadeGain.gain.cancelScheduledValues(t);
-    this.fadeGain.gain.setValueAtTime(this.fadeGain.gain.value, t);
-    this.fadeGain.gain.linearRampToValueAtTime(0, t + dur);
-  }
-
-  restore(t: number) {
-    this.fadeGain.gain.cancelScheduledValues(t);
-    this.fadeGain.gain.setValueAtTime(1, t);
-  }
-
-  disconnect() {
-    try { this.input.disconnect(); } catch {}
-    try { this.masterGain.disconnect(); } catch {}
-    try { this.fadeGain.disconnect(); } catch {}
-    try { this.panner.disconnect(); } catch {}
-  }
-}
-
-/**
- * GuitarRhythmTrackGainNode — Channel กีตาร์โปร่งริทึ่มพร้อม Body Resonance EQ
- * จำลองขนาด Body ไม้ และ Soundboard ของกีตาร์แต่ละทรง
- */
-class GuitarRhythmTrackGainNode extends TrackGainNode {
-  private bodyResonance: BiquadFilterNode;
-  private highAir: BiquadFilterNode;
-
-  constructor(
-    ctx: AudioContext,
-    destination: AudioNode,
-    vol: number,
-    pan: number,
-    model: GuitarModel,
-    gauge: StringGauge = 'standard-010'
-  ) {
-    super(ctx, destination, vol, pan);
-
-    // ปลด input -> masterGain ตรงๆ จาก constructor แม่ เพื่อต่อผ่าน EQ Chain
-    this.input.disconnect(this.masterGain);
-
-    this.bodyResonance = ctx.createBiquadFilter();
-    this.highAir = ctx.createBiquadFilter();
-
-    this.input.connect(this.bodyResonance);
-    this.bodyResonance.connect(this.highAir);
-    this.highAir.connect(this.masterGain);
-
-    this.updateAcoustics(model, gauge);
-  }
-
-  updateAcoustics(model: GuitarModel, gauge: StringGauge) {
-    const isHeavy = gauge === 'heavy-012';
-    if (model === 'classical-nylon') {
-      this.bodyResonance.type = 'peaking';
-      this.bodyResonance.frequency.value = 230;
-      this.bodyResonance.gain.value = 3.2;
-      this.bodyResonance.Q.value = 1.0;
-
-      this.highAir.type = 'lowpass';
-      this.highAir.frequency.value = 6500;
-      this.highAir.Q.value = 0.7;
-    } else if (model === 'ovation-roundback') {
-      this.bodyResonance.type = 'highpass';
-      this.bodyResonance.frequency.value = 90;
-      this.bodyResonance.Q.value = 0.7;
-
-      this.highAir.type = 'peaking';
-      this.highAir.frequency.value = 3800;
-      this.highAir.gain.value = 3.5;
-      this.highAir.Q.value = 1.4;
-    } else {
-      // dreadnought-steel default
-      this.bodyResonance.type = 'peaking';
-      this.bodyResonance.frequency.value = 115;
-      this.bodyResonance.gain.value = isHeavy ? 3.0 : 2.2;
-      this.bodyResonance.Q.value = 1.2;
-
-      this.highAir.type = 'highshelf';
-      this.highAir.frequency.value = 5200;
-      this.highAir.gain.value = isHeavy ? 1.5 : 2.5;
-    }
-  }
-
-  override disconnect() {
-    super.disconnect();
-    try { this.bodyResonance.disconnect(); } catch {}
-    try { this.highAir.disconnect(); } catch {}
-  }
-}
-
-/** สร้าง Curve จำลองเสียงแตกหลอดสุญญากาศ (Tube Saturation Curve with Soft-Knee) */
-export function makeGuitarDistortionCurve(samples = 4096): Float32Array<ArrayBuffer> {
-  const buffer = new ArrayBuffer(samples * 4);
-  const curve = new Float32Array(buffer);
-  for (let i = 0; i < samples; ++i) {
-    const x = (i * 2) / samples - 1;
-    // Slight asymmetric even-harmonic bias for tube-like warmth
-    const biased = x + 0.08 * (x * x - 0.25);
-    curve[i] = Math.tanh(biased * 2.2);
-  }
-  return curve;
-}
-
-/** สร้าง Curve จำลองเสียงแตก Fuzz / High-Gain Hard-Clip (Sharp Harmonic Crunch) */
-export function makeGuitarFuzzCurve(samples = 4096): Float32Array<ArrayBuffer> {
-  const buffer = new ArrayBuffer(samples * 4);
-  const curve = new Float32Array(buffer);
-  for (let i = 0; i < samples; ++i) {
-    const x = (i * 2) / samples - 1;
-    const driven = x * 6.5;
-    const clipped = Math.max(-0.92, Math.min(0.92, driven / (1 + 0.35 * Math.abs(driven))));
-    curve[i] = Math.tanh(clipped * 1.85 + 0.14 * x * x);
-  }
-  return curve;
-}
-
-export interface LeadDriveDSPParams {
-  normalizedDrive: 'clean' | 'crunch' | 'overdrive' | 'distortion';
-  curveType: 'tube' | 'fuzz';
-  dry: number;
-  wet: number;
-  pre: number;
-  cabFreq: number;
-  cabQ: number;
-  toneFreq: number;
-  toneGainDb: number;
-  post: number;
-  vibDepth: number;
-}
-
-/** แมปค่า LeadGuitarDrive (รวม alias 'fuzz') เป็นพารามิเตอร์ DSP ที่แยกคาแรกเตอร์ชัดเจน */
-export function getLeadDriveDSPParams(drive: LeadGuitarDrive): LeadDriveDSPParams {
-  const normalized = drive === 'fuzz' ? 'distortion' : drive;
-  switch (normalized) {
-    case 'clean':
-      return {
-        normalizedDrive: 'clean',
-        curveType: 'tube',
-        dry: 1.0,
-        wet: 0.0,
-        pre: 1.0,
-        cabFreq: 6200,
-        cabQ: 0.9,
-        toneFreq: 2500,
-        toneGainDb: 0.5,
-        post: 0.78,
-        vibDepth: 0.0003,
-      };
-    case 'crunch':
-      return {
-        normalizedDrive: 'crunch',
-        curveType: 'tube',
-        dry: 0.25,
-        wet: 0.85,
-        pre: 3.2,
-        cabFreq: 4800,
-        cabQ: 1.1,
-        toneFreq: 1400,
-        toneGainDb: 2.5,
-        post: 0.58,
-        vibDepth: 0.0005,
-      };
-    case 'overdrive':
-      return {
-        normalizedDrive: 'overdrive',
-        curveType: 'tube',
-        dry: 0.05,
-        wet: 1.0,
-        pre: 7.2,
-        cabFreq: 4100,
-        cabQ: 1.25,
-        toneFreq: 950,
-        toneGainDb: 4.5,
-        post: 0.45,
-        vibDepth: 0.0007,
-      };
-    case 'distortion':
-    default:
-      return {
-        normalizedDrive: 'distortion',
-        curveType: 'fuzz',
-        dry: 0.0,
-        wet: 1.30,
-        pre: 16.0,
-        cabFreq: 4900,
-        cabQ: 1.85,
-        toneFreq: 2150,
-        toneGainDb: 7.0,
-        post: 0.34,
-        vibDepth: 0.00085,
-      };
-  }
-}
-
-/**
- * LeadGuitarTrackGainNode — Channel กีตาร์ลีดพร้อมเอฟเฟกต์ Overdrive / Distortion + Tone EQ + Cabinet Sim
- *
- * Signal Chain:
- *   input -> dryGain -----------------------------------------------------------------> sumNode -> vibrato -> masterGain
- *         \-> preFilter (HPF 110Hz) -> preGain -> waveShaper -> toneFilter -> cabFilter -> postGain -> wetGain -/
- */
-class LeadGuitarTrackGainNode extends TrackGainNode {
-  private preFilter: BiquadFilterNode;
-  private preGain: GainNode;
-  private waveShaper: WaveShaperNode;
-  private toneFilter: BiquadFilterNode;
-  private cabFilter: BiquadFilterNode;
-  private postGain: GainNode;
-  private wetGain: GainNode;
-  private dryGain: GainNode;
-  private tubeCurve: Float32Array<ArrayBuffer>;
-  private fuzzCurve: Float32Array<ArrayBuffer>;
-  private currentDrive: 'clean' | 'crunch' | 'overdrive' | 'distortion' = 'clean';
-
-  constructor(ctx: AudioContext, destination: AudioNode, vol: number, pan: number) {
-    super(ctx, destination, vol, pan);
-
-    // ปลด input -> masterGain ตรงๆ จาก constructor แม่ เพื่อให้ผ่าน drive circuit
-    this.input.disconnect(this.masterGain);
-
-    this.tubeCurve = makeGuitarDistortionCurve(4096);
-    this.fuzzCurve = makeGuitarFuzzCurve(4096);
-
-    // 1. Pre-filter: ตัด sub-bass rumble ก่อนอัดเข้า WaveShaper
-    this.preFilter = ctx.createBiquadFilter();
-    this.preFilter.type = 'highpass';
-    this.preFilter.frequency.value = 110;
-
-    // 2. Drive Pre-Gain: อัดสัญญาณเข้าจุดอิ่มตัว
-    this.preGain = ctx.createGain();
-    this.preGain.gain.value = 1.0;
-
-    // 3. WaveShaper: จำลองหลอดสุญญากาศ / Fuzz (พร้อม 4x oversampling ลด aliasing noise)
-    this.waveShaper = ctx.createWaveShaper();
-    this.waveShaper.curve = this.tubeCurve;
-    this.waveShaper.oversample = '4x';
-
-    // 4. Tone EQ (Peaking): แยกคาแรกเตอร์เสียงอุ่น (Mid ~950Hz) vs เสียงแตกหนักคม (Upper-Mid Bite ~2150Hz)
-    this.toneFilter = ctx.createBiquadFilter();
-    this.toneFilter.type = 'peaking';
-    this.toneFilter.frequency.value = 2500;
-    this.toneFilter.Q.value = 1.2;
-    this.toneFilter.gain.value = 0.5;
-
-    // 5. Cabinet Filter: จำลองตู้แอมป์กีตาร์ เพื่อให้เสียงหนา อบอุ่น ไม่แหลมสาก
-    this.cabFilter = ctx.createBiquadFilter();
-    this.cabFilter.type = 'lowpass';
-    this.cabFilter.frequency.value = 6200;
-    this.cabFilter.Q.value = 0.9;
-
-    // 6. Post Gain: ชดเชยระดับเสียงไม่ให้โดดหลังแตก
-    this.postGain = ctx.createGain();
-    this.postGain.gain.value = 0.78;
-
-    // 7. Wet / Dry blend
-    this.wetGain = ctx.createGain();
-    this.wetGain.gain.value = 0.0;
-
-    this.dryGain = ctx.createGain();
-    this.dryGain.gain.value = 1.0;
-
-    // 8. Vibrato & Singing Sustain circuit (BBD modulated analog delay)
-    this.vibratoDelay = ctx.createDelay();
-    this.vibratoDelay.delayTime.value = 0.0035; // 3.5ms baseline delay
-
-    this.vibratoLfo = ctx.createOscillator();
-    this.vibratoLfo.type = 'sine';
-    this.vibratoLfo.frequency.value = 5.0; // 5 Hz อัตราการสั่นข้อมือมือกีตาร์จริง
-
-    this.vibratoDepth = ctx.createGain();
-    this.vibratoDepth.gain.value = 0.00055; // ความลึกในการสั่นสาย (~20-25 cents)
-
-    this.vibratoLfo.connect(this.vibratoDepth);
-    this.vibratoDepth.connect(this.vibratoDelay.delayTime);
-    this.vibratoLfo.start();
-
-    // 9. Junction sum & stereo-like blend
-    this.sumNode = ctx.createGain();
-    this.vibratoDirect = ctx.createGain();
-    this.vibratoDirect.gain.value = 0.4;
-    this.vibratoWet = ctx.createGain();
-    this.vibratoWet.gain.value = 0.65;
-
-    // ต่อสายวงจร Wet
-    this.input.connect(this.preFilter);
-    this.preFilter.connect(this.preGain);
-    this.preGain.connect(this.waveShaper);
-    this.waveShaper.connect(this.toneFilter);
-    this.toneFilter.connect(this.cabFilter);
-    this.cabFilter.connect(this.postGain);
-    this.postGain.connect(this.wetGain);
-    this.wetGain.connect(this.sumNode);
-
-    // ต่อสายวงจร Dry
-    this.input.connect(this.dryGain);
-    this.dryGain.connect(this.sumNode);
-
-    // ส่งสัญญาณผ่านวงจร Vibrato ก่อนเข้า Master
-    this.sumNode.connect(this.vibratoDirect);
-    this.vibratoDirect.connect(this.masterGain);
-
-    this.sumNode.connect(this.vibratoDelay);
-    this.vibratoDelay.connect(this.vibratoWet);
-    this.vibratoWet.connect(this.masterGain);
-  }
-
-  private vibratoDelay: DelayNode;
-  private vibratoLfo: OscillatorNode;
-  private vibratoDepth: GainNode;
-  private sumNode: GainNode;
-  private vibratoDirect: GainNode;
-  private vibratoWet: GainNode;
-
-  setDrive(drive: LeadGuitarDrive, t: number = 0) {
-    const params = getLeadDriveDSPParams(drive);
-    if (this.currentDrive === params.normalizedDrive) return;
-    this.currentDrive = params.normalizedDrive;
-
-    const ctxTime = t || this.input.context.currentTime;
-    const ramp = 0.04;
-
-    this.waveShaper.curve = params.curveType === 'fuzz' ? this.fuzzCurve : this.tubeCurve;
-
-    this.dryGain.gain.setTargetAtTime(params.dry, ctxTime, ramp);
-    this.wetGain.gain.setTargetAtTime(params.wet, ctxTime, ramp);
-    this.preGain.gain.setTargetAtTime(params.pre, ctxTime, ramp);
-    this.toneFilter.frequency.setTargetAtTime(params.toneFreq, ctxTime, ramp);
-    this.toneFilter.gain.setTargetAtTime(params.toneGainDb, ctxTime, ramp);
-    this.cabFilter.frequency.setTargetAtTime(params.cabFreq, ctxTime, ramp);
-    this.cabFilter.Q.setTargetAtTime(params.cabQ, ctxTime, ramp);
-    this.postGain.gain.setTargetAtTime(params.post, ctxTime, ramp);
-    this.vibratoDepth.gain.setTargetAtTime(params.vibDepth, ctxTime, ramp);
-  }
-
-  override disconnect() {
-    super.disconnect();
-    this.preFilter.disconnect();
-    this.preGain.disconnect();
-    this.waveShaper.disconnect();
-    this.toneFilter.disconnect();
-    this.cabFilter.disconnect();
-    this.postGain.disconnect();
-    this.wetGain.disconnect();
-    this.dryGain.disconnect();
-    try {
-      this.vibratoLfo.stop();
-      this.vibratoLfo.disconnect();
-    } catch {
-      // ignore if already stopped
-    }
-    this.vibratoDepth.disconnect();
-    this.vibratoDelay.disconnect();
-    this.vibratoDirect.disconnect();
-    this.vibratoWet.disconnect();
-    this.sumNode.disconnect();
-  }
-}
-
-/**
- * VocalStudioTrackGainNode — Vocal Studio DSP Chain:
- *  input -> hpf (95Hz highpass) -> presenceEq (3.8kHz +2.5dB peaking, Q: 1.1)
- *        -> vocalComp (-18dB, 4:1, 8ms/120ms) -> masterGain -> fadeGain -> panner -> destination
- */
-export class VocalStudioTrackGainNode extends TrackGainNode {
-  private hpf: BiquadFilterNode;
-  private presenceEq: BiquadFilterNode;
-  private vocalComp: DynamicsCompressorNode;
-
-  constructor(ctx: AudioContext, destination: AudioNode, vol: number, pan: number) {
-    super(ctx, destination, vol, pan);
-
-    // ปลดสายตรง input -> masterGain จากคลาสแม่ แล้วส่งผ่าน Studio Vocal DSP Chain
-    this.input.disconnect(this.masterGain);
-
-    this.hpf = ctx.createBiquadFilter();
-    this.hpf.type = 'highpass';
-    this.hpf.frequency.value = 95;
-    this.hpf.Q.value = 0.707;
-
-    this.presenceEq = ctx.createBiquadFilter();
-    this.presenceEq.type = 'peaking';
-    this.presenceEq.frequency.value = 3800;
-    this.presenceEq.gain.value = 2.5;
-    this.presenceEq.Q.value = 1.1;
-
-    this.vocalComp = ctx.createDynamicsCompressor();
-    this.vocalComp.threshold.setValueAtTime(-18, ctx.currentTime);
-    this.vocalComp.knee.setValueAtTime(6, ctx.currentTime);
-    this.vocalComp.ratio.setValueAtTime(4, ctx.currentTime);
-    this.vocalComp.attack.setValueAtTime(0.008, ctx.currentTime);
-    this.vocalComp.release.setValueAtTime(0.12, ctx.currentTime);
-
-    this.input.connect(this.hpf);
-    this.hpf.connect(this.presenceEq);
-    this.presenceEq.connect(this.vocalComp);
-    this.vocalComp.connect(this.masterGain);
-  }
-
-  override disconnect() {
-    super.disconnect();
-    try { this.hpf.disconnect(); } catch {}
-    try { this.presenceEq.disconnect(); } catch {}
-    try { this.vocalComp.disconnect(); } catch {}
-  }
-}
 
 // ─────────────────────────── AudioEngine ───────────────────────────
 
@@ -948,10 +193,16 @@ class AudioEngine {
   private isPlayingFlag = false;
   private vocalBufferCache: Map<string, AudioBuffer> = new Map();
   private activeVocalSource: AudioBufferSourceNode | null = null;
+  private activeTakeSources: Set<AudioBufferSourceNode> = new Set();
+  private activeTakeGains: Set<GainNode> = new Set();
+  private activeInitPromise: Promise<void> | null = null;
+  private takePlaybackEpoch = 0;
   private nextBarAudioTime = 0;
 
   private barChangeCbs: Set<BarChangeCb> = new Set();
   private statusChangeCbs: Set<StatusChangeCb> = new Set();
+  private loopRange: LoopRange | null = null;
+  private playBounds: LoopRange | null = null;
 
   // ─── Status helpers ───
 
@@ -960,6 +211,7 @@ class AudioEngine {
       state: this.state,
       loadProgress: this.loadProgress,
       activeBarIndex: this.activeBarIndex,
+      loopRange: this.loopRange,
     };
     this.statusChangeCbs.forEach((cb) => cb(s));
   }
@@ -969,7 +221,24 @@ class AudioEngine {
       state: this.state,
       loadProgress: this.loadProgress,
       activeBarIndex: this.activeBarIndex,
+      loopRange: this.loopRange,
     };
+  }
+
+  setLoopRange(range: LoopRange | null) {
+    if (range && Number.isFinite(range.startBar) && Number.isFinite(range.endBar) && range.startBar >= 0 && range.endBar >= range.startBar) {
+      this.loopRange = {
+        startBar: Math.floor(range.startBar),
+        endBar: Math.floor(range.endBar),
+      };
+    } else {
+      this.loopRange = null;
+    }
+    this.emitStatus();
+  }
+
+  getLoopRange(): LoopRange | null {
+    return this.loopRange;
   }
 
   onBarChange(cb: BarChangeCb): () => void {
@@ -982,185 +251,199 @@ class AudioEngine {
     return () => this.statusChangeCbs.delete(cb);
   }
 
-  // ─── Helpers ───
-
-  private buildRoomImpulse(ctx: AudioContext, mode: Ambience3DMode): AudioBuffer {
-    const rate = ctx.sampleRate;
-    let decaySec = 1.25;
-    let preDelaySec = 0.015;
-    if (mode === 'living-room') {
-      decaySec = 0.75;
-      preDelaySec = 0.008;
-    } else if (mode === 'unplugged-hall') {
-      decaySec = 2.3;
-      preDelaySec = 0.028;
-    }
-    const length = Math.max(1, Math.floor(rate * decaySec));
-    const impulse = ctx.createBuffer(2, length, rate);
-    const left = impulse.getChannelData(0);
-    const right = impulse.getChannelData(1);
-    for (let i = 0; i < length; i++) {
-      const t = i / rate;
-      if (t < preDelaySec) {
-        left[i] = 0;
-        right[i] = 0;
-      } else {
-        const factor = Math.exp(-(t - preDelaySec) * (3.5 / decaySec));
-        left[i] = (Math.random() * 2 - 1) * factor;
-        right[i] = (Math.random() * 2 - 1) * factor;
-      }
-    }
-    return impulse;
-  }
-
   // ─── Init / Load ───
 
   async init(song: SongProject, onProgress?: (p: number) => void): Promise<void> {
-    // เปิด AudioContext ถ้ายังไม่มี
-    if (!this.ctx) {
-      this.ctx = new AudioContext({ sampleRate: 44100, latencyHint: 'interactive' });
-    }
-    if (this.ctx.state === 'suspended') {
-      await this.ctx.resume();
+    if (this.activeInitPromise) {
+      await this.activeInitPromise.catch(() => {});
     }
 
-    const needGuitar =
-      this.loadedGuitarModel !== song.guitarModel ||
-      !this.instruments['guitarRhythm'];
+    const runInit = (async () => {
+      // เปิด AudioContext ถ้ายังไม่มี
+      if (!this.ctx) {
+        this.ctx = new AudioContext({ sampleRate: 44100, latencyHint: 'interactive' });
+      }
+      if (this.ctx.state === 'suspended') {
+        await this.ctx.resume().catch(() => {});
+      }
 
-    if (!needGuitar && this.state === 'ready') {
-      return; // โหลดแล้ว ไม่ต้องโหลดซ้ำ
-    }
+      const needGuitar =
+        this.loadedGuitarModel !== song.guitarModel ||
+        !this.instruments['guitarRhythm'];
 
-    this.state = 'loading';
-    this.loadProgress = 0;
-    this.emitStatus();
+      if (!needGuitar && this.state === 'ready') {
+        return; // โหลดแล้ว ไม่ต้องโหลดซ้ำ
+      }
 
-    const ctx = this.ctx;
+      this.state = 'loading';
+      this.loadProgress = 0;
+      this.emitStatus();
 
-    // Master Bus & Mastering Compressor (ป้องกันเสียงแตกพร่า พร้อม Glue ความนวลสไตล์แผ่นเสียง)
-    if (!this.masterCompressor) {
-      this.masterCompressor = ctx.createDynamicsCompressor();
-      this.masterCompressor.threshold.setValueAtTime(-12, ctx.currentTime);
-      this.masterCompressor.knee.setValueAtTime(8, ctx.currentTime);
-      this.masterCompressor.ratio.setValueAtTime(3.5, ctx.currentTime);
-      this.masterCompressor.attack.setValueAtTime(0.015, ctx.currentTime);
-      this.masterCompressor.release.setValueAtTime(0.12, ctx.currentTime);
-      this.masterCompressor.connect(ctx.destination);
-    }
-    if (!this.masterBus) {
-      this.masterBus = ctx.createGain();
-      this.masterBus.gain.value = 1.0;
-      this.masterBus.connect(this.masterCompressor);
-    }
-    if (!this.reverbConvolver || !this.reverbWetGain) {
-      this.reverbConvolver = ctx.createConvolver();
-      this.reverbWetGain = ctx.createGain();
-      this.masterBus.connect(this.reverbConvolver);
-      this.reverbConvolver.connect(this.reverbWetGain);
-      this.reverbWetGain.connect(this.masterCompressor);
-    }
-    this.setAmbience3D(song.ambience3D || 'wood-studio');
-    const dest = this.masterBus;
+      const ctx = this.ctx;
 
-    // สร้าง TrackGainNode สำหรับทุก track
-    const tracks: TrackId[] = ['guitarRhythm', 'guitarLead', 'bass', 'piano', 'drums', 'melody'];
-    for (const tr of tracks) {
-      this.trackGains[tr]?.disconnect();
-      const mixVol = tr === 'drums'
-        ? song.mixer.drums.volume
-        : tr === 'bass'
-        ? song.mixer.bass.volume
-        : tr === 'piano'
-        ? song.mixer.piano.volume
-        : tr === 'guitarLead'
-        ? song.mixer.guitarLead.volume
-        : tr === 'melody'
-        ? (song.mixer.melody?.volume ?? 85)
-        : song.mixer.guitarRhythm.volume;
+      // Master Bus & Mastering Compressor (ป้องกันเสียงแตกพร่า พร้อม Glue ความนวลสไตล์แผ่นเสียง)
+      if (!this.masterCompressor) {
+        this.masterCompressor = ctx.createDynamicsCompressor();
+        this.masterCompressor.threshold.setValueAtTime(-12, ctx.currentTime);
+        this.masterCompressor.knee.setValueAtTime(8, ctx.currentTime);
+        this.masterCompressor.ratio.setValueAtTime(3.5, ctx.currentTime);
+        this.masterCompressor.attack.setValueAtTime(0.015, ctx.currentTime);
+        this.masterCompressor.release.setValueAtTime(0.12, ctx.currentTime);
+        this.masterCompressor.connect(ctx.destination);
+      }
+      if (!this.masterBus) {
+        this.masterBus = ctx.createGain();
+        this.masterBus.gain.value = 1.0;
+        this.masterBus.connect(this.masterCompressor);
+      }
+      if (!this.reverbConvolver || !this.reverbWetGain) {
+        this.reverbConvolver = ctx.createConvolver();
+        this.reverbWetGain = ctx.createGain();
+        this.masterBus.connect(this.reverbConvolver);
+        this.reverbConvolver.connect(this.reverbWetGain);
+        this.reverbWetGain.connect(this.masterCompressor);
+      }
+      this.setAmbience3D(song.ambience3D || 'wood-studio');
+      const dest = this.masterBus;
 
-      if (tr === 'guitarLead') {
-        const leadNode = new LeadGuitarTrackGainNode(ctx, dest, mixVol ?? TRACK_DEFAULT_VOL[tr], TRACK_PAN[tr]);
-        leadNode.setDrive(song.mixer.guitarLead.drive ?? 'overdrive');
-        this.trackGains[tr] = leadNode;
-      } else if (tr === 'guitarRhythm') {
-        this.trackGains[tr] = new GuitarRhythmTrackGainNode(
-          ctx,
-          dest,
-          mixVol ?? TRACK_DEFAULT_VOL[tr],
-          TRACK_PAN[tr],
-          song.guitarModel,
-          song.stringGauge
-        );
-      } else {
-        this.trackGains[tr] = new TrackGainNode(ctx, dest, mixVol ?? TRACK_DEFAULT_VOL[tr], TRACK_PAN[tr]);
+      // สร้าง TrackGainNode สำหรับทุก track
+      const tracks: TrackId[] = ['guitarRhythm', 'guitarLead', 'bass', 'piano', 'drums', 'melody'];
+      for (const tr of tracks) {
+        this.trackGains[tr]?.disconnect();
+        const mixVol = tr === 'drums'
+          ? song.mixer.drums.volume
+          : tr === 'bass'
+          ? song.mixer.bass.volume
+          : tr === 'piano'
+          ? song.mixer.piano.volume
+          : tr === 'guitarLead'
+          ? song.mixer.guitarLead.volume
+          : tr === 'melody'
+          ? (song.mixer.melody?.volume ?? 85)
+          : song.mixer.guitarRhythm.volume;
+
+        if (tr === 'guitarLead') {
+          const leadNode = new LeadGuitarTrackGainNode(ctx, dest, mixVol ?? TRACK_DEFAULT_VOL[tr], TRACK_PAN[tr]);
+          leadNode.setDrive(song.mixer.guitarLead.drive ?? 'overdrive');
+          this.trackGains[tr] = leadNode;
+        } else if (tr === 'guitarRhythm') {
+          this.trackGains[tr] = new GuitarRhythmTrackGainNode(
+            ctx,
+            dest,
+            mixVol ?? TRACK_DEFAULT_VOL[tr],
+            TRACK_PAN[tr],
+            song.guitarModel,
+            song.stringGauge
+          );
+        } else if (tr === 'bass') {
+          this.trackGains[tr] = new BassTrackGainNode(ctx, dest, mixVol ?? TRACK_DEFAULT_VOL[tr], TRACK_PAN[tr]);
+        } else if (tr === 'piano') {
+          this.trackGains[tr] = new PianoTrackGainNode(ctx, dest, mixVol ?? TRACK_DEFAULT_VOL[tr], TRACK_PAN[tr]);
+        } else {
+          this.trackGains[tr] = new TrackGainNode(ctx, dest, mixVol ?? TRACK_DEFAULT_VOL[tr], TRACK_PAN[tr]);
+        }
+      }
+
+      // Vocal Track Gain Node (Studio HPF + Warmth + Presence EQ + Compressor + Chorus/Width)
+      this.vocalGain?.disconnect();
+      const vocalVol = song.mixer.vocal?.volume ?? 95;
+      this.vocalGain = new VocalStudioTrackGainNode(
+        ctx,
+        dest,
+        (song.mixer.vocal?.enabled ?? true) ? vocalVol : 0,
+        0.0,
+        song.mixer.vocal?.fxPreset ?? 'studio-warm'
+      );
+
+      // DrumSynth ต่อเข้า drumsGain.input
+      this.drumSynth?.dispose();
+      this.drumSynth = new DrumSynth(ctx, this.trackGains['drums']!.input);
+
+      // MelodySynth ต่อเข้า melodyGain.input
+      this.melodySynth?.dispose();
+      this.melodySynth = new MelodySynth(ctx, this.trackGains['melody']!.input);
+      this.melodySynth.setSound(song.mixer.melody?.sound ?? 'flute');
+
+      // คืน Soundfont เดิมก่อนโหลดชุดใหม่ ป้องกัน Leak เมื่อสลับรุ่นกีตาร์
+      for (const prevInst of Object.values(this.instruments)) {
+        try {
+          prevInst?.dispose();
+        } catch {}
+      }
+      this.instruments = {};
+
+      const leadInst = resolveLeadSoundfontInstrument(song);
+      const cacheStorage =
+        typeof caches !== 'undefined' ? new CacheStorage('demo_maker_smplr_v1') : undefined;
+
+      // โหลด Soundfont — 4 tracks (ไม่รวม drums)
+      const pitchedTracks: Array<{ id: TrackId; instrument: string }> = [
+        { id: 'guitarRhythm', instrument: GUITAR_INSTRUMENT[song.guitarModel] },
+        { id: 'guitarLead',   instrument: leadInst },
+        { id: 'bass',         instrument: 'acoustic_bass' },
+        { id: 'piano',        instrument: 'acoustic_grand_piano' },
+      ];
+
+      const total = pitchedTracks.length;
+      let loaded = 0;
+
+      const loadPromises = pitchedTracks.map(async ({ id, instrument }) => {
+        const sf = Soundfont(ctx, {
+          instrument,
+          kit: 'MusyngKite',
+          destination: this.trackGains[id]!.input,
+          volume: 100,
+          ...(cacheStorage ? { storage: cacheStorage } : {}),
+          onLoadProgress: () => {
+            // เรียกทุกครั้งที่ sample โหลดเสร็จ — ใช้สำหรับ per-instrument progress
+          },
+        });
+        await sf.ready;
+        this.instruments[id] = sf;
+        loaded++;
+        this.loadProgress = loaded / total;
+        onProgress?.(this.loadProgress);
+        this.emitStatus();
+      });
+
+      try {
+        await Promise.all(loadPromises);
+        this.loadedGuitarModel = song.guitarModel;
+        this.state = 'ready';
+        this.loadProgress = 1;
+        this.emitStatus();
+      } catch (err) {
+        this.state = 'error';
+        this.emitStatus();
+        throw err;
+      }
+    })();
+
+    this.activeInitPromise = runInit;
+    try {
+      await runInit;
+    } finally {
+      if (this.activeInitPromise === runInit) {
+        this.activeInitPromise = null;
       }
     }
+  }
 
-    // Vocal Track Gain Node (Studio HPF + Presence EQ + Vocal Compressor)
-    this.vocalGain?.disconnect();
-    const vocalVol = song.mixer.vocal?.volume ?? 95;
-    this.vocalGain = new VocalStudioTrackGainNode(
-      ctx,
-      dest,
-      (song.mixer.vocal?.enabled ?? true) ? vocalVol : 0,
-      0.0
-    );
-
-    // DrumSynth ต่อเข้า drumsGain.input
-    this.drumSynth?.dispose();
-    this.drumSynth = new DrumSynth(ctx, this.trackGains['drums']!.input);
-
-    // MelodySynth ต่อเข้า melodyGain.input
-    this.melodySynth?.dispose();
-    this.melodySynth = new MelodySynth(ctx, this.trackGains['melody']!.input);
-    this.melodySynth.setSound(song.mixer.melody?.sound ?? 'flute');
-
-    const leadModel = song.mixer.guitarLead.model || 'gibson-les-paul';
-    const leadInst = leadModel === 'gibson-les-paul'
-      ? (song.mixer.guitarLead.drive === 'clean' ? 'electric_guitar_clean' : 'overdriven_guitar')
-      : GUITAR_INSTRUMENT[leadModel];
-
-    // โหลด Soundfont — 4 tracks (ไม่รวม drums)
-    const pitchedTracks: Array<{ id: TrackId; instrument: string }> = [
-      { id: 'guitarRhythm', instrument: GUITAR_INSTRUMENT[song.guitarModel] },
-      { id: 'guitarLead',   instrument: leadInst },
-      { id: 'bass',         instrument: 'acoustic_bass' },
-      { id: 'piano',        instrument: 'acoustic_grand_piano' },
-    ];
-
-    const total = pitchedTracks.length;
-    let loaded = 0;
-
-    const loadPromises = pitchedTracks.map(async ({ id, instrument }) => {
-      const sf = Soundfont(ctx, {
-        instrument,
-        kit: 'MusyngKite',
-        destination: this.trackGains[id]!.input,
-        volume: 100,
-        onLoadProgress: () => {
-          // เรียกทุกครั้งที่ sample โหลดเสร็จ — ใช้สำหรับ per-instrument progress
-        },
-      });
-      await sf.ready;
-      this.instruments[id] = sf;
-      loaded++;
-      this.loadProgress = loaded / total;
-      onProgress?.(this.loadProgress);
-      this.emitStatus();
-    });
-
-    try {
-      await Promise.all(loadPromises);
-      this.loadedGuitarModel = song.guitarModel;
-      this.state = 'ready';
-      this.loadProgress = 1;
-      this.emitStatus();
-    } catch (err) {
-      this.state = 'error';
-      this.emitStatus();
-      throw err;
+  /** ล้างแซมเปิลเดิมเมื่อผู้ใช้เปลี่ยนโมเดลกีตาร์เพื่อให้ init โหลดเสียงรุ่นใหม่อย่างสะอาด */
+  invalidateLoadedInstruments() {
+    if (this.state === 'playing') {
+      this.stop();
     }
+    for (const inst of Object.values(this.instruments)) {
+      try {
+        inst?.dispose();
+      } catch {}
+    }
+    this.instruments = {};
+    this.loadedGuitarModel = null;
+    this.state = 'idle';
+    this.loadProgress = 0;
+    this.emitStatus();
   }
 
   // ─── Mixer volume ───
@@ -1171,9 +454,6 @@ class AudioEngine {
       return;
     }
     this.trackGains[track]?.setVolume(vol);
-    if (track === 'drums') {
-      this.drumSynth?.setVolume(vol);
-    }
   }
 
   setLeadDrive(drive: LeadGuitarDrive) {
@@ -1198,27 +478,41 @@ class AudioEngine {
     if (!this.ctx || !this.reverbConvolver || !this.reverbWetGain) return;
     if (this.currentAmbience === mode) return;
     this.currentAmbience = mode;
-    this.reverbConvolver.buffer = this.buildRoomImpulse(this.ctx, mode);
-    const wet = mode === 'unplugged-hall' ? 0.36 : mode === 'wood-studio' ? 0.22 : 0.12;
+    this.reverbConvolver.buffer = buildRoomImpulseBuffer(this.ctx, mode);
+    const wet = getAmbienceWetGain(mode);
     this.reverbWetGain.gain.setTargetAtTime(wet, this.ctx.currentTime, 0.05);
   }
 
-  /** อัปเดตความดังเฉพาะท่อนและโทนเสียงแตกกีตาร์ลีดแบบ Real-time ให้ตรงกับท่อนที่กำลังทำงาน */
-  private _applySectionMixAndDrive(song: SongProject, section: SongSection | undefined, nowTime: number) {
-    const sectionTracks = ['guitarRhythm', 'guitarLead', 'bass', 'piano', 'drums'] as const;
-    for (const track of sectionTracks) {
-      const mixerConf = song.mixer[track];
-      const baseEnabled = track === 'drums' ? mixerConf.enabled && mixerConf.style !== 'off' : mixerConf.enabled;
-      const secEnabled = section ? section.instruments[track] : true;
-      const secVol = section ? getSectionTrackVolume(section, track) : 100;
-      const effectiveVol = baseEnabled && secEnabled ? Math.round((mixerConf.volume * secVol) / 100) : 0;
-      this.setMixerVolume(track, effectiveVol);
+  setVocalFxPreset(preset: VocalFxPreset) {
+    const validPreset: VocalFxPreset =
+      preset === 'dry-natural' || preset === 'wide-chorus' ? preset : 'studio-warm';
+    if (this.vocalGain instanceof VocalStudioTrackGainNode) {
+      this.vocalGain.setFxPreset(validPreset);
+    }
+  }
+
+  /** Alias เพื่อความเข้ากันได้กับการเรียกตรงบน AudioEngine */
+  setFxPreset(preset: VocalFxPreset) {
+    this.setVocalFxPreset(preset);
+  }
+
+  /** อัปเดตความดังเฉพาะท่อน โทนเสียงแตกกีตาร์ลีด และ Auto-Ducking ขณะมีเสียงร้องจริง */
+  private _applySectionMixAndDrive(
+    song: SongProject,
+    section: SongSection | undefined,
+    nowTime: number,
+    flatBar?: FlatBar,
+    barIndex?: number
+  ) {
+    const mix = computeEffectiveBarMix(song, section, flatBar, barIndex);
+    const allTracks: TrackId[] = ['guitarRhythm', 'guitarLead', 'bass', 'piano', 'drums', 'melody'];
+    for (const track of allTracks) {
+      this.setMixerVolume(track, mix.volumes[track]);
     }
 
     const leadNode = this.trackGains['guitarLead'];
     if (leadNode instanceof LeadGuitarTrackGainNode) {
-      const secDrive = section?.instruments.guitarLeadDrive ?? song.mixer.guitarLead.drive ?? 'overdrive';
-      leadNode.setDrive(secDrive, nowTime);
+      leadNode.setDrive(mix.leadDrive, nowTime);
     }
   }
 
@@ -1228,10 +522,18 @@ class AudioEngine {
       this.playbackFlat = flattenSong(song);
     }
     if (this.ctx) {
-      const activeSection =
-        (this.activeBarIndex >= 0 ? this.playbackFlat[this.activeBarIndex]?.section : undefined) ??
-        song.sections[0];
-      this._applySectionMixAndDrive(song, activeSection, this.ctx.currentTime);
+      const activeFlatBar = this.activeBarIndex >= 0 ? this.playbackFlat[this.activeBarIndex] : undefined;
+      const activeSection = activeFlatBar?.section ?? song.sections[0];
+      this._applySectionMixAndDrive(
+        song,
+        activeSection,
+        this.ctx.currentTime,
+        activeFlatBar,
+        this.activeBarIndex >= 0 ? this.activeBarIndex : undefined
+      );
+      if (song.mixer.vocal?.fxPreset) {
+        this.setVocalFxPreset(song.mixer.vocal.fxPreset);
+      }
     }
   }
 
@@ -1241,7 +543,7 @@ class AudioEngine {
       this.ctx = new AudioContext({ sampleRate: 44100, latencyHint: 'interactive' });
     }
     if (this.ctx.state === 'suspended') {
-      this.ctx.resume();
+      this.ctx.resume().catch(() => {});
     }
     const dest = this.masterBus || this.ctx.destination;
     if (!this.trackGains['melody']) {
@@ -1269,7 +571,7 @@ class AudioEngine {
     this.state = 'playing';
 
     if (this.ctx?.state === 'suspended') {
-      this.ctx.resume();
+      this.ctx.resume().catch(() => {});
     }
 
     this.activeBarIndex = barIndex;
@@ -1315,32 +617,40 @@ class AudioEngine {
 
   // ─── Playback ───
 
-  play(song: SongProject, fromBar = 0) {
+  play(song: SongProject, fromBar = 0, options?: PlayOptions) {
     if (this.state !== 'ready' && this.state !== 'playing') return;
     this.stop();
 
     const flat = flattenSong(song);
     if (flat.length === 0) return;
 
+    this.playBounds = options?.playRangeOnce ?? null;
     this.playbackFlat = flat;
     this.isPlayingFlag = true;
     this.state = 'playing';
+    this._currentSong = song;
 
     if (this.ctx?.state === 'suspended') {
-      this.ctx.resume();
+      this.ctx.resume().catch(() => {});
     }
 
     const startAudioTime = (this.ctx?.currentTime ?? 0) + 0.08;
     this.nextBarAudioTime = startAudioTime;
 
-    // Count-in
-    if (song.countInEnabled && fromBar === 0) {
+    const effectiveFromBar =
+      this.playBounds && this.playBounds.startBar >= 0 && this.playBounds.startBar < flat.length
+        ? Math.max(this.playBounds.startBar, Math.min(this.playBounds.endBar, fromBar))
+        : fromBar;
+
+    // Count-in (ข้าม Count-in เมื่อเล่นเฉพาะท่อน Play-Section-Once)
+    if (song.countInEnabled && effectiveFromBar === 0 && !this.playBounds) {
       this._scheduleCountIn(song, () => {
+        if (!this.isPlayingFlag) return;
         this.nextBarAudioTime = Math.max((this.ctx?.currentTime ?? 0) + 0.04, this.nextBarAudioTime);
-        this._playFromBar(song, fromBar);
+        this._playFromBar(song, effectiveFromBar, true);
       });
     } else {
-      this._playFromBar(song, fromBar);
+      this._playFromBar(song, effectiveFromBar, true);
     }
   }
 
@@ -1365,13 +675,154 @@ class AudioEngine {
     const song = this._currentSong;
     if (!song) return;
     this._clearTimer();
+    this._stopAllVocals();
     this.nextBarAudioTime = (this.ctx?.currentTime ?? 0) + 0.05;
-    this._playFromBar(song, index);
+    this._playFromBar(song, index, true);
   }
 
-  private async getVocalBuffer(dataUrl: string): Promise<AudioBuffer | null> {
+  private _stopAllVocals() {
+    this.takePlaybackEpoch += 1;
+    if (this.activeVocalSource) {
+      try {
+        this.activeVocalSource.stop();
+        this.activeVocalSource.disconnect();
+      } catch {}
+      this.activeVocalSource = null;
+    }
+    this.activeTakeSources.forEach((src) => {
+      try {
+        src.stop();
+        src.disconnect();
+      } catch {}
+    });
+    this.activeTakeSources.clear();
+    this.activeTakeGains.forEach((gainNode) => {
+      try {
+        gainNode.disconnect();
+      } catch {}
+    });
+    this.activeTakeGains.clear();
+  }
+
+  private async _scheduleActiveVocalTakes(song: SongProject, fromBar: number, fromBarAudioTime: number) {
+    if (!this.ctx || !this.vocalGain) return;
+    if (!(song.mixer.vocal?.enabled ?? true)) return;
+
+    const activeTakes = (song.vocalTakes || []).filter((t) => t.isActive && !!t.audioDataUrl);
+    if (activeTakes.length === 0) return;
+
+    const epoch = this.takePlaybackEpoch;
+    const presetToApply = song.mixer.vocal?.fxPreset ?? activeTakes[0].fxPreset ?? 'studio-warm';
+    this.setVocalFxPreset(presetToApply);
+
+    await Promise.all(
+      activeTakes.map(async (take) => {
+        if (!take.audioDataUrl) return;
+        const quickSlice = computeTakePlaybackSlice(song, take, fromBar, song.vocalLatencyOffsetMs || 0);
+        if (!quickSlice.shouldPlay) return;
+
+        const isAiTts = isAiTtsVocalTake(take);
+        const span = isAiTts ? resolveVocalTakeBarSpan(song, take) : null;
+        const barCount = span ? span.endGlobalBarIndex - span.startGlobalBarIndex + 1 : 4;
+        const buffer = await this.getVocalBuffer(
+          take.audioDataUrl,
+          isAiTts,
+          isAiTts ? quickSlice.targetSpanSec : undefined,
+          barCount
+        );
+        if (!buffer || epoch !== this.takePlaybackEpoch || !this.isPlayingFlag || !this.ctx || !this.vocalGain) {
+          return;
+        }
+
+        const plan = computeVocalTakePlaybackPlan(
+          song,
+          take,
+          activeTakes,
+          buffer.duration,
+          fromBar,
+          song.vocalLatencyOffsetMs || 0
+        );
+        if (!plan.shouldPlay) return;
+
+        const nowAfterDecode = this.ctx.currentTime;
+        const desiredStartTime = fromBarAudioTime + plan.delaySec;
+        let actualWhen = desiredStartTime;
+        let offset = plan.bufferOffsetSec;
+
+        if (desiredStartTime < nowAfterDecode) {
+          offset += (nowAfterDecode - desiredStartTime) * plan.playbackRate;
+          actualWhen = nowAfterDecode;
+        }
+
+        if (offset >= buffer.duration - 0.01) return;
+
+        const src = this.ctx.createBufferSource();
+        src.buffer = buffer;
+        if (plan.playbackRate !== 1.0 && src.playbackRate) {
+          if (typeof src.playbackRate.setValueAtTime === 'function') {
+            src.playbackRate.setValueAtTime(plan.playbackRate, actualWhen);
+          } else {
+            src.playbackRate.value = plan.playbackRate;
+          }
+        }
+
+        const takeGain = this.ctx.createGain();
+        src.connect(takeGain);
+        takeGain.connect(this.vocalGain.input);
+
+        let stopAtTime: number | null = null;
+        if (plan.stopAfterDelaySec !== null) {
+          const plannedStopTime = fromBarAudioTime + plan.stopAfterDelaySec;
+          if (plannedStopTime <= actualWhen + 0.02) {
+            try {
+              src.disconnect();
+              takeGain.disconnect();
+            } catch {}
+            return;
+          }
+          stopAtTime = plannedStopTime;
+          const plannedFadeStart =
+            plan.fadeOutStartDelaySec !== null
+              ? Math.max(actualWhen, Math.min(plannedStopTime - 0.01, fromBarAudioTime + plan.fadeOutStartDelaySec))
+              : Math.max(actualWhen, plannedStopTime - 0.04);
+          takeGain.gain.setValueAtTime(1.0, actualWhen);
+          takeGain.gain.setValueAtTime(1.0, plannedFadeStart);
+          takeGain.gain.linearRampToValueAtTime(0.0, plannedStopTime);
+        }
+
+        src.onended = () => {
+          try {
+            src.disconnect();
+            takeGain.disconnect();
+          } catch {}
+          this.activeTakeSources.delete(src);
+          this.activeTakeGains.delete(takeGain);
+        };
+        this.activeTakeSources.add(src);
+        this.activeTakeGains.add(takeGain);
+        src.start(actualWhen, Math.max(0, offset));
+        if (stopAtTime !== null) {
+          src.stop(stopAtTime + 0.005);
+        }
+      })
+    );
+  }
+
+  private async getVocalBuffer(
+    dataUrl: string,
+    trimTrailing = false,
+    targetSpanSec?: number,
+    barCount = 4
+  ): Promise<AudioBuffer | null> {
     if (!this.ctx) return null;
-    const cached = this.vocalBufferCache.get(dataUrl);
+    const spanKey =
+      trimTrailing && targetSpanSec && targetSpanSec > 0
+        ? `${targetSpanSec.toFixed(2)}:b${barCount}`
+        : trimTrailing
+          ? 'raw'
+          : 'lead';
+    const cacheKey = `${spanKey}:${dataUrl}`;
+    const cached = this.vocalBufferCache.get(cacheKey);
     if (cached) return cached;
 
     try {
@@ -1382,13 +833,21 @@ class AudioEngine {
       for (let i = 0; i < binaryStr.length; i++) {
         bytes[i] = binaryStr.charCodeAt(i);
       }
-      const buffer = await this.ctx.decodeAudioData(bytes.buffer.slice(0));
+      const decoded = await this.ctx.decodeAudioData(bytes.buffer.slice(0));
+      const leadingTrimmed = trimAudioBufferLeadingSilence(this.ctx, decoded);
+      const trailingTrimmed = trimTrailing
+        ? trimAudioBufferTrailingSilence(this.ctx, leadingTrimmed)
+        : leadingTrimmed;
+      const buffer =
+        trimTrailing && targetSpanSec && targetSpanSec > 0
+          ? prepareAiTtsAudioBufferForSpan(this.ctx, trailingTrimmed, targetSpanSec, barCount)
+          : trailingTrimmed;
       // Bounded cache ป้องกัน Memory Leaks จากการอัดหลายสิบคลิป
       if (this.vocalBufferCache.size > 40) {
         const firstKey = this.vocalBufferCache.keys().next().value;
         if (firstKey) this.vocalBufferCache.delete(firstKey);
       }
-      this.vocalBufferCache.set(dataUrl, buffer);
+      this.vocalBufferCache.set(cacheKey, buffer);
       return buffer;
     } catch {
       return null;
@@ -1424,7 +883,7 @@ class AudioEngine {
 
   private _currentSong: SongProject | null = null;
 
-  private _playFromBar(song: SongProject, barIndex: number) {
+  private _playFromBar(song: SongProject, barIndex: number, scheduleContinuousTakes = false) {
     const activeSong = this._currentSong || song;
     this._currentSong = activeSong;
     this.playbackFlat = flattenSong(activeSong);
@@ -1433,6 +892,7 @@ class AudioEngine {
 
     if (barIndex >= flat.length) {
       // จบเพลง
+      this._stopAllVocals();
       this.isPlayingFlag = false;
       this.state = 'ready';
       this.activeBarIndex = -1;
@@ -1452,8 +912,12 @@ class AudioEngine {
     const now = Math.max(ctx.currentTime + 0.04, this.nextBarAudioTime);
     this.nextBarAudioTime = now + timing.barSec;
 
-    // ปรับความดังเฉพาะท่อนและเสียงแตกกีตาร์ลีดตามท่อน
-    this._applySectionMixAndDrive(activeSong, flat[barIndex].section, now);
+    if (scheduleContinuousTakes) {
+      void this._scheduleActiveVocalTakes(activeSong, barIndex, now);
+    }
+
+    // ปรับความดังเฉพาะท่อน โทนเสียงแตกกีตาร์ลีด และ Auto-Ducking ตามท่อน
+    this._applySectionMixAndDrive(activeSong, flat[barIndex].section, now, flat[barIndex], barIndex);
 
     // Schedule events
     for (const ev of planned.events) {
@@ -1501,27 +965,36 @@ class AudioEngine {
       this.playVocalClip(vocalAudio, now, activeSong.vocalLatencyOffsetMs || 0);
     }
 
-    // กำหนดเวลาตื่นเพื่อ schedule ห้องถัดไปล่วงหน้า 50ms ก่อนบาร์จบ
+    // กำหนดเวลาตื่นเพื่อ schedule ห้องถัดไปล่วงหน้า 50ms ก่อนบาร์จบ (รองรับ Single-Bar/Section Loop และ Play-Section-Once)
     const msUntilNext = Math.max(20, (this.nextBarAudioTime - ctx.currentTime - 0.05) * 1000);
     this.currentBarTimer = setTimeout(() => {
       if (!this.isPlayingFlag) return;
-      this._playFromBar(activeSong, barIndex + 1);
+      const nextBar = resolvePlaybackNextBar(
+        barIndex,
+        flat.length,
+        this.loopRange,
+        this.playBounds
+      );
+      if (nextBar < 0) {
+        this._playFromBar(activeSong, flat.length);
+      } else {
+        const isLoopWrap = nextBar <= barIndex;
+        if (isLoopWrap) {
+          this._stopAllVocals();
+        }
+        this._playFromBar(activeSong, nextBar, isLoopWrap);
+      }
     }, msUntilNext);
   }
 
   stop() {
     this._clearTimer();
     this.isPlayingFlag = false;
+    this.playBounds = null;
     this.nextBarAudioTime = 0;
     this._currentSong = null;
 
-    if (this.activeVocalSource) {
-      try {
-        this.activeVocalSource.stop();
-        this.activeVocalSource.disconnect();
-      } catch {}
-      this.activeVocalSource = null;
-    }
+    this._stopAllVocals();
 
     // หยุดเสียง smplr ทั้งหมด
     for (const inst of Object.values(this.instruments)) {
@@ -1563,10 +1036,17 @@ class AudioEngine {
     this.masterCompressor?.disconnect();
     this.masterCompressor = null;
     this.vocalBufferCache.clear();
+    for (const inst of Object.values(this.instruments)) {
+      try {
+        inst?.dispose();
+      } catch {}
+    }
     this.drumSynth?.dispose();
     this.melodySynth?.dispose();
-    this.ctx?.close();
+    this.ctx?.close().catch(() => {});
     this.ctx = null;
+    this.loadedGuitarModel = null;
+    this.activeInitPromise = null;
     this.instruments = {};
     this.trackGains = {};
     this.drumSynth = null;

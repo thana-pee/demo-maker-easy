@@ -7,6 +7,7 @@ import {
   getCloudConfig,
   saveCloudConfig,
   isCloudConfigured,
+  signInWithGoogleOAuth,
   signInWithEmailOtp,
   verifyEmailOtp,
   signOutUser,
@@ -128,6 +129,15 @@ export const AccountSyncModal: React.FC<AccountSyncModalProps> = ({
     const res = await onSyncNow();
     setIsSubmitting(false);
     setFeedback({ ok: res.success, text: res.message });
+  };
+
+  const handleGoogleSignIn = () => {
+    setFeedback(null);
+    const res = signInWithGoogleOAuth();
+    setFeedback({ ok: res.success, text: res.message });
+    if (res.status) {
+      onAuthChange(res.user, res.status);
+    }
   };
 
   const handleSaveCloudSettings = (e: React.FormEvent) => {
@@ -278,16 +288,54 @@ export const AccountSyncModal: React.FC<AccountSyncModalProps> = ({
             </button>
           </div>
         ) : (
-          <div className="pt-2 border-t border-slate-100 space-y-2.5">
-            <form onSubmit={handleSendMagicLink} className="space-y-2">
-              <label className="text-xs font-bold text-slate-700 block">
+          <div className="pt-2 border-t border-slate-100 space-y-3">
+            {/* 1-Click Google OAuth Sign-In CTA */}
+            <div className="space-y-1.5">
+              <button
+                type="button"
+                onClick={handleGoogleSignIn}
+                disabled={isSubmitting}
+                className="w-full py-2.5 px-4 rounded-2xl bg-white hover:bg-slate-50 border border-slate-300 shadow-xs text-slate-900 font-black text-sm transition cursor-pointer flex items-center justify-center gap-2.5"
+              >
+                <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    fill="#EA4335"
+                    d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+                  />
+                  <path
+                    fill="#4285F4"
+                    d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                  />
+                </svg>
+                <span>{lang === 'th' ? 'เข้าสู่ระบบด้วย Google' : 'Continue with Google'}</span>
+              </button>
+              <p className="text-[11px] text-emerald-700 bg-emerald-50/70 border border-emerald-200/80 rounded-xl px-3 py-1.5 leading-relaxed">
                 {lang === 'th'
-                  ? 'เข้าสู่ระบบด้วยอีเมล (Magic Link / Email OTP)'
-                  : 'Sign in with Email (Magic Link / OTP)'}
+                  ? '🎵 โหมด Guest ใช้งานแต่งเพลง อัดร้อง (Vocal Booth) และ Export MP3 / MIDI ได้ฟรี 100% — ล็อกอินเมื่อต้องการซิงค์ข้ามเครื่องหรือเติมเครดิต'
+                  : '🎵 Guest Mode is 100% free for songwriting, Vocal Booth & MP3/MIDI export. Sign in to sync across devices or top up AI credits.'}
+              </p>
+            </div>
+
+            <form onSubmit={handleSendMagicLink} className="space-y-2 pt-1 border-t border-slate-100">
+              <label htmlFor="account-email-input" className="text-xs font-bold text-slate-700 block">
+                {lang === 'th'
+                  ? 'หรือเข้าสู่ระบบด้วยอีเมล (Magic Link / Email OTP)'
+                  : 'Or sign in with Email (Magic Link / OTP)'}
               </label>
               <div className="flex gap-2">
                 <input
+                  id="account-email-input"
+                  name="email"
                   type="email"
+                  autoComplete="email"
                   required
                   value={emailInput}
                   onChange={(e) => setEmailInput(e.target.value)}
@@ -313,12 +361,16 @@ export const AccountSyncModal: React.FC<AccountSyncModalProps> = ({
 
             {otpSent && (
               <form onSubmit={handleVerifyOtp} className="p-3 rounded-xl bg-blue-50/70 border border-blue-200 space-y-2">
-                <label className="text-[11px] font-bold text-blue-900 block">
+                <label htmlFor="account-otp-input" className="text-[11px] font-bold text-blue-900 block">
                   {lang === 'th' ? 'หรือกรอกรหัส OTP 6 หลักจากอีเมล:' : 'Or enter 6-digit OTP code from email:'}
                 </label>
                 <div className="flex gap-2">
                   <input
+                    id="account-otp-input"
+                    name="otp"
                     type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
                     value={otpToken}
                     onChange={(e) => setOtpToken(e.target.value)}
                     placeholder="123456"
@@ -351,6 +403,8 @@ export const AccountSyncModal: React.FC<AccountSyncModalProps> = ({
           {showAdvanced && (
             <form onSubmit={handleSaveCloudSettings} className="mt-2 space-y-2 p-3 rounded-xl bg-slate-50 border border-slate-200">
               <input
+                id="supabase-url-input"
+                name="supabaseUrl"
                 type="url"
                 value={supabaseUrl}
                 onChange={(e) => setSupabaseUrl(e.target.value)}
@@ -358,6 +412,8 @@ export const AccountSyncModal: React.FC<AccountSyncModalProps> = ({
                 className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-xs bg-white"
               />
               <input
+                id="supabase-anon-key-input"
+                name="supabaseAnonKey"
                 type="password"
                 value={supabaseAnonKey}
                 onChange={(e) => setSupabaseAnonKey(e.target.value)}

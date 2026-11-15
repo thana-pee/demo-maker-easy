@@ -24,9 +24,13 @@ import {
   MicVocal,
   Minus,
   Plus,
+  Undo2,
+  Redo2,
 } from 'lucide-react';
 import { SongProject, TimeSignature, AppViewMode } from '@/types/song';
 import type { CloudSyncStatus, CloudUser } from '@/lib/cloudSync';
+import { getTransposedKeyName } from '@/lib/chordUtils';
+import { DEFAULT_STARTER_CREDITS } from '@/lib/creditManager';
 import { useLanguage } from '@/context/LanguageContext';
 import { useTheme, type ThemePreference } from '@/context/ThemeContext';
 
@@ -53,6 +57,10 @@ interface TransportBarProps {
   onOpenExportModal: () => void;
   onOpenLibraryModal: () => void;
   onUpdateSong: (updater: (prev: SongProject) => SongProject) => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
+  onUndo?: () => void;
+  onRedo?: () => void;
 }
 
 type HeaderPopover = null | 'ts' | 'bpm' | 'key' | 'capo' | 'more';
@@ -65,7 +73,6 @@ const SYNC_DOT_COLOR: Record<CloudSyncStatus, string> = {
   error: 'bg-rec-500',
 };
 
-const CHROMATIC_KEYS = ['F#', 'G', 'Ab', 'A', 'Bb', 'B', 'C', 'C#', 'D', 'Eb', 'E', 'F'];
 
 export const TransportBar: React.FC<TransportBarProps> = ({
   song,
@@ -78,7 +85,7 @@ export const TransportBar: React.FC<TransportBarProps> = ({
   isZenMode = false,
   cloudUser,
   syncStatus = 'local-only',
-  creditBalance = 30,
+  creditBalance = DEFAULT_STARTER_CREDITS,
   onTogglePlay,
   onStop,
   onToggleCountIn,
@@ -90,6 +97,10 @@ export const TransportBar: React.FC<TransportBarProps> = ({
   onOpenExportModal,
   onOpenLibraryModal,
   onUpdateSong,
+  canUndo = false,
+  canRedo = false,
+  onUndo,
+  onRedo,
 }) => {
   const { lang, t, toggleLang } = useLanguage();
   const { themePref, resolvedTheme, setThemePref, toggleTheme } = useTheme();
@@ -100,9 +111,7 @@ export const TransportBar: React.FC<TransportBarProps> = ({
   const beatsPerBar = song.timeSignature === '3/4' ? 3 : song.timeSignature === '6/8' ? 6 : 4;
 
   const currentKeyName = () => {
-    const baseIdx = 6;
-    const targetIdx = (baseIdx + song.transposeSemitones + 120) % 12;
-    return CHROMATIC_KEYS[targetIdx];
+    return getTransposedKeyName(song.baseKey, song.transposeSemitones);
   };
 
   const changeTranspose = (delta: number) => {
@@ -153,6 +162,24 @@ export const TransportBar: React.FC<TransportBarProps> = ({
         return;
       }
 
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !isTyping) {
+        const keyLower = e.key.toLowerCase();
+        if (keyLower === 'z') {
+          e.preventDefault();
+          if (e.shiftKey) {
+            onRedo?.();
+          } else {
+            onUndo?.();
+          }
+          return;
+        }
+        if (keyLower === 'y') {
+          e.preventDefault();
+          onRedo?.();
+          return;
+        }
+      }
+
       if (e.code === 'Space' && !isTyping && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
         onTogglePlay();
@@ -160,7 +187,7 @@ export const TransportBar: React.FC<TransportBarProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [openPopover, isSoundPanelOpen, isPlaying, onStop, onTogglePlay]);
+  }, [openPopover, isSoundPanelOpen, isPlaying, onStop, onTogglePlay, onUndo, onRedo]);
 
   const togglePopover = (key: Exclude<HeaderPopover, null>) => {
     setOpenPopover((prev) => (prev === key ? null : key));
@@ -269,6 +296,32 @@ export const TransportBar: React.FC<TransportBarProps> = ({
 
             {/* Right: Actions Cluster */}
             <div className="flex items-center justify-end gap-1 sm:gap-1.5 shrink-0">
+              {/* Studio History Undo / Redo (Ctrl+Z / Ctrl+Y) */}
+              {(onUndo || onRedo) && (
+                <div className="inline-flex items-center gap-0.5 mr-0.5">
+                  <button
+                    type="button"
+                    disabled={!canUndo}
+                    onClick={() => onUndo?.()}
+                    title={lang === 'th' ? 'ย้อนกลับ (Ctrl+Z)' : 'Undo (Ctrl+Z)'}
+                    aria-label={lang === 'th' ? 'ย้อนกลับ (Ctrl+Z)' : 'Undo (Ctrl+Z)'}
+                    className="w-8 h-8 rounded-lg inline-flex items-center justify-center text-ink-700 hover:text-ink-900 hover:bg-surface-inset disabled:opacity-35 disabled:pointer-events-none transition cursor-pointer"
+                  >
+                    <Undo2 className="w-4 h-4" strokeWidth={1.75} />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!canRedo}
+                    onClick={() => onRedo?.()}
+                    title={lang === 'th' ? 'ทำซ้ำ (Ctrl+Y)' : 'Redo (Ctrl+Y)'}
+                    aria-label={lang === 'th' ? 'ทำซ้ำ (Ctrl+Y)' : 'Redo (Ctrl+Y)'}
+                    className="w-8 h-8 rounded-lg inline-flex items-center justify-center text-ink-700 hover:text-ink-900 hover:bg-surface-inset disabled:opacity-35 disabled:pointer-events-none transition cursor-pointer"
+                  >
+                    <Redo2 className="w-4 h-4" strokeWidth={1.75} />
+                  </button>
+                </div>
+              )}
+
               {/* AI & Advance Mode Credits Pill */}
               {onOpenAdvanceModal && (
                 <button
@@ -464,6 +517,8 @@ export const TransportBar: React.FC<TransportBarProps> = ({
               <button
                 type="button"
                 onClick={onOpenExportModal}
+                aria-label={lang === 'th' ? 'แชร์ / ส่งออก' : 'Export / Share'}
+                title={lang === 'th' ? 'แชร์ / ส่งออก' : 'Export / Share'}
                 className="h-9 px-3 sm:px-4 rounded-xl bg-accent-500 hover:bg-accent-hover text-white font-semibold text-sm inline-flex items-center gap-1.5 shadow-xs transition cursor-pointer shrink-0"
               >
                 <Share2 className="w-4 h-4" strokeWidth={1.75} />

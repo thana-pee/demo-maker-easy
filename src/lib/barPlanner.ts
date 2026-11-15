@@ -49,6 +49,10 @@ export type DrumVoice =
   | 'kick'
   | 'snare'
   | 'hat'
+  | 'openHat'
+  | 'tomHigh'
+  | 'tomLow'
+  | 'woodblock'
   | 'crash'
   | 'click';
 
@@ -448,6 +452,80 @@ function planRhythm(ctx: PlanCtx) {
     return;
   }
 
+  if (style === 'lukthung-bounce') {
+    const N = timing.stepsPerBar;
+    const tightRel = 0.28;
+    const bounceHits: StrumHit[] =
+      song.timeSignature === '4/4'
+        ? [
+            { step: 0, dir: 'D', vel: 64 },
+            { step: 2, dir: 'U', vel: 88 },
+            { step: 6, dir: 'U', vel: 86 },
+            { step: 8, dir: 'D', vel: 66 },
+            { step: 10, dir: 'U', vel: 88 },
+            { step: 14, dir: 'U', vel: 84 },
+          ]
+        : song.timeSignature === '3/4'
+          ? [
+              { step: 0, dir: 'D', vel: 64 },
+              { step: 2, dir: 'U', vel: 86 },
+              { step: 6, dir: 'U', vel: 84 },
+              { step: 10, dir: 'U', vel: 82 },
+            ]
+          : [
+              { step: 0, dir: 'D', vel: 64 },
+              { step: 2, dir: 'U', vel: 84 },
+              { step: 6, dir: 'D', vel: 62 },
+              { step: 8, dir: 'U', vel: 86 },
+              { step: 10, dir: 'U', vel: 80 },
+            ];
+    if (ctx.isSongEnd && !ctx.isBreak) {
+      const si = ctx.segs.length - 1;
+      const sustainDur = Math.max(timing.barSec + 2.4, 2.6);
+      emitStrum(ctx, voicings[si], 0, 'D', 86 * vScale + ctx.gaugeVel, OUTRO_STRUM_GAP_MS, sustainDur, release);
+      return;
+    }
+    bounceHits.forEach((hit) => {
+      const si = segIndexAt(ctx.segs, hit.step);
+      const isOffChop = hit.dir === 'U';
+      const durSteps = isOffChop ? 1.45 : 2.0;
+      const dur = Math.min(durSteps * timing.stepSec, (N - hit.step) * timing.stepSec) * ctx.gaugeDur;
+      const human = (ctx.rng() - 0.5) * 6;
+      const accent = hit.step === 0 && fb.isFirstOfSection ? 4 : 0;
+      emitStrum(ctx, voicings[si], hit.step, hit.dir, (hit.vel + accent + human) * vScale + ctx.gaugeVel, [18, 24], dur, tightRel);
+    });
+    return;
+  }
+
+  if (style === 'rock-power') {
+    const N = timing.stepsPerBar;
+    const chugSteps = Array.from({ length: Math.floor(N / 2) }, (_, i) => i * 2);
+    if (ctx.isSongEnd && !ctx.isBreak) {
+      const finalSweepStep = ctx.segs.length > 1 ? ctx.segs[ctx.segs.length - 1].startStep : Math.floor(N / 2);
+      chugSteps.forEach((step) => {
+        if (step >= finalSweepStep) return;
+        const si = segIndexAt(ctx.segs, step);
+        emitStrum(ctx, voicings[si], step, 'D', 84 * vScale + ctx.gaugeVel, [18, 24], 1.8 * timing.stepSec * ctx.gaugeDur, 0.35);
+      });
+      const finalSi = ctx.segs.length - 1;
+      const sustainDur = Math.max((N - finalSweepStep) * timing.stepSec + 2.6, 2.8);
+      emitStrum(ctx, voicings[finalSi], finalSweepStep, 'D', 94 * vScale + ctx.gaugeVel, OUTRO_STRUM_GAP_MS, sustainDur, release);
+      return;
+    }
+    const halfStep = Math.floor(N / 2);
+    chugSteps.forEach((step, idx) => {
+      const si = segIndexAt(ctx.segs, step);
+      const nextStep = idx + 1 < chugSteps.length ? chugSteps[idx + 1] : N;
+      const dur = ((nextStep - step) * timing.stepSec + 0.06) * ctx.gaugeDur;
+      const isAccent = step === 0 || step === halfStep;
+      const isBackbeat = step === 4 || step === 12;
+      const baseVel = isAccent ? 94 : isBackbeat ? 84 : 70;
+      const human = (ctx.rng() - 0.5) * 5;
+      emitStrum(ctx, voicings[si], step, 'D', (baseVel + human) * vScale + ctx.gaugeVel, [20, 26], dur, 0.38);
+    });
+    return;
+  }
+
   const pats = STRUM_PATTERNS[song.timeSignature][style === 'soft-strum' ? 'soft-strum' : 'campfire-strum'];
   const baseGap = style === 'soft-strum' ? STRUM_GAP_MS.soft : STRUM_GAP_MS.campfire;
 
@@ -486,7 +564,9 @@ function planRhythm(ctx: PlanCtx) {
     const si = segIndexAt(ctx.segs, hit.step);
     const dur = ((nextStep - hit.step) * timing.stepSec + 0.1) * ctx.gaugeDur;
     const v = i === lastLateUpIdx ? embellishVoicing(voicings[si], ctx.segs[si].parsed) : voicings[si];
-    emitStrum(ctx, v, hit.step, hit.dir, hit.vel * vScale + ctx.gaugeVel, baseGap, dur, release);
+    // Dynamic groove accent contour: เน้นหัวห้อง Beat 1 (และหัวท่อนใหม่) กับน้ำหนักรองที่ Beat 3
+    const downbeatAccent = hit.step === 0 ? (fb.isFirstOfSection ? 5 : 3) : hit.step === 8 ? 2 : 0;
+    emitStrum(ctx, v, hit.step, hit.dir, (hit.vel + downbeatAccent) * vScale + ctx.gaugeVel, baseGap, dur, release);
   });
 }
 
@@ -607,18 +687,26 @@ function planLead(ctx: PlanCtx) {
 
   if (style === 'riff-fills') {
     const sc0 = leadScale(ctx.segs[ctx.segs.length - 1].parsed);
-    if (entering) {
+    const hasLyrics = fb.bar.lyrics.trim().length > 0;
+    const hasPrevSectionPickup = !!ctx.prev && !isTrackOn(song, ctx.prev.section, 'guitarLead');
+    if (entering && (!hasLyrics || hasPrevSectionPickup)) {
       const sc = leadScale(ctx.segs[0].parsed);
       pushNote(ctx, 'guitarLead', 0, sc.notes[sc.chordIdx[2]], 8 * timing.stepSec * ctx.gaugeDur, 88 * ctx.intensity + ctx.gaugeVel, rel);
     }
-    if (fb.barInSection % 2 === 1) {
-      const fillSteps = N === 16 ? [N - 8, N - 6, N - 4, N - 2] : [N - 6, N - 4, N - 2];
+    const shouldPlayFill = hasLyrics
+      ? (fb.barInSection % 2 === 1 || fb.isLastOfSection)
+      : fb.barInSection % 2 === 1;
+    if (shouldPlayFill) {
+      // Vocal-Aware Call-and-Response: เมื่อห้องมีเนื้อร้อง เว้น step 0..N-7 ให้เสียงร้อง แล้วค่อยตอบท้ายห้อง N-6..N-1
+      const fillSteps = hasLyrics
+        ? [N - 6, N - 4, N - 2]
+        : (N === 16 ? [N - 8, N - 6, N - 4, N - 2] : [N - 6, N - 4, N - 2]);
       let idx = 7 - Math.floor(ctx.rng() * 2);
       fillSteps.forEach((step, i) => {
         const last = i === fillSteps.length - 1;
         if (last) idx = sc0.chordIdx.reduce((b, c) => (Math.abs(c - idx) < Math.abs(b - idx) ? c : b), sc0.chordIdx[0]);
         const dur = last ? (N - step) * timing.stepSec : 2 * timing.stepSec;
-        const v = (84 + i * 4) * ctx.intensity + ctx.gaugeVel;
+        const v = ((hasLyrics ? 78 : 84) + i * 4) * ctx.intensity + ctx.gaugeVel;
         pushNote(ctx, 'guitarLead', step * timing.stepSec + jitter(ctx, 3), sc0.notes[clamp(idx, 0, 9)], dur * ctx.gaugeDur, v, rel);
         idx -= 1 + (ctx.rng() < 0.4 ? 1 : 0);
         idx = Math.max(idx, 2);
@@ -659,8 +747,27 @@ function planLead(ctx: PlanCtx) {
       idx = inWin.reduce((b, c) => (Math.abs(c - idx) < Math.abs(b - idx) ? c : b), inWin[0]);
     }
     const midi = sc.notes[idx];
+    const prevMidi = lastMidi;
     lastMidi = midi;
     const isFirstInPhrase = i === 0 || step === seg.startStep;
+    const noteT = step * timing.stepSec + (step === 0 ? 0 : jitter(ctx, 3));
+
+    // Fret slide-in articulation: รูดสายสั้นๆ ก่อนเข้าโน้ตเป้าหมายเมื่อกระโดดช่วงเสียง >= 3 semitones กลางประโยค
+    if (
+      prevMidi !== null &&
+      i > 0 &&
+      step >= 4 &&
+      durSteps >= 4 &&
+      !ctx.isBreak &&
+      Math.abs(midi - prevMidi) >= 3 &&
+      ctx.rng() < 0.65
+    ) {
+      const slideFromMidi = clamp(midi > prevMidi ? midi - 2 : midi + 2, 48, 96);
+      const slideStartT = Math.max(0.01, noteT - 0.042);
+      const slideVel = Math.max(24, (isFirstInPhrase ? 42 : 36) * ctx.intensity + ctx.gaugeVel);
+      pushNote(ctx, 'guitarLead', slideStartT, slideFromMidi, 0.05, slideVel, 0.08);
+    }
+
     // Human Guitar Articulation:
     // โน้ตแรกของประโยคเป็น Pick Strike ดีดเต็มน้ำหนัก
     // โน้ตตามมาในลูกเป็น Hammer-on / Pull-off นุ่มนวลกว่า ไม่ดีดแข็งต๊อกๆ ทุกตัวเหมือนคีย์บอร์ด
@@ -672,7 +779,7 @@ function planLead(ctx: PlanCtx) {
     const v = (base + (isFirstInPhrase ? 4 : 0)) * ctx.intensity + ctx.gaugeVel + (ctx.rng() - 0.5) * 5;
     // Legato overlap: ปลายเสียงเกยเข้าหัวโน้ตถัดไป 0.025s ให้การเคลื่อนนิ้วต่อเนื่องเป็นเส้นเดียวกัน
     const legatoOverlap = (!isFirstInPhrase && durSteps <= 2) ? 0.025 : 0;
-    pushNote(ctx, 'guitarLead', step * timing.stepSec + (step === 0 ? 0 : jitter(ctx, 3)), midi, (durSteps * timing.stepSec + legatoOverlap) * ctx.gaugeDur, v, rel);
+    pushNote(ctx, 'guitarLead', noteT, midi, (durSteps * timing.stepSec + legatoOverlap) * ctx.gaugeDur, v, rel);
 
     // Double-stop บนท่อนพีคของโซโล่ (คู่สายบลูส์/ร็อกสไตล์ Gibson Les Paul)
     if (mode === 'fast' && durSteps >= 4 && isFirstInPhrase && ctx.fb.section.intensity === 'high') {
@@ -725,7 +832,7 @@ function planBass(ctx: PlanCtx) {
   const { song, fb, timing } = ctx;
   const style: BassStyle = fb.section.instruments.bassStyle ?? song.mixer.bass.style;
   const rel = 0.45;
-  const base = 80 * ctx.intensity;
+  const base = (80 + (fb.isFirstOfSection ? 4 : 0)) * ctx.intensity;
   const nextSegs =
     ctx.next && isTrackOn(song, ctx.next.section, 'bass')
       ? buildSegments(song, ctx.next.bar, timing)
@@ -756,6 +863,84 @@ function planBass(ctx: PlanCtx) {
       if (hasWalk) {
         const approachMidi = pickWalkingApproachNote(root, nextAnchorPc);
         pushNote(ctx, 'bass', walkT + jitter(ctx, 3), approachMidi, 2 * timing.stepSec * 0.9, base - 4, rel);
+      }
+      return;
+    }
+
+    if (style === 'lukthung-groove') {
+      const oct = root + 12 <= 52 ? root + 12 : root;
+      const bounceNotes: Array<{ offset: number; midi: number; durSteps: number; vel: number }> = [];
+      if (len >= 12) {
+        bounceNotes.push(
+          { offset: 0, midi: root, durSteps: 3, vel: base + 8 },
+          { offset: 4, midi: fifth, durSteps: 2, vel: base - 2 },
+          { offset: 6, midi: oct, durSteps: 1.8, vel: base + 2 },
+          { offset: 8, midi: root, durSteps: 3, vel: base + 6 },
+          { offset: 12, midi: fifth, durSteps: 2, vel: base },
+          {
+            offset: len - 2,
+            midi: hasWalk ? pickWalkingApproachNote(root, nextAnchorPc) : root,
+            durSteps: 1.8,
+            vel: base - 2,
+          }
+        );
+      } else if (len >= 6) {
+        const mid = len >= 8 ? 4 : 3;
+        bounceNotes.push(
+          { offset: 0, midi: root, durSteps: 2.5, vel: base + 6 },
+          { offset: mid, midi: fifth, durSteps: 1.8, vel: base },
+          {
+            offset: len - 2,
+            midi: hasWalk ? pickWalkingApproachNote(root, nextAnchorPc) : oct,
+            durSteps: 1.8,
+            vel: base - 2,
+          }
+        );
+      } else {
+        bounceNotes.push({ offset: 0, midi: root, durSteps: Math.max(1, len - (hasWalk && len >= 4 ? 2 : 0)), vel: base + 4 });
+        if (hasWalk && len >= 4) {
+          bounceNotes.push({
+            offset: len - 2,
+            midi: pickWalkingApproachNote(root, nextAnchorPc),
+            durSteps: 1.8,
+            vel: base - 3,
+          });
+        }
+      }
+      bounceNotes.forEach((n) => {
+        pushNote(
+          ctx,
+          'bass',
+          t0 + n.offset * timing.stepSec + (n.offset === 0 ? 0 : jitter(ctx, 3)),
+          n.midi,
+          n.durSteps * timing.stepSec,
+          n.vel,
+          rel
+        );
+      });
+      return;
+    }
+
+    if (style === 'rnb-syncopated') {
+      const oct = root + 12 <= 54 ? root + 12 : fifth;
+      if (len >= 12) {
+        pushNote(ctx, 'bass', t0, root, 5.5 * timing.stepSec, base + 8, rel);
+        pushNote(ctx, 'bass', t0 + 6 * timing.stepSec + jitter(ctx, 3), fifth, 1.8 * timing.stepSec, base, rel);
+        pushNote(ctx, 'bass', t0 + 7 * timing.stepSec + jitter(ctx, 2), root, 0.9 * timing.stepSec, base - 14, rel);
+        pushNote(ctx, 'bass', t0 + 10 * timing.stepSec + jitter(ctx, 3), oct, 2.6 * timing.stepSec, base + 2, rel);
+        const turnMidi = hasWalk ? pickWalkingApproachNote(root, nextAnchorPc) : fifth;
+        pushNote(ctx, 'bass', t0 + (len - 2) * timing.stepSec + jitter(ctx, 3), turnMidi, 1.8 * timing.stepSec, base - 2, rel);
+      } else if (len >= 6) {
+        pushNote(ctx, 'bass', t0, root, 3 * timing.stepSec, base + 6, rel);
+        pushNote(ctx, 'bass', t0 + Math.max(2, len - 4) * timing.stepSec + jitter(ctx, 3), oct, 1.5 * timing.stepSec, base - 2, rel);
+        const turnMidi = hasWalk ? pickWalkingApproachNote(root, nextAnchorPc) : fifth;
+        pushNote(ctx, 'bass', t0 + (len - 2) * timing.stepSec + jitter(ctx, 3), turnMidi, 1.8 * timing.stepSec, base - 4, rel);
+      } else {
+        const dur = hasWalk && len >= 4 ? Math.max(0.08, (len - 2) * timing.stepSec) : len * timing.stepSec + 0.1;
+        pushNote(ctx, 'bass', t0, root, dur, base + 4, rel);
+        if (hasWalk && len >= 4) {
+          pushNote(ctx, 'bass', walkT + jitter(ctx, 3), pickWalkingApproachNote(root, nextAnchorPc), 1.8 * timing.stepSec, base - 4, rel);
+        }
       }
       return;
     }
@@ -818,6 +1003,57 @@ function planPiano(ctx: PlanCtx) {
     return;
   }
 
+  const bassActive = isTrackOn(song, fb.section, 'bass');
+  const lowYieldScale = bassActive || fb.section.intensity === 'high' ? 0.65 : 1.0;
+
+  if (style === 'rnb-neo-chord' && !ctx.isLetRing) {
+    ctx.segs.forEach((seg) => {
+      const pc = pianoChord(seg.parsed);
+      const t0 = seg.startStep * timing.stepSec;
+      const len = seg.endStep - seg.startStep;
+      const dur = len * timing.stepSec + 0.12;
+      const seventh = 60 + ((seg.parsed.pc + (seg.parsed.isMinor ? 10 : 11)) % 12);
+      const ninth = 60 + ((seg.parsed.pc + 2) % 12);
+      const extNotes = [...pc.high];
+      const normExt = (m: number) => (m < pc.high[0] ? m + 12 : m);
+      const sNote = normExt(seventh);
+      const nNote = normExt(ninth);
+      if (!extNotes.some((x) => x % 12 === sNote % 12)) extNotes.push(sNote);
+      if (!extNotes.some((x) => x % 12 === nNote % 12)) extNotes.push(nNote);
+      extNotes.sort((a, b) => a - b);
+
+      // Smart Low-End Yielding: ลดกำลังมือซ้ายเมื่อเบสเล่นอยู่หรือความเข้มข้นท่อนสูง
+      pushNote(ctx, 'piano', t0, pc.low, dur, 56 * vs * lowYieldScale, rel);
+      extNotes.forEach((m, k) => {
+        const delay = (k + 1) * 0.016;
+        pushNote(ctx, 'piano', t0 + delay, m, Math.max(0.08, dur - delay), 52 * vs + (ctx.rng() - 0.5) * 6, rel);
+      });
+      if (!ctx.isBreak && len >= 8) {
+        const respStep = seg.startStep + Math.floor(len * 0.625);
+        const rt = respStep * timing.stepSec + jitter(ctx, 3);
+        const rDur = Math.max(0.08, (seg.endStep - respStep) * timing.stepSec);
+        extNotes.slice(1).forEach((m, k) => {
+          pushNote(ctx, 'piano', rt + k * 0.01, m, rDur, 42 * vs + (ctx.rng() - 0.5) * 5, 0.35);
+        });
+      }
+    });
+    return;
+  }
+
+  if (style === 'rock-organ-pad' && !ctx.isLetRing) {
+    ctx.segs.forEach((seg) => {
+      const pc = pianoChord(seg.parsed);
+      const t0 = seg.startStep * timing.stepSec;
+      const dur = (seg.endStep - seg.startStep) * timing.stepSec + 0.15;
+      const organTones = [...pc.high, pc.high[0] + 12];
+      pushNote(ctx, 'piano', t0, pc.low, dur, 52 * vs * lowYieldScale, rel);
+      organTones.forEach((m, k) => {
+        pushNote(ctx, 'piano', t0 + (k + 1) * 0.004, m, dur, 60 * vs + (ctx.rng() - 0.5) * 4, rel);
+      });
+    });
+    return;
+  }
+
   // Warm Pad / Let Ring: กดคอร์ดค้าง กระจายเสียงขึ้นเบาๆ
   ctx.segs.forEach((seg) => {
     const pc = pianoChord(seg.parsed);
@@ -832,7 +1068,19 @@ function planPiano(ctx: PlanCtx) {
 
 // ───────────────────────────── Drums ─────────────────────────────
 
-const HIT_PAN = { shaker: 0.45, cajonThump: -0.2, cajonSlap: -0.3, kick: 0, snare: -0.1, hat: 0.3, crash: 0.15 };
+const HIT_PAN = {
+  shaker: 0.45,
+  cajonThump: -0.2,
+  cajonSlap: -0.3,
+  kick: 0,
+  snare: -0.1,
+  hat: 0.3,
+  openHat: 0.34,
+  tomHigh: -0.18,
+  tomLow: 0.22,
+  woodblock: -0.35,
+  crash: 0.15,
+};
 
 function planDrums(ctx: PlanCtx) {
   const { song, fb, timing } = ctx;
@@ -846,8 +1094,11 @@ function planDrums(ctx: PlanCtx) {
   const at = (step: number) => step * timing.stepSec + jitter(ctx, 4);
 
   if (ctx.isLetRing) {
-    if (style === 'simple-kit') pushDrum(ctx, 'crash', 0, 75 * iv, HIT_PAN.crash);
-    else pushDrum(ctx, 'shaker', 0, 70 * iv, HIT_PAN.shaker);
+    if (style === 'simple-kit' || style === 'lukthung-3cha' || style === 'rnb-pocket' || style === 'rock-drive') {
+      pushDrum(ctx, 'crash', 0, 75 * iv, HIT_PAN.crash);
+    } else {
+      pushDrum(ctx, 'shaker', 0, 70 * iv, HIT_PAN.shaker);
+    }
     return;
   }
 
@@ -858,6 +1109,40 @@ function planDrums(ctx: PlanCtx) {
     const snares = ts === '4/4' ? [4, 12] : ts === '3/4' ? [4, 8] : [6];
     kicks.forEach((s) => pushDrum(ctx, 'kick', at(s), 86 * iv, HIT_PAN.kick));
     snares.forEach((s) => pushDrum(ctx, 'snare', at(s), 58 * iv, HIT_PAN.snare));
+  } else if (style === 'lukthung-3cha') {
+    const blocks = ts === '4/4' ? [0, 3, 6, 8, 12, 14] : ts === '3/4' ? [0, 3, 6, 10] : [0, 3, 6, 9];
+    const kicks = ts === '4/4' ? [0, 6, 8, 14] : ts === '3/4' ? [0, 6] : [0, 4, 6];
+    const snares = ts === '4/4' ? [4, ...(high ? [10] : []), 12] : ts === '3/4' ? [4, 8] : [3, 9];
+    const hats = ts === '4/4' ? [0, 2, 4, 8, 10, 12] : [0, 2, 4, 6, 8];
+    const openHats = ts === '4/4' ? [6, 14] : ts === '3/4' ? [10] : [4, 10];
+    blocks.forEach((s) => pushDrum(ctx, 'woodblock', at(s), (s % 8 === 0 ? 82 : 70) * iv, HIT_PAN.woodblock));
+    kicks.forEach((s) => pushDrum(ctx, 'kick', at(s), (s % 8 === 0 ? 90 : 76) * iv, HIT_PAN.kick));
+    snares.forEach((s) => pushDrum(ctx, 'snare', at(s), (s === 10 ? 52 : 74) * iv, HIT_PAN.snare));
+    hats.forEach((s) => pushDrum(ctx, 'hat', at(s), 42 * iv, HIT_PAN.hat));
+    openHats.forEach((s) => pushDrum(ctx, 'openHat', at(s), 58 * iv, HIT_PAN.openHat));
+  } else if (style === 'rnb-pocket') {
+    const kicks = ts === '4/4' ? [0, 7, 10, ...(high ? [14] : [])] : ts === '3/4' ? [0, 5] : [0, 4, 6];
+    const snares = ts === '4/4' ? [4, 12] : ts === '3/4' ? [4, 8] : [6];
+    const hats = ts === '4/4' ? [0, 2, 4, 8, 10, 12] : [0, 2, 4, 6, 8];
+    const openHats = ts === '4/4' ? [6, 14] : [10];
+    kicks.forEach((s) => pushDrum(ctx, 'kick', at(s), 88 * iv, HIT_PAN.kick));
+    snares.forEach((s) => pushDrum(ctx, 'snare', at(s) + 0.006, 76 * iv, HIT_PAN.snare));
+    if (ts === '4/4') pushDrum(ctx, 'snare', at(15), 34 * iv, HIT_PAN.snare);
+    hats.forEach((s) => pushDrum(ctx, 'hat', at(s), (s % 4 === 0 ? 48 : 34) * iv, HIT_PAN.hat));
+    openHats.forEach((s) => pushDrum(ctx, 'openHat', at(s), 52 * iv, HIT_PAN.openHat));
+  } else if (style === 'rock-drive') {
+    const kicks = ts === '4/4' ? [0, 6, 8, ...(high ? [10, 14] : [14])] : ts === '3/4' ? [0, 6] : [0, 6, 8];
+    const snares = ts === '4/4' ? [4, 12] : ts === '3/4' ? [4, 8] : [6];
+    const hats = ts === '4/4' ? [0, 2, 4, 6, 8, 10, 12] : [0, 2, 4, 6, 8];
+    const openHats = ts === '4/4' ? [14] : [10];
+    kicks.forEach((s) => pushDrum(ctx, 'kick', at(s), 94 * iv, HIT_PAN.kick));
+    snares.forEach((s) => pushDrum(ctx, 'snare', at(s), 88 * iv, HIT_PAN.snare));
+    hats.forEach((s) => pushDrum(ctx, 'hat', at(s), (s % 4 === 0 ? 54 : 42) * iv, HIT_PAN.hat));
+    openHats.forEach((s) => pushDrum(ctx, 'openHat', at(s), 62 * iv, HIT_PAN.openHat));
+    if (fb.isLastOfSection) {
+      pushDrum(ctx, 'tomHigh', at(N - 3), 82 * iv, HIT_PAN.tomHigh);
+      pushDrum(ctx, 'tomLow', at(N - 1), 86 * iv, HIT_PAN.tomLow);
+    }
   } else {
     evenSteps.forEach((s) => pushDrum(ctx, 'shaker', at(s), (s % 4 === 0 ? 50 : 38) * iv, HIT_PAN.shaker));
     if (high) {
@@ -871,8 +1156,11 @@ function planDrums(ctx: PlanCtx) {
 
   // กลองเข้าท่อนใหม่: เน้นจังหวะ 1 ให้ชัด (ไม่โผล่มาเบาๆ)
   if (entering) {
-    if (style === 'simple-kit') pushDrum(ctx, 'crash', 0, 88, HIT_PAN.crash);
-    else pushDrum(ctx, 'shaker', 0, 95, HIT_PAN.shaker);
+    if (style === 'simple-kit' || style === 'lukthung-3cha' || style === 'rnb-pocket' || style === 'rock-drive') {
+      pushDrum(ctx, 'crash', 0, 88, HIT_PAN.crash);
+    } else {
+      pushDrum(ctx, 'shaker', 0, 95, HIT_PAN.shaker);
+    }
   }
 }
 
@@ -890,6 +1178,31 @@ function planDrumFill(ctx: PlanCtx) {
     for (let s = start; s < N - 4; s += 2) pushDrum(ctx, 'hat', at(s), 36, HIT_PAN.hat);
     for (let s = N - 4; s < N; s++) pushDrum(ctx, 'snare', at(s), 40 + (s - (N - 4)) * 18, HIT_PAN.snare);
     pushDrum(ctx, 'kick', at(N - 4), 72, HIT_PAN.kick);
+    return;
+  }
+  if (style === 'rock-drive') {
+    for (let s = start; s < N - 4; s += 2) pushDrum(ctx, 'hat', at(s), 44, HIT_PAN.hat);
+    pushDrum(ctx, 'kick', at(N - 4), 84, HIT_PAN.kick);
+    pushDrum(ctx, 'snare', at(N - 4), 76, HIT_PAN.snare);
+    pushDrum(ctx, 'tomHigh', at(N - 3), 82, HIT_PAN.tomHigh);
+    pushDrum(ctx, 'tomHigh', at(N - 2), 88, HIT_PAN.tomHigh);
+    pushDrum(ctx, 'tomLow', at(N - 1), 94, HIT_PAN.tomLow);
+    return;
+  }
+  if (style === 'lukthung-3cha') {
+    for (let s = start; s < N - 4; s += 2) pushDrum(ctx, 'woodblock', at(s), 66, HIT_PAN.woodblock);
+    pushDrum(ctx, 'tomHigh', at(N - 4), 76, HIT_PAN.tomHigh);
+    pushDrum(ctx, 'snare', at(N - 3), 78, HIT_PAN.snare);
+    pushDrum(ctx, 'tomLow', at(N - 2), 86, HIT_PAN.tomLow);
+    pushDrum(ctx, 'openHat', at(N - 1), 72, HIT_PAN.openHat);
+    return;
+  }
+  if (style === 'rnb-pocket') {
+    for (let s = start; s < N - 4; s += 2) pushDrum(ctx, 'hat', at(s), 40, HIT_PAN.hat);
+    pushDrum(ctx, 'snare', at(N - 4), 56, HIT_PAN.snare);
+    pushDrum(ctx, 'snare', at(N - 3), 66, HIT_PAN.snare);
+    pushDrum(ctx, 'tomHigh', at(N - 2), 72, HIT_PAN.tomHigh);
+    pushDrum(ctx, 'tomLow', at(N - 1), 82, HIT_PAN.tomLow);
     return;
   }
   // Shaker crescendo (ถี่ขึ้น+ดังขึ้น) + Cajon slap นำ 2 แปะ

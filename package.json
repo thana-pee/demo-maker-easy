@@ -6,12 +6,17 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "npx tsx --test tests/*.test.ts",
+    "check:prod": "npx tsx scripts/check-production-readiness.ts"
   },
   "dependencies": {
     "@breezystack/lamejs": "^1.2.7",
+    "@google/genai": "^3.3.0",
+    "@types/qrcode": "^1.5.6",
     "lucide-react": "^1.72.0",
     "next": "16.4.6",
+    "qrcode": "^1.5.4",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "smplr": "^1.2.0"

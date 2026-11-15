@@ -14,9 +14,9 @@
  */
 
 import { useEffect, useRef, useCallback, useState } from 'react';
-import type { SongProject, LeadGuitarDrive } from '../types/song';
+import type { SongProject, LeadGuitarDrive, VocalFxPreset } from '../types/song';
 import type { TrackId } from '../lib/barPlanner';
-import type { EngineStatus } from '../lib/audioEngine';
+import type { EngineStatus, LoopRange, PlayOptions } from '../lib/audioEngine';
 
 export interface AudioEngineHookResult {
   isLoading: boolean;
@@ -24,42 +24,67 @@ export interface AudioEngineHookResult {
   isPlaying: boolean;
   loadProgress: number;
   activeBarIndex: number;
+  loopRange: LoopRange | null;
   error: string | undefined;
-  play: (fromBar?: number) => void;
+  play: (fromBar?: number, songOverride?: SongProject, options?: PlayOptions) => void;
+  playSectionOnce: (startBar: number, endBar: number, songOverride?: SongProject) => void;
   stop: () => void;
   seekToBar: (index: number) => void;
   initEngine: () => Promise<void>;
+  setLoopRange: (range: LoopRange | null) => void;
   setMixerVolume: (track: TrackId | 'vocal', vol: number) => void;
   setLeadDrive: (drive: LeadGuitarDrive) => void;
+  setVocalFxPreset: (preset: VocalFxPreset) => void;
 }
 
 export function useAudioEngine(song: SongProject): AudioEngineHookResult {
   const engineRef = useRef<import('../lib/audioEngine').AudioEngine | null>(null);
+  const pendingLoopRangeRef = useRef<LoopRange | null>(null);
   const [status, setStatus] = useState<EngineStatus>({
     state: 'idle',
     loadProgress: 0,
     activeBarIndex: -1,
+    loopRange: null,
   });
 
   // โหลด audioEngine แบบ lazy (browser-only)
   useEffect(() => {
     let unsub: (() => void) | null = null;
-    import('../lib/audioEngine').then(({ getAudioEngine }) => {
-      const engine = getAudioEngine();
-      engineRef.current = engine;
-      setStatus(engine.getState());
-      unsub = engine.onStatusChange((s: EngineStatus) => setStatus(s));
-    });
+    import('../lib/audioEngine')
+      .then(({ getAudioEngine }) => {
+        const engine = getAudioEngine();
+        engineRef.current = engine;
+        if (pendingLoopRangeRef.current) {
+          engine.setLoopRange(pendingLoopRangeRef.current);
+        }
+        setStatus(engine.getState());
+        unsub = engine.onStatusChange((s: EngineStatus) => setStatus(s));
+      })
+      .catch(() => {});
     return () => { unsub?.(); };
   }, []);
 
-  // Auto-reload เมื่อโมเดลกีตาร์เปลี่ยน (แค่ invalidate state ไม่ reload อัตโนมัติ)
+  // Reset loop & playback state automatically whenever user switches songs (prevents loopRange bleed across songs)
+  const prevSongIdRef = useRef<string>(song.id);
+  useEffect(() => {
+    if (prevSongIdRef.current !== song.id) {
+      prevSongIdRef.current = song.id;
+      pendingLoopRangeRef.current = null;
+      if (engineRef.current) {
+        engineRef.current.stop();
+        engineRef.current.setLoopRange(null);
+      } else {
+        setStatus((s) => ({ ...s, loopRange: null, activeBarIndex: -1 }));
+      }
+    }
+  }, [song.id]);
+
+  // Auto-reload เมื่อโมเดลกีตาร์เปลี่ยน (ล้างเครื่องดนตรีเดิมและตั้ง state เป็น idle เพื่อโหลดใหม่รอบถัดไป)
   const prevModelRef = useRef<string>(song.guitarModel);
   useEffect(() => {
     if (prevModelRef.current !== song.guitarModel && engineRef.current) {
       prevModelRef.current = song.guitarModel;
-      // reset state เพื่อให้ต้อง init ใหม่
-      setStatus((s: EngineStatus) => ({ ...s, state: 'idle' as const }));
+      engineRef.current.invalidateLoadedInstruments();
     }
   }, [song.guitarModel]);
 
@@ -85,6 +110,9 @@ export function useAudioEngine(song: SongProject): AudioEngineHookResult {
     eng.setMixerVolume('drums', song.mixer.drums.enabled && song.mixer.drums.style !== 'off' ? song.mixer.drums.volume : 0);
     eng.setMixerVolume('melody', (song.mixer.melody?.enabled ?? true) ? (song.mixer.melody?.volume ?? 85) : 0);
     eng.setMixerVolume('vocal', (song.mixer.vocal?.enabled ?? true) ? (song.mixer.vocal?.volume ?? 95) : 0);
+    if (song.mixer.vocal?.fxPreset) {
+      eng.setVocalFxPreset(song.mixer.vocal.fxPreset);
+    }
     if (song.mixer.melody?.sound) {
       eng.setMelodySound(song.mixer.melody.sound);
     }
@@ -103,18 +131,36 @@ export function useAudioEngine(song: SongProject): AudioEngineHookResult {
     });
   }, [song]);
 
-  const play = useCallback((fromBar = 0) => {
-    if (!engineRef.current) return;
-    if (engineRef.current.getState().state !== 'ready' &&
-        engineRef.current.getState().state !== 'playing') {
-      // Auto-init แล้ว play
-      engineRef.current.init(song).then(() => {
-        engineRef.current?.play(song, fromBar);
+  const play = useCallback(
+    (fromBar = 0, songOverride?: SongProject, options?: PlayOptions) => {
+      if (!engineRef.current) return;
+      const targetSong = songOverride ?? song;
+      if (
+        engineRef.current.getState().state !== 'ready' &&
+        engineRef.current.getState().state !== 'playing'
+      ) {
+        // Auto-init แล้ว play
+        engineRef.current
+          .init(targetSong)
+          .then(() => {
+            engineRef.current?.play(targetSong, fromBar, options);
+          })
+          .catch(() => {});
+        return;
+      }
+      engineRef.current.play(targetSong, fromBar, options);
+    },
+    [song]
+  );
+
+  const playSectionOnce = useCallback(
+    (startBar: number, endBar: number, songOverride?: SongProject) => {
+      play(startBar, songOverride, {
+        playRangeOnce: { startBar, endBar },
       });
-      return;
-    }
-    engineRef.current.play(song, fromBar);
-  }, [song]);
+    },
+    [play]
+  );
 
   const stop = useCallback(() => {
     engineRef.current?.stop();
@@ -132,18 +178,35 @@ export function useAudioEngine(song: SongProject): AudioEngineHookResult {
     engineRef.current?.setLeadDrive(drive);
   }, []);
 
+  const setVocalFxPreset = useCallback((preset: VocalFxPreset) => {
+    engineRef.current?.setVocalFxPreset(preset);
+  }, []);
+
+  const setLoopRange = useCallback((range: LoopRange | null) => {
+    pendingLoopRangeRef.current = range;
+    if (engineRef.current) {
+      engineRef.current.setLoopRange(range);
+    } else {
+      setStatus((s) => ({ ...s, loopRange: range }));
+    }
+  }, []);
+
   return {
     isLoading:      status.state === 'loading',
     isReady:        status.state === 'ready' || status.state === 'playing',
     isPlaying:      status.state === 'playing',
     loadProgress:   status.loadProgress,
     activeBarIndex: status.activeBarIndex,
+    loopRange:      status.loopRange ?? null,
     error:          status.error,
     play,
+    playSectionOnce,
     stop,
     seekToBar,
     initEngine,
+    setLoopRange,
     setMixerVolume,
     setLeadDrive,
+    setVocalFxPreset,
   };
 }

@@ -26,7 +26,7 @@ export function createDefaultSong(): SongProject {
       bass:         { enabled: true, volume: 70, style: 'root-fifth' },
       piano:        { enabled: true, volume: 55, style: 'warm-pad' },
       drums:        { enabled: true, volume: 65, style: 'shaker-cajon' },
-      melody:       { enabled: true, volume: 85, sound: 'flute' }
+      melody:       { enabled: true, volume: 56, sound: 'flute' }
     },
     sections: [
       {

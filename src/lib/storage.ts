@@ -73,10 +73,20 @@ export function getSavedSongs(): SongProject[] {
   }
 }
 
-/** คืนสำเนาของ SongProject โดยถอด vocalAudio ออกจากแต่ละห้องเพื่อให้ JSON เบาที่สุด */
+/** คืนสำเนาของ SongProject โดยถอด vocalAudio และ audioDataUrl ของ vocalTakes ออกเพื่อให้ JSON เบาที่สุด */
 export function stripVocalsFromSong(song: SongProject): SongProject {
+  const strippedTakes = Array.isArray(song.vocalTakes)
+    ? song.vocalTakes.map((take) => {
+        if (!('audioDataUrl' in take) || take.audioDataUrl === undefined) return take;
+        const copy = { ...take };
+        delete copy.audioDataUrl;
+        return copy;
+      })
+    : undefined;
+
   return {
     ...song,
+    ...(strippedTakes !== undefined ? { vocalTakes: strippedTakes } : {}),
     sections: (song.sections || []).map((sec) => ({
       ...sec,
       bars: (sec.bars || []).map((bar) => {
@@ -254,9 +264,28 @@ export function importSongsJSON(jsonStr: string): SongProject[] | null {
       updatedAt: new Date().toISOString(),
     }));
 
+    const canOffloadToIdb = typeof indexedDB !== 'undefined' && indexedDB !== null;
+    for (const song of toAdd) {
+      void persistSongVocalsToIdb(song);
+    }
+
     const combined = [...toAdd, ...existing];
     if (storage) {
-      storage.setItem(STORAGE_KEY, JSON.stringify(combined));
+      const storageList = canOffloadToIdb
+        ? combined.map((s) => stripVocalsFromSong(s))
+        : combined;
+      try {
+        storage.setItem(STORAGE_KEY, JSON.stringify(storageList));
+      } catch (writeErr: unknown) {
+        const errObj = writeErr as { name?: string; code?: number };
+        if (errObj?.name === 'QuotaExceededError' || errObj?.code === 22 || errObj?.code === 1014) {
+          console.warn('LocalStorage quota exceeded on JSON import. Pruning vocal blobs to protect imported songs...');
+          const pruned = combined.map((s) => stripVocalsFromSong(s));
+          storage.setItem(STORAGE_KEY, JSON.stringify(pruned));
+        } else {
+          throw writeErr;
+        }
+      }
       if (toAdd.length > 0) setActiveSongId(toAdd[0].id);
     }
     return combined;
@@ -357,6 +386,7 @@ export function restoreSongFromSnapshot(currentSong: SongProject, snapshot: Song
       folder: currentSong.folder ?? parsed.folder,
       statusTag: currentSong.statusTag ?? parsed.statusTag,
       snapshots: currentSong.snapshots || [],
+      ...(currentSong.vocalTakes !== undefined ? { vocalTakes: currentSong.vocalTakes } : {}),
       sections: restoredSections,
     };
   } catch (err) {

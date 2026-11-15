@@ -71,6 +71,27 @@ export function transposeChord(chord: string, semitones: number, preferFlats = f
   return result;
 }
 
+const DISPLAY_KEYS_MAJOR = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
+const DISPLAY_KEYS_MINOR = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'G#', 'A', 'Bb', 'B'];
+
+/** คำนวณคีย์ปัจจุบันของเพลงจาก `song.baseKey` และ `song.transposeSemitones` */
+export function getTransposedKeyName(baseKey?: string, transposeSemitones = 0): string {
+  const cleaned = (baseKey || '').trim() || 'C';
+  const parsed = parseChord(cleaned);
+  const rootIdx = NOTE_TO_INDEX[parsed.root];
+  if (rootIdx === undefined) return 'C';
+
+  const isMinor = parsed.quality.toLowerCase().startsWith('m') && !parsed.quality.toLowerCase().startsWith('maj');
+  const suffix = isMinor ? 'm' : '';
+  if (!transposeSemitones) {
+    return `${parsed.root}${suffix}`;
+  }
+
+  const targetIdx = (rootIdx + transposeSemitones + 120) % 12;
+  const palette = isMinor && !parsed.root.includes('b') ? DISPLAY_KEYS_MINOR : DISPLAY_KEYS_MAJOR;
+  return `${palette[targetIdx]}${suffix}`;
+}
+
 /**
  * Calculates the fingering chord shape to play when a Capo is clamped.
  * Fingering Chord = Sounding Chord transposed by -capoFret semitones.
@@ -159,3 +180,46 @@ export const PROGRESSION_PRESETS: ProgressionPreset[] = [
     chords: ['Fmaj7', 'Em7', 'Dm7', 'G']
   }
 ];
+
+/**
+ * แปลคุณภาพคอร์ด (Major, Minor, maj7, m7, dom7, sus2/sus4, add9, dim)
+ * เป็นคำบรรยายอารมณ์สั้นๆ เพื่อช่วยคนแต่งเนื้อเพลง
+ */
+export function getChordEmotionalHint(chordSymbol: string, lang: 'th' | 'en' = 'th'): string {
+  const trimmed = (chordSymbol || '').trim();
+  if (!trimmed) return '';
+
+  const { quality } = parseChord(trimmed);
+  const q = quality.trim();
+  const isEn = lang === 'en';
+
+  if (/^(dim|°|m7b5)/i.test(q)) {
+    return isEn ? 'Tense, dramatic pull' : 'ตึงเครียด ลุ้นระทึก บีบหัวใจ';
+  }
+  if (/^(aug|\+)/i.test(q)) {
+    return isEn ? 'Dreamy, unresolved lift' : 'ล่องลอย ชวนฝัน รอเปลี่ยนฉาก';
+  }
+  if (/^(maj|M)(7|9|11|13)|^Δ/.test(q)) {
+    return isEn ? 'Warm, dreamy romantic' : 'ละมุน อบอุ่น โรแมนติกชวนฝัน';
+  }
+  if (/^(m|min|-)/.test(q) && !/^maj/i.test(q)) {
+    if (/(7|9|11|13)/.test(q)) {
+      return isEn ? 'Mellow, soulful longing' : 'เหงาลึกซึ้ง นุ่มนวล คิดถึง';
+    }
+    return isEn ? 'Melancholic, deep feeling' : 'เศร้า เหงา จริงจังลึกซึ้ง';
+  }
+  if (/^sus2/i.test(q)) {
+    return isEn ? 'Open, airy, hopeful' : 'โปร่งโล่ง กังวาน ค้างความหวัง';
+  }
+  if (/^sus(4)?/i.test(q)) {
+    return isEn ? 'Yearning, waiting to resolve' : 'รอคอย ค้างคา รอคลี่คลาย';
+  }
+  if (/^add(9|2)/i.test(q)) {
+    return isEn ? 'Bright, lush warmth' : 'สดใส ละมุน อบอุ่นร่วมสมัย';
+  }
+  if (/^(7|9|11|13)/.test(q)) {
+    return isEn ? 'Driving, bluesy momentum' : 'ส่งแรง ดึงดูด รอส่งเข้าคอร์ดถัดไป';
+  }
+
+  return isEn ? 'Bright, grounded warmth' : 'สดใส มั่นคง อบอุ่นชัดเจน';
+}
