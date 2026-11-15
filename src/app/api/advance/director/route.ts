@@ -14,6 +14,7 @@ import {
   tryServerBillingPreDeduct,
   type WalletBalanceSummary,
 } from '@/lib/serverWallet';
+import { recordServerFeatureEvent } from '@/lib/serverAnalytics';
 import type { AiDirectorPatch, AiDirectorSongSummary } from '@/lib/aiSongDirector';
 
 export const maxDuration = 60;
@@ -103,6 +104,17 @@ export async function POST(request: Request): Promise<Response> {
       { modelId: GEMINI_MODEL_LITE }
     );
 
+    await recordServerFeatureEvent(
+      request,
+      {
+        eventName: 'ai_studio_director',
+        category: 'ai',
+        isSimulated: true,
+        creditsCost: 0,
+      },
+      { userId: billing.active && 'userId' in billing ? billing.userId : undefined, skipAuthLookup: billing.active }
+    );
+
     return Response.json(
       {
         isSimulated: true,
@@ -115,6 +127,17 @@ export async function POST(request: Request): Promise<Response> {
       { status: 200 }
     );
   }
+
+  await recordServerFeatureEvent(
+    request,
+    {
+      eventName: 'ai_studio_director',
+      category: 'ai',
+      isSimulated: false,
+      creditsCost: directorCost,
+    },
+    { userId: billing.active && 'userId' in billing ? billing.userId : undefined, skipAuthLookup: billing.active }
+  );
 
   return Response.json(
     {

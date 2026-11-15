@@ -48,6 +48,7 @@ import {
   getCapoFingeringChord,
   getChordEmotionalHint,
 } from '@/lib/chordUtils';
+import { getAnalyticsHeaders, trackUsageEvent } from '@/lib/analytics';
 import {
   applyServerWalletSnapshot,
   canAfford,
@@ -837,6 +838,7 @@ export function SectionBuilder({
       const token = await getAuthAccessToken();
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
+        ...getAnalyticsHeaders(),
       };
       if (token) {
         headers.Authorization = `Bearer ${token}`;
@@ -1022,6 +1024,7 @@ export function SectionBuilder({
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...getAnalyticsHeaders(),
         ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       },
       body: JSON.stringify({
@@ -1440,7 +1443,17 @@ export function SectionBuilder({
 
           <button
             type="button"
-            onClick={() => onUpdateSong((prev) => applyGenreBandArrangement(prev))}
+            onClick={() => {
+              trackUsageEvent({
+                eventName: 'arranger_auto_arrange',
+                category: 'feature',
+                songwriterStyle: song.songwriterStyle,
+                thaiGenre: song.thaiGenre,
+                lyricDialect: song.lyricDialect,
+                featureVariant: 'section_builder',
+              });
+              onUpdateSong((prev) => applyGenreBandArrangement(prev));
+            }}
             title={
               lang === 'th'
                 ? 'จัดสไตล์เครื่องดนตรีทั้ง 5 ชิ้น แอมป์ และวอลุ่มตามแนวเพลงให้อัตโนมัติ (0 เครดิต)'

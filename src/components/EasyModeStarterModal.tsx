@@ -25,6 +25,7 @@ import {
   type WalletBreakdown,
 } from '@/lib/creditManager';
 import { getAuthAccessToken } from '@/lib/cloudSync';
+import { getAnalyticsHeaders, trackUsageEvent } from '@/lib/analytics';
 import {
   EASY_STYLE_PRESETS,
   getPresetConfig,
@@ -263,6 +264,7 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...getAnalyticsHeaders(),
           ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         },
         body: JSON.stringify({
@@ -465,6 +467,7 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...getAnalyticsHeaders(),
           ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         },
         body: JSON.stringify({
@@ -758,9 +761,22 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
                           id="easy-songwriter-style"
                           name="songwriterStyle"
                           value={songwriterStyle}
-                          onChange={(e) =>
-                            setSongwriterStyle(e.target.value as ThaiSongwriterStyle)
-                          }
+                          onChange={(e) => {
+                            const nextVal = e.target.value as ThaiSongwriterStyle;
+                            setSongwriterStyle(nextVal);
+                            if (nextVal !== 'none') {
+                              trackUsageEvent({
+                                eventName: 'select_songwriter_style',
+                                category: 'style',
+                                songwriterStyle: nextVal,
+                                thaiGenre: getPresetConfig(stylePreset).thaiGenre,
+                                lyricDialect,
+                                lyricEra,
+                                emotionalResolution,
+                                featureVariant: 'easy_mode',
+                              });
+                            }
+                          }}
                           className="w-full px-2.5 py-1.5 rounded-xl bg-white border border-indigo-200 text-xs font-semibold text-ink-900 focus:outline-none focus:ring-2 focus:ring-accent-500/30"
                         >
                           {SONGWRITER_STYLE_PROFILES.map((s) => (

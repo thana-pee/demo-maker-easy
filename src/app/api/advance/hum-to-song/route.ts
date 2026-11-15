@@ -19,6 +19,7 @@ import {
   tryServerBillingPreDeduct,
   type WalletBalanceSummary,
 } from '@/lib/serverWallet';
+import { recordServerFeatureEvent } from '@/lib/serverAnalytics';
 import {
   buildSimulatedArchitectSong,
   getPresetConfig,
@@ -273,6 +274,16 @@ export async function POST(request: Request): Promise<Response> {
         topic: language === 'en' ? 'Hummed melody starter' : 'ไอเดียจากเสียงฮัมทำนอง',
         language,
       };
+      await recordServerFeatureEvent(request, {
+        eventName: 'ai_hum_to_song',
+        category: 'ai',
+        songwriterStyle: typeof obj.songwriterStyle === 'string' ? obj.songwriterStyle : undefined,
+        thaiGenre: getPresetConfig(stylePreset).thaiGenre,
+        featureVariant: stylePreset,
+        isSimulated: true,
+        creditsCost: 0,
+        metadata: { vocalProfile, language, stage: 'transcribe-fallback' },
+      });
       return Response.json(
         {
           ...buildSimulatedHumResponse(
@@ -332,6 +343,23 @@ export async function POST(request: Request): Promise<Response> {
       `Auto-refund Hum-to-Song (${gemini.reason})`,
       { modelId: GEMINI_MODEL_MAIN }
     );
+    await recordServerFeatureEvent(
+      request,
+      {
+        eventName: 'ai_hum_to_song',
+        category: 'ai',
+        songwriterStyle: typeof obj.songwriterStyle === 'string' ? obj.songwriterStyle : undefined,
+        thaiGenre: getPresetConfig(stylePreset).thaiGenre,
+        featureVariant: stylePreset,
+        isSimulated: true,
+        creditsCost: 0,
+        metadata: { vocalProfile, language, reason: gemini.reason },
+      },
+      {
+        userId: billing.active && 'userId' in billing ? billing.userId : undefined,
+        skipAuthLookup: billing.active,
+      }
+    );
     return Response.json(
       {
         ...buildSimulatedHumResponse(
@@ -373,6 +401,29 @@ export async function POST(request: Request): Promise<Response> {
   const modelLabel = usedTranscribeModel
     ? `${GEMINI_MODEL_TRANSCRIBE} + ${gemini.modelUsed}`
     : gemini.modelUsed;
+
+  await recordServerFeatureEvent(
+    request,
+    {
+      eventName: 'ai_hum_to_song',
+      category: 'ai',
+      songwriterStyle: typeof obj.songwriterStyle === 'string' ? obj.songwriterStyle : undefined,
+      thaiGenre: getPresetConfig(stylePreset).thaiGenre,
+      featureVariant: stylePreset,
+      isSimulated: false,
+      creditsCost: humCost,
+      metadata: {
+        vocalProfile,
+        language,
+        usedTranscribeModel,
+        model: modelLabel,
+      },
+    },
+    {
+      userId: billing.active && 'userId' in billing ? billing.userId : undefined,
+      skipAuthLookup: billing.active,
+    }
+  );
 
   return Response.json(
     {

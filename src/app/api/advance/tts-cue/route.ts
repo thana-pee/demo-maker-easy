@@ -11,6 +11,7 @@ import {
   tryServerBillingPreDeduct,
   type WalletBalanceSummary,
 } from '@/lib/serverWallet';
+import { recordServerFeatureEvent } from '@/lib/serverAnalytics';
 
 export const maxDuration = 60;
 
@@ -146,6 +147,30 @@ export async function POST(request: Request): Promise<Response> {
       { modelId: requestedModel }
     );
 
+    await recordServerFeatureEvent(
+      request,
+      {
+        eventName: 'ai_tts_vocal_cue',
+        category: 'ai',
+        songwriterStyle: typeof obj.songwriterStyle === 'string' ? obj.songwriterStyle : undefined,
+        thaiGenre,
+        featureVariant: vocalMode,
+        isSimulated: true,
+        creditsCost: 0,
+        metadata: {
+          model: requestedModel,
+          vocalMode,
+          language,
+          voice,
+          reason: ttsResult.reason,
+        },
+      },
+      {
+        userId: billing.active && 'userId' in billing ? billing.userId : undefined,
+        skipAuthLookup: billing.active,
+      }
+    );
+
     return Response.json(
       {
         isSimulated: true,
@@ -162,6 +187,29 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const audioDataUrl = `data:${ttsResult.mimeType};base64,${ttsResult.audioBase64}`;
+
+  await recordServerFeatureEvent(
+    request,
+    {
+      eventName: 'ai_tts_vocal_cue',
+      category: 'ai',
+      songwriterStyle: typeof obj.songwriterStyle === 'string' ? obj.songwriterStyle : undefined,
+      thaiGenre,
+      featureVariant: vocalMode,
+      isSimulated: false,
+      creditsCost: ttsCost,
+      metadata: {
+        model: requestedModel,
+        vocalMode,
+        language,
+        voice,
+      },
+    },
+    {
+      userId: billing.active && 'userId' in billing ? billing.userId : undefined,
+      skipAuthLookup: billing.active,
+    }
+  );
 
   return Response.json(
     {

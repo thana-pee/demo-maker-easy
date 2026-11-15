@@ -24,6 +24,7 @@ import {
   signInWithGoogleOAuth,
   type CloudUser,
 } from '@/lib/cloudSync';
+import { getAnalyticsHeaders, trackUsageEvent } from '@/lib/analytics';
 import {
   THAI_RHYME_GROUPS,
   analyzeThaiSyllablePhonetics,
@@ -350,6 +351,7 @@ export const AdvanceModeModal: React.FC<AdvanceModeModalProps> = ({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...getAnalyticsHeaders(),
           ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         },
         body: JSON.stringify(requestPayload),
@@ -451,6 +453,7 @@ export const AdvanceModeModal: React.FC<AdvanceModeModalProps> = ({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...getAnalyticsHeaders(),
           ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         },
         body: JSON.stringify({
@@ -680,6 +683,7 @@ export const AdvanceModeModal: React.FC<AdvanceModeModalProps> = ({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...getAnalyticsHeaders(),
           ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         },
         body: JSON.stringify({
@@ -759,6 +763,7 @@ export const AdvanceModeModal: React.FC<AdvanceModeModalProps> = ({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...getAnalyticsHeaders(),
           ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         },
         body: JSON.stringify({
@@ -1408,11 +1413,24 @@ export const AdvanceModeModal: React.FC<AdvanceModeModalProps> = ({
                       </label>
                       <select
                         value={songwriterStyle}
-                        onChange={(e) =>
+                        onChange={(e) => {
+                          const nextVal = e.target.value as ThaiSongwriterStyle;
                           handleStyleMetaChange({
-                            songwriterStyle: e.target.value as ThaiSongwriterStyle,
-                          })
-                        }
+                            songwriterStyle: nextVal,
+                          });
+                          if (nextVal !== 'none') {
+                            trackUsageEvent({
+                              eventName: 'select_songwriter_style',
+                              category: 'style',
+                              songwriterStyle: nextVal,
+                              thaiGenre,
+                              lyricDialect,
+                              lyricEra,
+                              emotionalResolution,
+                              featureVariant: 'advance_mode',
+                            });
+                          }
+                        }}
                         className="w-full px-2.5 py-1.5 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-800"
                       >
                         {SONGWRITER_STYLE_PROFILES.map((w) => (

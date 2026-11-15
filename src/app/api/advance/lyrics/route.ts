@@ -26,6 +26,7 @@ import {
   tryServerBillingPreDeduct,
   type WalletBalanceSummary,
 } from '@/lib/serverWallet';
+import { recordServerFeatureEvent } from '@/lib/serverAnalytics';
 
 export const maxDuration = 60;
 import {
@@ -361,6 +362,26 @@ async function handleSingleBarVariations(
       `Auto-refund Single-Bar Variations (${gemini.reason})`,
       { modelId: targetModel }
     );
+    await recordServerFeatureEvent(
+      request,
+      {
+        eventName: 'ai_lyrics_single_bar',
+        category: 'ai',
+        songwriterStyle: body.songwriterStyle,
+        thaiGenre: body.thaiGenre,
+        lyricDialect: body.lyricDialect,
+        lyricEra: body.lyricEra,
+        emotionalResolution: body.emotionalResolution,
+        featureVariant: body.sectionType,
+        isSimulated: true,
+        creditsCost: 0,
+        metadata: { mode: body.mode ?? 'quick', reason: gemini.reason },
+      },
+      {
+        userId: billing.active && 'userId' in billing ? billing.userId : undefined,
+        skipAuthLookup: billing.active,
+      }
+    );
     return buildSimulatedFallback(tipOverride, gemini.reason, refundedWallet);
   }
 
@@ -441,6 +462,26 @@ async function handleSingleBarVariations(
     usage: gemini.usage,
     ...(billing.active ? { wallet: billing.wallet } : {}),
   };
+  await recordServerFeatureEvent(
+    request,
+    {
+      eventName: 'ai_lyrics_single_bar',
+      category: 'ai',
+      songwriterStyle: body.songwriterStyle,
+      thaiGenre: body.thaiGenre,
+      lyricDialect: body.lyricDialect,
+      lyricEra: body.lyricEra,
+      emotionalResolution: body.emotionalResolution,
+      featureVariant: body.sectionType,
+      isSimulated: false,
+      creditsCost: creditCost,
+      metadata: { mode: body.mode ?? 'quick', model: gemini.modelUsed },
+    },
+    {
+      userId: billing.active && 'userId' in billing ? billing.userId : undefined,
+      skipAuthLookup: billing.active,
+    }
+  );
   return Response.json(result, { status: 200 });
 }
 
@@ -675,6 +716,27 @@ export async function POST(request: Request): Promise<Response> {
       { modelId: targetModel }
     );
 
+    await recordServerFeatureEvent(
+      request,
+      {
+        eventName: mode === 'deep' ? 'ai_lyrics_deep' : 'ai_lyrics_quick',
+        category: 'ai',
+        songwriterStyle,
+        thaiGenre,
+        lyricDialect,
+        lyricEra,
+        emotionalResolution,
+        featureVariant: sectionType,
+        isSimulated: true,
+        creditsCost: 0,
+        metadata: { mode, reason: gemini.reason },
+      },
+      {
+        userId: billing.active && 'userId' in billing ? billing.userId : undefined,
+        skipAuthLookup: billing.active,
+      }
+    );
+
     return Response.json(
       {
         ...buildSimulatedLyrics(payload, tipOverride, gemini.reason),
@@ -694,6 +756,27 @@ export async function POST(request: Request): Promise<Response> {
       creditCost,
       'Auto-refund AI Lyrics (parse-error)',
       { modelId: targetModel }
+    );
+
+    await recordServerFeatureEvent(
+      request,
+      {
+        eventName: mode === 'deep' ? 'ai_lyrics_deep' : 'ai_lyrics_quick',
+        category: 'ai',
+        songwriterStyle,
+        thaiGenre,
+        lyricDialect,
+        lyricEra,
+        emotionalResolution,
+        featureVariant: sectionType,
+        isSimulated: true,
+        creditsCost: 0,
+        metadata: { mode, reason: 'parse-error' },
+      },
+      {
+        userId: billing.active && 'userId' in billing ? billing.userId : undefined,
+        skipAuthLookup: billing.active,
+      }
     );
 
     return Response.json(
@@ -779,5 +862,30 @@ export async function POST(request: Request): Promise<Response> {
     usage: gemini.usage,
     ...(billing.active ? { wallet: billing.wallet } : {}),
   };
+  await recordServerFeatureEvent(
+    request,
+    {
+      eventName: mode === 'deep' ? 'ai_lyrics_deep' : 'ai_lyrics_quick',
+      category: 'ai',
+      songwriterStyle,
+      thaiGenre,
+      lyricDialect,
+      lyricEra,
+      emotionalResolution,
+      featureVariant: sectionType,
+      isSimulated: false,
+      creditsCost: mode === 'deep' ? 2 : 1,
+      metadata: {
+        mode,
+        barCount: expectedBars,
+        polishExistingDraft,
+        model: gemini.modelUsed,
+      },
+    },
+    {
+      userId: billing.active && 'userId' in billing ? billing.userId : undefined,
+      skipAuthLookup: billing.active,
+    }
+  );
   return Response.json(result, { status: 200 });
 }

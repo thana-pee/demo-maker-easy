@@ -27,6 +27,7 @@ import {
 } from '@/lib/creditManager';
 import { getAuthAccessToken } from '@/lib/cloudSync';
 import { useLanguage } from '@/context/LanguageContext';
+import { getAnalyticsHeaders, trackUsageEvent } from '@/lib/analytics';
 
 const DIALECT_SUNO_HINTS: Record<ThaiLyricDialect, string> = {
   standard: '',
@@ -259,6 +260,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...getAnalyticsHeaders(),
           ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         },
         body: JSON.stringify({
@@ -359,6 +361,13 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     const shareUrl = generateShareUrl(song);
     const ok = await copyToClipboard(shareUrl);
     if (ok) {
+      trackUsageEvent({
+        eventName: 'share_link_copied',
+        category: 'export',
+        songwriterStyle: song.songwriterStyle,
+        thaiGenre: song.thaiGenre,
+        lyricDialect: song.lyricDialect,
+      });
       setCopiedLink(true);
       setTimeout(() => setCopiedLink(false), 2500);
     }
@@ -367,6 +376,14 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   const handleCopySuno = async () => {
     const ok = await copyToClipboard(fullSunoText);
     if (ok) {
+      trackUsageEvent({
+        eventName: 'suno_prompt_copied',
+        category: 'export',
+        featureVariant: showSunoChords ? 'with_chords' : 'clean_lyrics',
+        songwriterStyle: song.songwriterStyle,
+        thaiGenre: song.thaiGenre,
+        lyricDialect: song.lyricDialect,
+      });
       setCopiedSuno(true);
       setTimeout(() => setCopiedSuno(false), 2500);
     }
@@ -375,6 +392,13 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   const handleCopyStyleTags = async () => {
     const ok = await copyToClipboard(stylePrompt);
     if (ok) {
+      trackUsageEvent({
+        eventName: 'suno_tags_copied',
+        category: 'export',
+        songwriterStyle: song.songwriterStyle,
+        thaiGenre: song.thaiGenre,
+        lyricDialect: song.lyricDialect,
+      });
       setCopiedStyleTags(true);
       setTimeout(() => setCopiedStyleTags(false), 2500);
     }
@@ -382,18 +406,39 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
   const handleDownloadMidi = () => {
     downloadMidiFile(song);
+    trackUsageEvent({
+      eventName: 'export_midi',
+      category: 'export',
+      songwriterStyle: song.songwriterStyle,
+      thaiGenre: song.thaiGenre,
+      lyricDialect: song.lyricDialect,
+    });
     setDownloadedMidi(true);
     setTimeout(() => setDownloadedMidi(false), 3000);
   };
 
   const handleDownloadLrc = () => {
     downloadLrcFile(song);
+    trackUsageEvent({
+      eventName: 'export_lrc',
+      category: 'export',
+      songwriterStyle: song.songwriterStyle,
+      thaiGenre: song.thaiGenre,
+      lyricDialect: song.lyricDialect,
+    });
     setDownloadedLrc(true);
     setTimeout(() => setDownloadedLrc(false), 3000);
   };
 
   const handleDownloadTxt = () => {
     downloadLyricsTxtFile(song);
+    trackUsageEvent({
+      eventName: 'export_lyrics_txt',
+      category: 'export',
+      songwriterStyle: song.songwriterStyle,
+      thaiGenre: song.thaiGenre,
+      lyricDialect: song.lyricDialect,
+    });
     setDownloadedTxt(true);
     setTimeout(() => setDownloadedTxt(false), 3000);
   };
@@ -434,6 +479,14 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         onPhase: (phase) => setMp3Phase(phase),
         onDetail: (detail) => setLastMixDetail(detail),
       });
+      trackUsageEvent({
+        eventName: 'export_mp3',
+        category: 'export',
+        featureVariant: instrumentalOnly ? 'instrumental' : 'full_mix',
+        songwriterStyle: song.songwriterStyle,
+        thaiGenre: song.thaiGenre,
+        lyricDialect: song.lyricDialect,
+      });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setMp3Error(
@@ -473,6 +526,13 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+    trackUsageEvent({
+      eventName: 'export_json_backup',
+      category: 'export',
+      songwriterStyle: song.songwriterStyle,
+      thaiGenre: song.thaiGenre,
+      lyricDialect: song.lyricDialect,
+    });
     setDownloadedJson(true);
     setTimeout(() => setDownloadedJson(false), 3000);
   };

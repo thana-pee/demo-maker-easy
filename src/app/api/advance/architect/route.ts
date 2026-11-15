@@ -19,6 +19,7 @@ import {
   tryServerBillingPreDeduct,
   type WalletBalanceSummary,
 } from '@/lib/serverWallet';
+import { recordServerFeatureEvent } from '@/lib/serverAnalytics';
 import {
   buildSimulatedArchitectSong,
   getPresetConfig,
@@ -191,6 +192,23 @@ export async function POST(request: Request): Promise<Response> {
       { modelId: GEMINI_MODEL_MAIN }
     );
 
+    await recordServerFeatureEvent(
+      request,
+      {
+        eventName: 'ai_easy_mode_architect',
+        category: 'ai',
+        songwriterStyle,
+        thaiGenre: effectiveThaiGenre,
+        lyricDialect,
+        lyricEra,
+        emotionalResolution,
+        featureVariant: stylePreset,
+        isSimulated: true,
+        creditsCost: 0,
+      },
+      { userId: billing.active && 'userId' in billing ? billing.userId : undefined, skipAuthLookup: billing.active }
+    );
+
     return Response.json(
       {
         isSimulated: true,
@@ -327,6 +345,23 @@ export async function POST(request: Request): Promise<Response> {
   const producerNotes = Array.isArray(rawNotes)
     ? rawNotes.filter((n): n is string => typeof n === 'string' && n.trim().length > 0).slice(0, 4)
     : [`จัดโครงสร้าง ${song.sections.length} ท่อนในสไตล์ ${preset.nameTh} ด้วย ${gemini.modelUsed}`];
+
+  await recordServerFeatureEvent(
+    request,
+    {
+      eventName: 'ai_easy_mode_architect',
+      category: 'ai',
+      songwriterStyle,
+      thaiGenre: effectiveThaiGenre,
+      lyricDialect,
+      lyricEra,
+      emotionalResolution,
+      featureVariant: stylePreset,
+      isSimulated: false,
+      creditsCost: architectCost,
+    },
+    { userId: billing.active && 'userId' in billing ? billing.userId : undefined, skipAuthLookup: billing.active }
+  );
 
   return Response.json(
     {

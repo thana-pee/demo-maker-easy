@@ -14,6 +14,7 @@ import {
   type FetchLike,
   type ServerBillingConfig,
 } from '@/lib/serverWallet';
+import { recordServerFeatureEvent } from '@/lib/serverAnalytics';
 
 async function parseSlipUploadInput(request: Request): Promise<
   | {
@@ -262,6 +263,27 @@ export async function handleVerifySlipRequest(
       fetchFn: options?.fetchFn,
       config,
     });
+
+    await recordServerFeatureEvent(
+      request,
+      {
+        eventName: 'billing_topup_verified',
+        category: 'billing',
+        featureVariant: order.packageId,
+        creditsCost: serverCredits,
+        isSimulated: false,
+        metadata: {
+          packageId: order.packageId,
+          creditsGranted: serverCredits,
+        },
+      },
+      {
+        userId: auth.user.id,
+        skipAuthLookup: true,
+        fetchFn: options?.fetchFn,
+        config,
+      }
+    );
 
     return NextResponse.json({
       success: true,

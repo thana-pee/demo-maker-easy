@@ -28,6 +28,7 @@ import {
 } from '@/lib/vocalBoothUtils';
 import { useLanguage } from '@/context/LanguageContext';
 import { SongProject, VocalFxPreset, VocalTake } from '@/types/song';
+import { trackUsageEvent } from '@/lib/analytics';
 
 export interface VocalBoothControlsProps {
   song: SongProject;
@@ -183,6 +184,14 @@ export function VocalBoothControls({
             },
           },
         };
+      });
+      trackUsageEvent({
+        eventName: 'vocal_booth_record',
+        category: 'vocal',
+        featureVariant: newTake.scope,
+        songwriterStyle: song.songwriterStyle,
+        thaiGenre: song.thaiGenre,
+        lyricDialect: song.lyricDialect,
       });
     } catch (err) {
       setBoothError(err instanceof Error ? err.message : 'Unable to save vocal recording.');

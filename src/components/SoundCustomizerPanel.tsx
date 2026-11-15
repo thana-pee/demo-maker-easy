@@ -19,6 +19,7 @@ import {
 } from '@/types/song';
 import { VOCAL_FX_PRESETS } from '@/lib/vocalBoothUtils';
 import { applyGenreBandArrangement } from '@/lib/songArchitect';
+import { trackUsageEvent } from '@/lib/analytics';
 
 interface SoundCustomizerPanelProps {
   song: SongProject;
@@ -316,7 +317,17 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
               </h3>
               <button
                 type="button"
-                onClick={() => onUpdateSong((prev) => applyGenreBandArrangement(prev))}
+                onClick={() => {
+                  trackUsageEvent({
+                    eventName: 'arranger_auto_arrange',
+                    category: 'feature',
+                    songwriterStyle: song.songwriterStyle,
+                    thaiGenre: song.thaiGenre,
+                    lyricDialect: song.lyricDialect,
+                    featureVariant: 'sound_panel',
+                  });
+                  onUpdateSong((prev) => applyGenreBandArrangement(prev));
+                }}
                 title={
                   lang === 'th'
                     ? 'จัดสไตล์เครื่องดนตรีทั้ง 5 ชิ้น แอมป์ และวอลุ่มตามแนวเพลงให้อัตโนมัติ (0 เครดิต)'

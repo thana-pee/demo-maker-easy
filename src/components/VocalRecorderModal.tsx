@@ -6,6 +6,7 @@ import { MicRecorder, playAudioDataUrl } from '@/lib/micRecorder';
 import { getAudioEngine } from '@/lib/audioEngine';
 import { transposeChord } from '@/lib/chordUtils';
 import { useLanguage } from '@/context/LanguageContext';
+import { trackUsageEvent } from '@/lib/analytics';
 
 interface VocalRecorderModalProps {
   isOpen: boolean;
@@ -221,6 +222,14 @@ export const VocalRecorderModal: React.FC<VocalRecorderModalProps> = ({
   const handleSave = () => {
     if (recordedDataUrl) {
       onSaveVocal(sectionId, barId, recordedDataUrl, latencyOffsetMs);
+      trackUsageEvent({
+        eventName: 'vocal_mic_save',
+        category: 'vocal',
+        featureVariant: 'single_bar',
+        songwriterStyle: song.songwriterStyle,
+        thaiGenre: song.thaiGenre,
+        lyricDialect: song.lyricDialect,
+      });
     }
     onClose();
   };

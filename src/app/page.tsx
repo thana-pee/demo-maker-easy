@@ -32,6 +32,7 @@ import {
   makeVocalBlobKey,
 } from '@/lib/audioStorageIdb';
 import { parseSongFromUrl } from '@/lib/shareUrl';
+import { trackSessionStartOnce, trackUsageEvent } from '@/lib/analytics';
 
 import { TransportBar } from '@/components/TransportBar';
 import { SoundCustomizerPanel } from '@/components/SoundCustomizerPanel';
@@ -749,14 +750,36 @@ export default function Home() {
       songwriterStyle?: ThaiSongwriterStyle;
       emotionalResolution?: ThaiEmotionalResolution;
     }) => {
+      if (meta.songwriterStyle && meta.songwriterStyle !== 'none') {
+        trackUsageEvent({
+          eventName: 'select_songwriter_style',
+          category: 'style',
+          songwriterStyle: meta.songwriterStyle,
+          thaiGenre: meta.thaiGenre ?? song.thaiGenre,
+          lyricDialect: meta.lyricDialect ?? song.lyricDialect,
+          lyricEra: meta.lyricEra ?? song.lyricEra,
+          emotionalResolution: meta.emotionalResolution ?? song.emotionalResolution,
+          featureVariant: 'advance_meta',
+        });
+      }
       updateSongWithHistory((prev) => ({
         ...prev,
         ...meta,
         updatedAt: new Date().toISOString(),
       }));
     },
-    [updateSongWithHistory]
+    [
+      song.emotionalResolution,
+      song.lyricDialect,
+      song.lyricEra,
+      song.thaiGenre,
+      updateSongWithHistory,
+    ]
   );
+
+  useEffect(() => {
+    trackSessionStartOnce(song, activeMode);
+  }, [song, activeMode]);
 
   const handleAddNextAiStorySection = useCallback(
     (afterSectionId: string) => {
@@ -935,7 +958,15 @@ export default function Home() {
         onTogglePlay={handleTogglePlay}
         onStop={handleStop}
         onToggleCountIn={handleToggleCountIn}
-        onSwitchMode={(mode) => setActiveMode(mode)}
+        onSwitchMode={(mode) => {
+          setActiveMode(mode);
+          trackUsageEvent({
+            eventName: 'switch_view_mode',
+            category: 'feature',
+            viewMode: mode,
+            featureVariant: mode,
+          });
+        }}
         onToggleSoundPanel={() => setIsSoundPanelOpen((prev) => !prev)}
         onToggleZenMode={() => setIsZenMode((prev) => !prev)}
         onOpenAccountModal={() => setIsAccountModalOpen(true)}

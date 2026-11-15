@@ -14,6 +14,7 @@ import {
   tryServerBillingPreDeduct,
   type WalletBalanceSummary,
 } from '@/lib/serverWallet';
+import { recordServerFeatureEvent } from '@/lib/serverAnalytics';
 import type {
   Ambience3DMode,
   BarPlayStyle,
@@ -450,7 +451,27 @@ export async function POST(request: Request): Promise<Response> {
       ...(refundedWallet ? { wallet: refundedWallet } : {}),
       failureReason: musicRes.reason,
     };
-    return Response.json(body);
+    const isSim = Boolean((body as { isSimulated?: boolean }).isSimulated);
+  await recordServerFeatureEvent(
+    request,
+    {
+      eventName: 'ai_reference_track_lyria',
+      category: 'ai',
+      songwriterStyle: sanitizedFullSong?.songwriterStyle,
+      thaiGenre: thaiGenre ?? sanitizedFullSong?.thaiGenre,
+      lyricDialect: sanitizedFullSong?.lyricDialect,
+      lyricEra: sanitizedFullSong?.lyricEra,
+      emotionalResolution: sanitizedFullSong?.emotionalResolution,
+      featureVariant: obj.instrumental ? 'instrumental' : 'vocal_mix',
+      isSimulated: isSim,
+      creditsCost: isSim ? 0 : lyriaCost,
+    },
+    {
+      userId: billing.active && 'userId' in billing ? billing.userId : undefined,
+      skipAuthLookup: billing.active,
+    }
+  );
+  return Response.json(body);
   }
 
   const audioDataUrl = `data:${musicRes.mimeType};base64,${musicRes.audioBase64}`;
@@ -466,5 +487,25 @@ export async function POST(request: Request): Promise<Response> {
     ...(billing.active ? { wallet: billing.wallet } : {}),
     tip: 'สร้างแทร็กเสียงอ้างอิงจาก Lyria 3.5 สำเร็จ! ลองกดฟังเทียบมิติและโทนกับไฟล์ Export .MP3 ของวงคุณได้ทันที',
   };
+  const isSim = Boolean((body as { isSimulated?: boolean }).isSimulated);
+  await recordServerFeatureEvent(
+    request,
+    {
+      eventName: 'ai_reference_track_lyria',
+      category: 'ai',
+      songwriterStyle: sanitizedFullSong?.songwriterStyle,
+      thaiGenre: thaiGenre ?? sanitizedFullSong?.thaiGenre,
+      lyricDialect: sanitizedFullSong?.lyricDialect,
+      lyricEra: sanitizedFullSong?.lyricEra,
+      emotionalResolution: sanitizedFullSong?.emotionalResolution,
+      featureVariant: obj.instrumental ? 'instrumental' : 'vocal_mix',
+      isSimulated: isSim,
+      creditsCost: isSim ? 0 : lyriaCost,
+    },
+    {
+      userId: billing.active && 'userId' in billing ? billing.userId : undefined,
+      skipAuthLookup: billing.active,
+    }
+  );
   return Response.json(body);
 }

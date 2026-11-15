@@ -187,7 +187,7 @@ export async function verifySupabaseUserFromRequest(
   }
 }
 
-function getServiceRoleHeaders(config: ServerBillingConfig): Record<string, string> {
+export function getServiceRoleHeaders(config: ServerBillingConfig): Record<string, string> {
   if (!config.supabaseUrl || !config.serviceRoleKey) {
     throw new Error('SERVICE_ROLE_NOT_CONFIGURED');
   }
