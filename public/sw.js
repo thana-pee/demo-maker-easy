@@ -1,5 +1,5 @@
 // Demo Maker Easy — Service Worker (Offline shell & asset caching)
-const CACHE_NAME = 'demo-maker-easy-v1';
+const CACHE_NAME = 'demo-maker-easy-v2';
 const PRECACHE_URLS = [
   '/',
   '/manifest.json',
@@ -33,8 +33,12 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Bypass non-GET, cross-origin, or blob/data requests
-  if (event.request.method !== 'GET' || !url.protocol.startsWith('http')) {
+  // Bypass non-GET, API routes, cross-origin, or blob/data requests
+  if (
+    event.request.method !== 'GET' ||
+    !url.protocol.startsWith('http') ||
+    url.pathname.startsWith('/api/')
+  ) {
     return;
   }
 

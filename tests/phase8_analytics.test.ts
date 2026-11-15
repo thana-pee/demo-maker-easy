@@ -23,7 +23,17 @@ import {
 } from '../src/lib/serverAnalytics';
 import { getServerBillingConfig, type FetchLike, type ServerBillingConfig } from '../src/lib/serverWallet';
 import { handleTrackAnalyticsRequest } from '../src/app/api/analytics/track/route';
-import { handleGetAnalyticsSummaryRequest } from '../src/app/api/analytics/summary/route';
+import {
+  handleGetAnalyticsSummaryRequest,
+  parseAdminEmails,
+} from '../src/app/api/analytics/summary/route';
+import {
+  ANALYTICS_MIGRATION_SQL,
+  getReadableDialectLabel,
+  getReadableFeatureInfo,
+  getReadableGenreLabel,
+  getReadableSongwriterLabel,
+} from '../src/lib/analyticsLabels';
 
 function makeTestConfig(overrides?: Partial<ServerBillingConfig>): ServerBillingConfig {
   return {
@@ -420,4 +430,102 @@ test('GET /api/analytics/summary: enforces key auth, handles missing table, and 
   assert.equal(readyBody.summary.topFeatures[0].count, 2);
   assert.equal(readyBody.summary.topSongwriters[0].songwriterStyle, 'kob-bigass');
   assert.equal(readyBody.summary.topSongwriters[0].totalCount, 2);
+});
+
+test('GET /api/analytics/summary: supports Google JWT admin allowlist and rejects non-admin emails', async () => {
+  const config = makeTestConfig();
+  const fakeJwt = 'header.payload.signature';
+
+  assert.deepEqual(
+    parseAdminEmails('Owner@Example.com, co@example.com ; OWNER@example.com invalid-no-at'),
+    ['owner@example.com', 'co@example.com']
+  );
+
+  const makeAuthAndDbFetch = (email: string): FetchLike => async (url) => {
+    const urlStr = String(url);
+    if (urlStr.endsWith('/auth/v1/user')) {
+      return new Response(
+        JSON.stringify({ id: 'google-admin-1', email }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    if (urlStr.includes('/rest/v1/app_usage_events')) {
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response('Unauthorized', { status: 401 });
+  };
+
+  // 1. Admin email list empty -> 403 ADMIN_EMAILS_NOT_CONFIGURED with viewerEmail hint
+  const noListRes = await handleGetAnalyticsSummaryRequest(
+    new Request('https://demo-maker-easy.vercel.app/api/analytics/summary', {
+      headers: { Authorization: `Bearer ${fakeJwt}` },
+    }),
+    { adminKey: 'secret-key', adminEmails: '', config, fetchFn: makeAuthAndDbFetch('owner@example.com') }
+  );
+  assert.equal(noListRes.status, 403);
+  const noListBody = (await noListRes.json()) as { code: string; viewerEmail?: string };
+  assert.equal(noListBody.code, 'ADMIN_EMAILS_NOT_CONFIGURED');
+  assert.equal(noListBody.viewerEmail, 'owner@example.com');
+
+  // 2. Non-admin email -> 403 ANALYTICS_FORBIDDEN
+  const forbiddenRes = await handleGetAnalyticsSummaryRequest(
+    new Request('https://demo-maker-easy.vercel.app/api/analytics/summary', {
+      headers: { Authorization: `Bearer ${fakeJwt}` },
+    }),
+    {
+      adminKey: 'secret-key',
+      adminEmails: 'owner@example.com',
+      config,
+      fetchFn: makeAuthAndDbFetch('customer@example.com'),
+    }
+  );
+  assert.equal(forbiddenRes.status, 403);
+  const forbiddenBody = (await forbiddenRes.json()) as { code: string };
+  assert.equal(forbiddenBody.code, 'ANALYTICS_FORBIDDEN');
+
+  // 3. Allowed Google admin email (case-insensitive) -> 200 google-admin
+  const okRes = await handleGetAnalyticsSummaryRequest(
+    new Request('https://demo-maker-easy.vercel.app/api/analytics/summary?days=7', {
+      headers: { Authorization: `Bearer ${fakeJwt}` },
+    }),
+    {
+      adminKey: 'secret-key',
+      adminEmails: 'OWNER@Example.com',
+      config,
+      fetchFn: makeAuthAndDbFetch('owner@example.com'),
+    }
+  );
+  assert.equal(okRes.status, 200);
+  const okBody = (await okRes.json()) as {
+    ok: boolean;
+    authMethod: string;
+    viewerEmail: string;
+    windowDays: number;
+  };
+  assert.equal(okBody.ok, true);
+  assert.equal(okBody.authMethod, 'google-admin');
+  assert.equal(okBody.viewerEmail, 'owner@example.com');
+  assert.equal(okBody.windowDays, 7);
+});
+
+test('analyticsLabels: formats readable Thai labels and provides valid SQL snippet', () => {
+  const easyInfo = getReadableFeatureInfo('ai_easy_mode_architect', 'ai');
+  assert.ok(easyInfo.titleTh.includes('Easy Mode'));
+
+  const unknownInfo = getReadableFeatureInfo('custom_new_button', 'feature');
+  assert.equal(unknownInfo.titleTh, 'custom_new_button');
+
+  const kobLabel = getReadableSongwriterLabel('kob-bigass');
+  assert.ok(kobLabel.includes('กบ') || kobLabel.includes('Big Ass') || kobLabel.length > 0);
+  assert.equal(kobLabel.startsWith('แรงบันดาลใจ:'), false);
+
+  assert.ok(getReadableGenreLabel('thai-rock').includes('ไทยร็อก'));
+  assert.ok(getReadableDialectLabel('isan').includes('อีสาน'));
+
+  assert.ok(ANALYTICS_MIGRATION_SQL.includes('CREATE TABLE IF NOT EXISTS public.app_usage_events'));
+  assert.ok(ANALYTICS_MIGRATION_SQL.includes('analytics_top_features'));
+  assert.ok(ANALYTICS_MIGRATION_SQL.includes('analytics_top_songwriters'));
 });

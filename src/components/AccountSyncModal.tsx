@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import Link from 'next/link';
 import {
   CloudSyncStatus,
   CloudUser,
@@ -13,6 +14,7 @@ import {
   signOutUser,
 } from '@/lib/cloudSync';
 import { useLanguage } from '@/context/LanguageContext';
+import { isAdminAnalyticsUnlocked } from '@/lib/analyticsLabels';
 
 interface AccountSyncModalProps {
   isOpen: boolean;
@@ -386,6 +388,20 @@ export const AccountSyncModal: React.FC<AccountSyncModalProps> = ({
                 </div>
               </form>
             )}
+          </div>
+        )}
+
+        {/* Admin Analytics Shortcut (visible only on browsers unlocked as admin) */}
+        {isAdminAnalyticsUnlocked() && (
+          <div className="pt-2 border-t border-slate-100">
+            <Link
+              href="/admin/analytics"
+              onClick={onClose}
+              className="w-full py-2 px-3 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-xs font-bold text-indigo-800 flex items-center justify-between transition"
+            >
+              <span>📊 {lang === 'th' ? 'เปิดหน้าจอสถิติการใช้งาน (Admin)' : 'Open Admin Analytics Dashboard'}</span>
+              <span>→</span>
+            </Link>
           </div>
         )}
 
