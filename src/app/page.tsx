@@ -5,7 +5,6 @@ import { Info, CheckCircle2, X, Sparkles } from 'lucide-react';
 import {
   SongProject,
   SongSection,
-  SectionType,
   MelodyNote,
   AppViewMode,
   ThaiSongGenre,
@@ -49,6 +48,10 @@ import {
   AdvanceModeModal,
   type AdvanceTargetSectionContext,
 } from '@/components/AdvanceModeModal';
+import {
+  ContinueStoryModal,
+  type ContinueStoryConfig,
+} from '@/components/ContinueStoryModal';
 import { EasyModeStarterModal } from '@/components/EasyModeStarterModal';
 import { PwaInstallPrompt } from '@/components/PwaInstallPrompt';
 import {
@@ -311,11 +314,13 @@ export default function Home() {
     targetSection: AdvanceTargetSectionContext | null;
     initialMode?: 'quick' | 'deep';
     initialTab?: 'rhyme' | 'ai-lyrics' | 'ai-director' | 'wallet';
+    initialTopic?: string;
   }>({
     isOpen: false,
     targetSection: null,
     initialMode: 'quick',
   });
+  const [continueStoryTarget, setContinueStoryTarget] = useState<SongSection | null>(null);
   const [cloudUser, setCloudUser] = useState<CloudUser>(GUEST_USER);
   const [syncStatus, setSyncStatus] = useState<CloudSyncStatus>('local-only');
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
@@ -783,49 +788,46 @@ export default function Home() {
 
   const handleAddNextAiStorySection = useCallback(
     (afterSectionId: string) => {
-      const currentIdx = song.sections.findIndex((s) => s.id === afterSectionId);
-      const afterSec = currentIdx >= 0 ? song.sections[currentIdx] : undefined;
-      const nextMap: Record<
-        SectionType,
-        { type: SectionType; name: string; intensity: 'low' | 'medium' | 'high' }
-      > = {
-        intro: { type: 'verse', name: 'Verse (ท่อนร้อง)', intensity: 'low' },
-        verse: { type: 'pre-chorus', name: 'Pre-Chorus (ท่อนส่ง)', intensity: 'medium' },
-        'pre-chorus': { type: 'chorus', name: 'Chorus (ท่อนฮุก)', intensity: 'high' },
-        chorus: { type: 'bridge', name: 'Bridge (ท่อนแยก)', intensity: 'medium' },
-        bridge: { type: 'chorus', name: 'Chorus (ท่อนฮุก)', intensity: 'high' },
-        solo: { type: 'chorus', name: 'Chorus (ท่อนฮุก)', intensity: 'high' },
-        outro: { type: 'chorus', name: 'Chorus (ท่อนฮุก)', intensity: 'high' },
-      };
-      const spec = afterSec ? nextMap[afterSec.type] : nextMap.verse;
-      const seedChords = ['C', 'G', 'Am', 'F'];
-      const newBars = Array.from({ length: 4 }, (_, idx) => {
-        const templateBar = afterSec?.bars[idx % Math.max(1, afterSec.bars.length)];
-        return {
-          id: generateUniqueId('bar'),
-          chordsPerBar: 1 as const,
-          chords: [templateBar?.chords?.[0] || seedChords[idx % seedChords.length]],
-          playStyle: 'normal' as const,
-          lyrics: '',
-          melodyNotes: [],
-        };
-      });
+      const targetSec = song.sections.find((s) => s.id === afterSectionId);
+      if (targetSec) {
+        setContinueStoryTarget(targetSec);
+      }
+    },
+    [song.sections]
+  );
+
+  const handleConfirmContinueStory = useCallback(
+    (config: ContinueStoryConfig) => {
+      if (!continueStoryTarget) return;
+      const afterSectionId = continueStoryTarget.id;
+      const chordsToUse = config.chords.length > 0 ? config.chords : ['C', 'G', 'Am', 'F'];
+      const barCount = Math.max(1, Math.min(8, config.barsCount || 4));
+
+      const newBars = Array.from({ length: barCount }, (_, idx) => ({
+        id: generateUniqueId('bar'),
+        chordsPerBar: 1 as const,
+        chords: [chordsToUse[idx % chordsToUse.length]],
+        playStyle: 'normal' as const,
+        lyrics: '',
+        melodyNotes: [],
+      }));
+
       const newSection: SongSection = {
         id: generateUniqueId('sec'),
-        type: spec.type,
-        name: spec.name,
-        intensity: spec.intensity,
+        type: config.sectionType,
+        name: config.sectionName,
+        intensity: config.sectionType === 'chorus' ? 'high' : config.sectionType === 'verse' ? 'low' : 'medium',
         bars: newBars,
         instruments: {
           guitarRhythm: true,
-          guitarRhythmStyle: spec.type === 'chorus' ? 'campfire-strum' : 'soft-strum',
-          guitarLead: false,
+          guitarRhythmStyle: config.sectionType === 'chorus' ? 'campfire-strum' : 'soft-strum',
+          guitarLead: config.sectionType === 'solo',
           bass: true,
           bassStyle: 'root-fifth',
-          piano: spec.type !== 'verse',
+          piano: config.sectionType !== 'verse',
           pianoStyle: 'warm-pad',
-          drums: spec.type === 'chorus',
-          drumsStyle: spec.type === 'chorus' ? 'simple-kit' : 'shaker-cajon',
+          drums: config.sectionType === 'chorus',
+          drumsStyle: config.sectionType === 'chorus' ? 'simple-kit' : 'shaker-cajon',
         },
       };
 
@@ -841,20 +843,26 @@ export default function Home() {
         };
       });
 
-      setAdvanceModalState({
-        isOpen: true,
-        initialMode: 'quick',
-        initialTab: 'ai-lyrics',
-        targetSection: {
-          sectionId: newSection.id,
-          sectionName: newSection.name,
-          sectionType: newSection.type,
-          chords: newSection.bars.flatMap((b) => b.chords),
-          existingLyrics: '',
-        },
-      });
+      setContinueStoryTarget(null);
+
+      if (config.actionType === 'ai-lyric') {
+        const combinedTopic = [config.storyDirection, config.customTopic].filter(Boolean).join(' • ');
+        setAdvanceModalState({
+          isOpen: true,
+          initialMode: 'quick',
+          initialTab: 'ai-lyrics',
+          initialTopic: combinedTopic,
+          targetSection: {
+            sectionId: newSection.id,
+            sectionName: newSection.name,
+            sectionType: newSection.type,
+            chords: newSection.bars.flatMap((b) => b.chords),
+            existingLyrics: '',
+          },
+        });
+      }
     },
-    [song.sections, updateSongWithHistory]
+    [continueStoryTarget, updateSongWithHistory]
   );
 
   const handlePreviewEasySongToggle = useCallback(
@@ -1206,6 +1214,7 @@ export default function Home() {
           song={song}
           initialMode={advanceModalState.initialMode}
           initialTab={advanceModalState.initialTab}
+          initialTopic={advanceModalState.initialTopic}
           cloudUser={cloudUser}
           onOpenAccountModal={() => setIsAccountModalOpen(true)}
           onCreditsChange={setCreditBalance}
@@ -1214,6 +1223,17 @@ export default function Home() {
           onUpdateSongStyleMeta={handleUpdateSongStyleMeta}
           onApplySongUpdate={updateSongWithHistory}
           onClose={() => setAdvanceModalState((prev) => ({ ...prev, isOpen: false }))}
+        />
+      )}
+
+      {continueStoryTarget && (
+        <ContinueStoryModal
+          isOpen={Boolean(continueStoryTarget)}
+          afterSection={continueStoryTarget}
+          songKey={song.baseKey}
+          existingSections={song.sections}
+          onClose={() => setContinueStoryTarget(null)}
+          onConfirm={handleConfirmContinueStory}
         />
       )}
     </div>

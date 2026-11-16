@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   CREDIT_COST_TABLE,
   CREDIT_PACKAGES,
@@ -62,6 +62,11 @@ import {
   type AiDirectorPatch,
 } from '@/lib/aiSongDirector';
 
+import {
+  POPULAR_CHORD_FORMULAS,
+  resolveChordProgressionFormula,
+} from '@/lib/chordUtils';
+
 export interface AdvanceTargetSectionContext {
   sectionId: string;
   sectionName: string;
@@ -75,6 +80,7 @@ interface AdvanceModeModalProps {
   song?: SongProject;
   initialMode?: 'quick' | 'deep';
   initialTab?: 'rhyme' | 'ai-lyrics' | 'ai-director' | 'reference' | 'wallet';
+  initialTopic?: string;
   cloudUser?: CloudUser;
   onOpenAccountModal?: () => void;
   onCreditsChange: (balance: number) => void;
@@ -169,6 +175,7 @@ export const AdvanceModeModal: React.FC<AdvanceModeModalProps> = ({
   song,
   initialMode,
   initialTab,
+  initialTopic,
   cloudUser = GUEST_USER,
   onOpenAccountModal,
   onCreditsChange,
@@ -220,8 +227,16 @@ export const AdvanceModeModal: React.FC<AdvanceModeModalProps> = ({
   const [copiedWord, setCopiedWord] = useState<string | null>(null);
 
   // AI Lyric Co-Pilot State (1 Credit / 2 Credits Deep)
+  const [selectedSectionId, setSelectedSectionId] = useState<string>(
+    targetSection?.sectionId ?? song?.sections[0]?.id ?? ''
+  );
+  const [customChords, setCustomChords] = useState<string[] | null>(null);
+  const [isEditingChords, setIsEditingChords] = useState<boolean>(false);
+  const [customChordsText, setCustomChordsText] = useState<string>('');
+
   const [mood, setMood] = useState('อบอุ่น (Warm)');
   const [topic, setTopic] = useState(() => {
+    if (initialTopic?.trim()) return initialTopic.trim();
     const t = song?.title?.trim() || '';
     if (t && !t.startsWith('New Song') && !t.startsWith('เพลงใหม่')) return t;
     return '';
@@ -567,8 +582,92 @@ export const AdvanceModeModal: React.FC<AdvanceModeModalProps> = ({
         };
   const rhymePhonetics = rhymeFiltered.inputPhonetics;
   const rhymeSyllables = countThaiEnglishSyllables(rhymeInput);
-  const activeSongSection = song?.sections.find((s) => s.id === targetSection?.sectionId);
-  const activeChords = targetSection?.chords?.length ? targetSection.chords : ['C', 'G', 'Am', 'F'];
+  const songSections = song?.sections;
+  const activeSongSection = useMemo(() => {
+    if (!songSections?.length) return undefined;
+    return songSections.find((s) => s.id === selectedSectionId) ?? songSections[0];
+  }, [songSections, selectedSectionId]);
+
+  const currentSectionName = activeSongSection?.name || targetSection?.sectionName || 'Section';
+  const currentSectionType = (activeSongSection?.type || targetSection?.sectionType || 'verse') as SectionType;
+
+  const activeChords = useMemo(() => {
+    if (customChords && customChords.length > 0) return customChords;
+    if (activeSongSection?.bars?.length) {
+      const bChords = activeSongSection.bars.flatMap((b) => b.chords).filter(Boolean);
+      if (bChords.length > 0) return bChords;
+    }
+    return targetSection?.chords?.length ? targetSection.chords : ['C', 'G', 'Am', 'F'];
+  }, [customChords, activeSongSection, targetSection]);
+
+  const handleSwitchTargetSection = (nextSecId: string) => {
+    setSelectedSectionId(nextSecId);
+    setCustomChords(null);
+    setIsEditingChords(false);
+    const nextSec = song?.sections.find((s) => s.id === nextSecId);
+    if (nextSec) {
+      const bChords = nextSec.bars.flatMap((b) => b.chords).filter(Boolean);
+      setCustomChordsText(bChords.join(', '));
+    }
+  };
+
+  const handleChangeSectionType = (newType: SectionType) => {
+    if (!song || !onApplySongUpdate || !activeSongSection) return;
+    const typeLabel =
+      newType === 'verse'
+        ? 'Verse'
+        : newType === 'chorus'
+        ? 'Chorus'
+        : newType === 'pre-chorus'
+        ? 'Pre-Chorus'
+        : newType === 'bridge'
+        ? 'Bridge'
+        : newType === 'solo'
+        ? 'Solo'
+        : 'Outro';
+    const nextSections = song.sections.map((s) => {
+      if (s.id !== activeSongSection.id) return s;
+      return {
+        ...s,
+        type: newType,
+        name: s.name.includes(' ') ? `${typeLabel} ${s.name.split(' ').slice(1).join(' ')}` : typeLabel,
+      };
+    });
+    onApplySongUpdate({
+      ...song,
+      updatedAt: new Date().toISOString(),
+      sections: nextSections,
+    });
+  };
+
+  const handleApplyCustomChords = (newChords: string[]) => {
+    if (newChords.length === 0) return;
+    setCustomChords(newChords);
+    setCustomChordsText(newChords.join(', '));
+    setIsEditingChords(false);
+    if (song && onApplySongUpdate && activeSongSection) {
+      const updatedSections = song.sections.map((s) => {
+        if (s.id !== activeSongSection.id) return s;
+        const updatedBars = s.bars.map((bar, idx) => {
+          const chord = newChords[idx % newChords.length];
+          return {
+            ...bar,
+            chords: [chord],
+            chordsPerBar: 1 as const,
+          };
+        });
+        return {
+          ...s,
+          bars: updatedBars,
+        };
+      });
+      onApplySongUpdate({
+        ...song,
+        updatedAt: new Date().toISOString(),
+        sections: updatedSections,
+      });
+    }
+  };
 
   const handleStyleMetaChange = (next: {
     thaiGenre?: ThaiSongGenre;
@@ -665,14 +764,15 @@ export const AdvanceModeModal: React.FC<AdvanceModeModalProps> = ({
     }
 
     const barCount = activeSongSection ? activeSongSection.bars.length : Math.max(2, Math.min(8, activeChords.length || 4));
-    const barsPayload = activeSongSection
-      ? activeSongSection.bars.map((b) => ({
-          chord: b.chords[0] || 'C',
-          chord2: b.chordsPerBar === 2 ? b.chords[1] : undefined,
-          chordsPerBar: b.chordsPerBar,
-          existingLyrics: b.lyrics,
-        }))
-      : activeChords.slice(0, barCount).map((c) => ({ chord: c, chordsPerBar: 1 as const }));
+    const barsPayload = activeChords.slice(0, barCount).map((c, idx) => {
+      const origBar = activeSongSection?.bars[idx];
+      return {
+        chord: c,
+        chord2: origBar?.chordsPerBar === 2 ? origBar.chords[1] : undefined,
+        chordsPerBar: origBar?.chordsPerBar ?? (1 as const),
+        existingLyrics: origBar?.lyrics || '',
+      };
+    });
 
     setIsGenerating(true);
     setAiError(null);
@@ -691,7 +791,7 @@ export const AdvanceModeModal: React.FC<AdvanceModeModalProps> = ({
           topic: effectiveTopic,
           chordProgression: activeChords,
           existingLyrics: targetSection?.existingLyrics || undefined,
-          sectionType: targetSection?.sectionType || 'verse',
+          sectionType: currentSectionType,
           bpm: song?.bpm,
           timeSignature: song?.timeSignature,
           previousSectionLyrics,
@@ -1251,19 +1351,132 @@ export const AdvanceModeModal: React.FC<AdvanceModeModalProps> = ({
           {/* ─── TAB 2: AI LYRIC CO-PILOT (COST-PROTECTED) ─── */}
           {activeTab === 'ai-lyrics' && (
             <div className="space-y-3.5">
-              {targetSection && (
-                <div className="p-3 rounded-2xl bg-indigo-50/70 border border-indigo-200 space-y-1.5">
-                  <div className="flex items-center justify-between gap-2 text-xs">
-                    <span className="font-black text-indigo-950">
-                      🎼 {lang === 'th' ? 'ท่อนเป้าหมาย:' : 'Target Section:'} {targetSection.sectionName} ({targetSection.sectionType})
-                    </span>
-                    <span className="px-2 py-0.5 rounded-full bg-white text-indigo-700 border border-indigo-200 font-bold text-[11px]">
-                      {activeChords.join(' → ')}
-                    </span>
+              {(targetSection || (song?.sections && song.sections.length > 0)) && (
+                <div className="p-3.5 rounded-2xl bg-indigo-50/70 border border-indigo-200 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2.5 flex-wrap text-xs">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-bold text-indigo-950 flex items-center gap-1.5 shrink-0">
+                        🎼 {lang === 'th' ? 'ท่อนเป้าหมาย:' : 'Target Section:'}
+                      </span>
+
+                      {/* Section Selector Dropdown (if song has multiple sections) */}
+                      {song?.sections && song.sections.length > 1 ? (
+                        <select
+                          value={selectedSectionId}
+                          onChange={(e) => handleSwitchTargetSection(e.target.value)}
+                          className="px-2.5 py-1 rounded-xl bg-white border border-indigo-200 text-indigo-950 text-xs font-bold cursor-pointer focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-xs"
+                          aria-label="Target Section"
+                        >
+                          {song.sections.map((sec) => (
+                            <option key={sec.id} value={sec.id}>
+                              {sec.name} ({sec.type}) · {sec.bars.length} {lang === 'th' ? 'ห้อง' : 'bars'}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span className="font-bold text-indigo-900 bg-white px-2.5 py-1 rounded-xl border border-indigo-200 shadow-xs">
+                          {currentSectionName}
+                        </span>
+                      )}
+
+                      {/* Change Section Type Selector */}
+                      <select
+                        value={currentSectionType}
+                        onChange={(e) => handleChangeSectionType(e.target.value as SectionType)}
+                        className="px-2 py-1 rounded-xl bg-white border border-indigo-200 text-indigo-800 text-[11px] font-semibold cursor-pointer focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-xs"
+                        aria-label="Section Type"
+                      >
+                        <option value="verse">Verse (ท่อนร้อง)</option>
+                        <option value="pre-chorus">Pre-Chorus (ท่อนส่ง)</option>
+                        <option value="chorus">Chorus (ท่อนฮุก)</option>
+                        <option value="bridge">Bridge (ท่อนแยก)</option>
+                        <option value="solo">Solo (โซโล่)</option>
+                        <option value="outro">Outro (ท่อนจบ)</option>
+                      </select>
+                    </div>
+
+                    {/* Chords Display & Edit Button */}
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className="px-2.5 py-1 rounded-xl bg-white text-indigo-700 border border-indigo-200 font-bold font-mono text-[11px] shadow-xs">
+                        {activeChords.slice(0, 8).join(' → ')}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsEditingChords((prev) => !prev);
+                          if (!customChordsText) {
+                            setCustomChordsText(activeChords.join(', '));
+                          }
+                        }}
+                        className="px-2.5 py-1 rounded-xl bg-white hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-[11px] font-bold transition cursor-pointer shadow-xs"
+                      >
+                        ✏️ {isEditingChords ? (lang === 'th' ? 'ปิด' : 'Close') : (lang === 'th' ? 'เปลี่ยนคอร์ด' : 'Edit Chords')}
+                      </button>
+                    </div>
                   </div>
-                  {targetSection.existingLyrics && (
+
+                  {/* Expandable Chords Editor */}
+                  {isEditingChords && (
+                    <div className="p-3 rounded-xl bg-white border border-indigo-200 space-y-2 text-xs animate-fadeIn">
+                      <div className="flex items-center justify-between text-[11px] font-bold text-slate-700">
+                        <span>{lang === 'th' ? 'เลือกสูตรคอร์ดฮิต หรือพิมพ์คอร์ดเอง:' : 'Select Formula or Type Custom Chords:'}</span>
+                        <span className="text-[10px] text-slate-400 font-mono">(Key {song?.baseKey || 'C'})</span>
+                      </div>
+
+                      {/* Formula Chips */}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {POPULAR_CHORD_FORMULAS.map((formula) => {
+                          const resolved = resolveChordProgressionFormula(formula.id, song?.baseKey || 'C');
+                          return (
+                            <button
+                              key={formula.id}
+                              type="button"
+                              onClick={() => handleApplyCustomChords(resolved)}
+                              className="px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-800 text-[11px] font-bold transition cursor-pointer"
+                            >
+                              {formula.formula} ({resolved.slice(0, 4).join('-')})
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Custom Chords Text Input */}
+                      <div className="flex items-center gap-1.5 pt-1">
+                        <input
+                          type="text"
+                          value={customChordsText}
+                          onChange={(e) => setCustomChordsText(e.target.value)}
+                          placeholder="พิมพ์คอร์ดคั่นด้วยจุลภาค เช่น C, G, Am, F หรือ G, Em7, Cmaj7, D..."
+                          className="flex-1 px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 font-mono text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const parsed = customChordsText
+                              .split(/[,;\s]+/)
+                              .map((c) => c.trim())
+                              .filter(Boolean);
+                            if (parsed.length > 0) {
+                              handleApplyCustomChords(parsed);
+                            }
+                          }}
+                          className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition cursor-pointer"
+                        >
+                          {lang === 'th' ? 'ใช้คอร์ดนี้' : 'Apply'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {activeSongSection?.bars?.some((b) => b.lyrics?.trim()) && (
                     <div className="text-[11px] text-indigo-800/80 truncate">
-                      {lang === 'th' ? 'เนื้อเดิม:' : 'Draft:'} &ldquo;{targetSection.existingLyrics}&rdquo;
+                      {lang === 'th' ? 'เนื้อเดิม:' : 'Draft:'} &ldquo;
+                      {activeSongSection.bars
+                        .map((b) => b.lyrics.trim())
+                        .filter(Boolean)
+                        .slice(0, 2)
+                        .join(' / ')}
+                      &rdquo;
                     </div>
                   )}
                 </div>
@@ -1725,7 +1938,7 @@ export const AdvanceModeModal: React.FC<AdvanceModeModalProps> = ({
 
                   <div className="flex items-center justify-between gap-2 flex-wrap pt-1">
                     <span className="text-[11px] text-slate-500">{aiResult.tip}</span>
-                    {targetSection && onApplyLyrics && (
+                    {(targetSection || selectedSectionId) && onApplyLyrics && (
                       <button
                         type="button"
                         onClick={() => {
@@ -1734,10 +1947,10 @@ export const AdvanceModeModal: React.FC<AdvanceModeModalProps> = ({
                             .map((_, idx) => ((selectedBars[idx] ?? true) ? idx : -1))
                             .filter((idx) => idx >= 0);
                           onApplyLyrics(
-                            targetSection.sectionId,
+                            selectedSectionId || targetSection?.sectionId || '',
                             finalLines,
                             aiResult.melodyNotesPerBar,
-                            applySuggestedChords ? aiResult.suggestedChords : undefined,
+                            applySuggestedChords ? aiResult.suggestedChords : (customChords ? customChords : undefined),
                             chosenIndices
                           );
                           onClose();
