@@ -24,7 +24,7 @@ import {
   getCreditBalance,
   type WalletBreakdown,
 } from '@/lib/creditManager';
-import { getAuthAccessToken } from '@/lib/cloudSync';
+import { getAuthAccessToken, refreshAuthSession } from '@/lib/cloudSync';
 import { getAnalyticsHeaders, trackUsageEvent } from '@/lib/analytics';
 import {
   EASY_STYLE_PRESETS,
@@ -88,6 +88,75 @@ const EASY_WHOLE_SONG_COST = CREDIT_COST_TABLE.aiEasyWholeSong;
 const EASY_HUM_SONG_COST = CREDIT_COST_TABLE.aiHumToSong;
 const MAX_HUM_SECONDS = 45;
 const MAX_HUM_BYTES = 8 * 1024 * 1024;
+
+type EasyApiParsedResult = ArchitectApiResult & { error?: string };
+
+async function postEasyApiJson(
+  url: string,
+  payload: Record<string, unknown>
+): Promise<{ res: Response; data: EasyApiParsedResult | null }> {
+  const sendWithToken = (token: string | null) =>
+    fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAnalyticsHeaders(),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(payload),
+    });
+
+  const initialToken = getAuthAccessToken();
+  let res = await sendWithToken(initialToken);
+  if (res.status === 401 && initialToken) {
+    const refreshed = await refreshAuthSession().catch(() => null);
+    if (refreshed?.accessToken) {
+      res = await sendWithToken(refreshed.accessToken);
+    }
+  }
+
+  const rawText = await res.text();
+  let data: EasyApiParsedResult | null = null;
+  if (rawText.trim()) {
+    try {
+      data = JSON.parse(rawText) as EasyApiParsedResult;
+    } catch {
+      data = null;
+    }
+  }
+  return { res, data };
+}
+
+function formatEasyApiFailureMessage(
+  status: number | null,
+  dataError: string | undefined,
+  feature: 'architect' | 'hum',
+  lang: string
+): string {
+  if (dataError && dataError.trim()) {
+    return dataError.trim();
+  }
+  const featureLabel = feature === 'hum' ? 'Hum-to-Song' : 'Easy Mode';
+  if (status === 504 || status === 524) {
+    return lang === 'th'
+      ? `เซิร์ฟเวอร์ประมวลผลไม่ทันเวลา (HTTP ${status} — ไม่หักเครดิต) กรุณาลองกดใหม่อีกครั้งครับ`
+      : `${featureLabel} timed out on server (HTTP ${status}, 0 credits charged). Please retry.`;
+  }
+  if (status !== null) {
+    return lang === 'th'
+      ? `บริการ ${featureLabel} ขัดข้องชั่วคราว (HTTP ${status} — ไม่หักเครดิต) กรุณาลองใหม่อีกครั้ง`
+      : `${featureLabel} server error (HTTP ${status}, 0 credits charged).`;
+  }
+  const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+  if (isOffline) {
+    return lang === 'th'
+      ? 'อุปกรณ์ไม่ได้เชื่อมต่ออินเทอร์เน็ต (ไม่หักเครดิต) กรุณาเช็กสัญญาณแล้วลองใหม่'
+      : 'Device appears offline (0 credits charged).';
+  }
+  return lang === 'th'
+    ? `ไม่สามารถเชื่อมต่อบริการ ${featureLabel} ได้ชั่วคราว (สัญญาณขาดระหว่างรอผล — ไม่หักเครดิต)`
+    : `Network error calling ${featureLabel} API (0 credits charged).`;
+}
 
 export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
   isOpen,
@@ -259,35 +328,25 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
     setIsGenerating(true);
     setErrorMsg(null);
     try {
-      const accessToken = getAuthAccessToken();
-      const res = await fetch('/api/advance/architect', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...getAnalyticsHeaders(),
-          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-        },
-        body: JSON.stringify({
-          stylePreset,
-          vocalProfile,
-          tempoFeel,
-          topic: topic.trim(),
-          language: songLanguage,
-          thaiGenre: getPresetConfig(stylePreset).thaiGenre,
-          lyricEra,
-          lyricDialect,
-          songwriterStyle,
-          emotionalResolution,
-        }),
+      const { res, data } = await postEasyApiJson('/api/advance/architect', {
+        stylePreset,
+        vocalProfile,
+        tempoFeel,
+        topic: topic.trim(),
+        language: songLanguage,
+        thaiGenre: getPresetConfig(stylePreset).thaiGenre,
+        lyricEra,
+        lyricDialect,
+        songwriterStyle,
+        emotionalResolution,
       });
 
-      const data = (await res.json()) as ArchitectApiResult & { error?: string };
-      if (!res.ok || !data.song) {
-        if (data.wallet) {
+      if (!res.ok || !data?.song) {
+        if (data?.wallet) {
           const synced = applyServerWalletSnapshot(data.wallet);
           onCreditsChange(synced.balance);
         }
-        setErrorMsg(data.error || 'Failed to generate song draft');
+        setErrorMsg(formatEasyApiFailureMessage(res.status, data?.error, 'architect', lang));
         return;
       }
 
@@ -310,11 +369,7 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
       setConfidenceNotePreview('');
       setBandDensity('balanced');
     } catch {
-      setErrorMsg(
-        lang === 'th'
-          ? 'ไม่สามารถเชื่อมต่อบริการ Easy Mode ได้ชั่วคราว (ไม่หักเครดิต)'
-          : 'Network error calling Easy Architect API (0 credits charged).'
-      );
+      setErrorMsg(formatEasyApiFailureMessage(null, undefined, 'architect', lang));
     } finally {
       setIsGenerating(false);
     }
@@ -462,32 +517,22 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
     setErrorMsg(null);
 
     try {
-      const accessToken = getAuthAccessToken();
-      const res = await fetch('/api/advance/hum-to-song', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...getAnalyticsHeaders(),
-          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-        },
-        body: JSON.stringify({
-          audioBase64: humClip.base64,
-          mimeType: humClip.mimeType,
-          durationSec: Math.min(MAX_HUM_SECONDS, Math.max(1, humClip.durationSec)),
-          stylePreset,
-          vocalProfile,
-          language: songLanguage,
-          includeTranscribePass,
-        }),
+      const { res, data } = await postEasyApiJson('/api/advance/hum-to-song', {
+        audioBase64: humClip.base64,
+        mimeType: humClip.mimeType,
+        durationSec: Math.min(MAX_HUM_SECONDS, Math.max(1, humClip.durationSec)),
+        stylePreset,
+        vocalProfile,
+        language: songLanguage,
+        includeTranscribePass,
       });
 
-      const data = (await res.json()) as ArchitectApiResult & { error?: string };
-      if (!res.ok || !data.song) {
-        if (data.wallet) {
+      if (!res.ok || !data?.song) {
+        if (data?.wallet) {
           const synced = applyServerWalletSnapshot(data.wallet);
           onCreditsChange(synced.balance);
         }
-        setErrorMsg(data.error || 'Failed to transcribe hum into song structure');
+        setErrorMsg(formatEasyApiFailureMessage(res.status, data?.error, 'hum', lang));
         return;
       }
 
@@ -510,11 +555,7 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
       setPreviewSong(data.song);
       setBandDensity('balanced');
     } catch {
-      setErrorMsg(
-        lang === 'th'
-          ? 'ไม่สามารถวิเคราะห์เสียงฮัมได้ชั่วคราว (ไม่หักเครดิต)'
-          : 'Network error calling Hum-to-Song API (0 credits charged).'
-      );
+      setErrorMsg(formatEasyApiFailureMessage(null, undefined, 'hum', lang));
     } finally {
       setIsGenerating(false);
     }

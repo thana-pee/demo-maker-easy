@@ -17,6 +17,7 @@ import { CREDIT_COST_TABLE } from '@/lib/creditManager';
 import {
   refundServerBillingOnFailure,
   tryServerBillingPreDeduct,
+  type ServerBillingPreDeductResult,
   type WalletBalanceSummary,
 } from '@/lib/serverWallet';
 import { recordServerFeatureEvent } from '@/lib/serverAnalytics';
@@ -135,62 +136,223 @@ export async function POST(request: Request): Promise<Response> {
     emotionalResolution,
   };
 
+  const routeStartedAt = Date.now();
   const architectCost = CREDIT_COST_TABLE.aiEasyWholeSong;
-  const billing = await tryServerBillingPreDeduct(
-    request,
-    architectCost,
-    `Easy Mode Architect (${GEMINI_MODEL_MAIN}): ${topic.slice(0, 24)}`,
-    { modelId: GEMINI_MODEL_MAIN }
-  );
-  if (billing.active && 'errorStatus' in billing) {
-    return Response.json(
-      { error: billing.error, code: billing.errorCode },
-      { status: billing.errorStatus }
-    );
-  }
+  let billing: ServerBillingPreDeductResult = { active: false };
 
-  const systemInstruction = buildEasyArchitectSystemPrompt({
-    thaiGenre: effectiveThaiGenre,
-    lyricDialect,
-    songwriterStyle,
-    emotionalResolution,
-    bpm: preset.bpmByTempo[tempoFeel],
-    timeSignature: '4/4',
-  });
-  const userPrompt = buildEasyArchitectUserPrompt({
-    ...input,
-    recommendedBpm: preset.bpmByTempo[tempoFeel],
-    recommendedGuitarModel: preset.guitarModel,
-    recommendedAmbience: preset.ambience3D,
-  });
-
-  const gemini = await callGeminiJson<Record<string, unknown>>(userPrompt, {
-    model: GEMINI_MODEL_MAIN,
-    systemInstruction,
-    responseSchema: ARCHITECT_RESPONSE_SCHEMA,
-    maxOutputTokens: 8192,
-    thinkingLevel: 'low',
-  });
-
-  if (!gemini.ok) {
-    const simulatedSong = buildSimulatedArchitectSong(input);
-    let tip: string;
-    if (gemini.reason === 'missing-key') {
-      tip = `โหมดจำลอง Easy Mode (ยังไม่ได้ตั้งค่า GEMINI_API_KEY บนเซิร์ฟเวอร์) — ไม่หัก 4 เครดิต สามารถฟังพรีวิวและแก้ต่อได้ทันที`;
-    } else if (gemini.reason === 'rate-limit') {
-      tip = 'โควตาคำขอ Gemini API เต็มชั่วคราว (429) — สร้างโครงเพลงจำลองให้ลองเล่นแทนโดยไม่หักเครดิต';
-    } else if (gemini.reason === 'auth-error') {
-      tip = 'GEMINI_API_KEY ไม่ถูกต้องหรือไม่มีสิทธิ์เข้าถึงโมเดล — สร้างโครงเพลงจำลองแทนโดยไม่หักเครดิต';
-    } else {
-      tip = `${gemini.failureReason} — แสดงผลโครงเพลงจำลองแทนอย่างปลอดภัย (ไม่หักเครดิต)`;
-    }
-
-    const refundedWallet = await refundServerBillingOnFailure(
-      billing,
+  try {
+    billing = await tryServerBillingPreDeduct(
+      request,
       architectCost,
-      `Auto-refund Easy Architect (${gemini.reason})`,
+      `Easy Mode Architect (${GEMINI_MODEL_MAIN}): ${topic.slice(0, 24)}`,
       { modelId: GEMINI_MODEL_MAIN }
     );
+    if (billing.active && 'errorStatus' in billing) {
+      return Response.json(
+        { error: billing.error, code: billing.errorCode },
+        { status: billing.errorStatus }
+      );
+    }
+
+    const systemInstruction = buildEasyArchitectSystemPrompt({
+      thaiGenre: effectiveThaiGenre,
+      lyricDialect,
+      songwriterStyle,
+      emotionalResolution,
+      bpm: preset.bpmByTempo[tempoFeel],
+      timeSignature: '4/4',
+    });
+    const userPrompt = buildEasyArchitectUserPrompt({
+      ...input,
+      recommendedBpm: preset.bpmByTempo[tempoFeel],
+      recommendedGuitarModel: preset.guitarModel,
+      recommendedAmbience: preset.ambience3D,
+    });
+
+    const gemini = await callGeminiJson<Record<string, unknown>>(userPrompt, {
+      model: GEMINI_MODEL_MAIN,
+      systemInstruction,
+      responseSchema: ARCHITECT_RESPONSE_SCHEMA,
+      maxOutputTokens: 4096,
+      thinkingLevel: 'low',
+      timeoutMs: 28_000,
+    });
+
+    if (!gemini.ok) {
+      const simulatedSong = buildSimulatedArchitectSong(input);
+      let tip: string;
+      if (gemini.reason === 'missing-key') {
+        tip = `โหมดจำลอง Easy Mode (ยังไม่ได้ตั้งค่า GEMINI_API_KEY บนเซิร์ฟเวอร์) — ไม่หัก 4 เครดิต สามารถฟังพรีวิวและแก้ต่อได้ทันที`;
+      } else if (gemini.reason === 'rate-limit') {
+        tip = 'โควตาคำขอ Gemini API เต็มชั่วคราว (429) — สร้างโครงเพลงจำลองให้ลองเล่นแทนโดยไม่หักเครดิต';
+      } else if (gemini.reason === 'auth-error') {
+        tip = 'GEMINI_API_KEY ไม่ถูกต้องหรือไม่มีสิทธิ์เข้าถึงโมเดล — สร้างโครงเพลงจำลองแทนโดยไม่หักเครดิต';
+      } else {
+        tip = `${gemini.failureReason} — แสดงผลโครงเพลงจำลองแทนอย่างปลอดภัย (ไม่หักเครดิต)`;
+      }
+
+      const refundedWallet = await refundServerBillingOnFailure(
+        billing,
+        architectCost,
+        `Auto-refund Easy Architect (${gemini.reason})`,
+        { modelId: GEMINI_MODEL_MAIN }
+      );
+
+      await recordServerFeatureEvent(
+        request,
+        {
+          eventName: 'ai_easy_mode_architect',
+          category: 'ai',
+          songwriterStyle,
+          thaiGenre: effectiveThaiGenre,
+          lyricDialect,
+          lyricEra,
+          emotionalResolution,
+          featureVariant: stylePreset,
+          isSimulated: true,
+          creditsCost: 0,
+        },
+        { userId: billing.active && 'userId' in billing ? billing.userId : undefined, skipAuthLookup: billing.active }
+      );
+
+      return Response.json(
+        {
+          isSimulated: true,
+          model: 'demo-offline-architect',
+          song: simulatedSong,
+          producerNotes: [
+            `จัดสไตล์ ${preset.nameTh} (${simulatedSong.bpm} BPM, คีย์ ${simulatedSong.baseKey}, Capo ${simulatedSong.capoFret})`,
+            'แยกย่านเสียงให้ท่อน Verse โปร่งชัดและดันวงเต็มในท่อน Chorus พร้อมโน้ตเมโลดี้ไกด์',
+          ],
+          rhymeValidation: { passed: true, polished: false },
+          tip,
+          ...(refundedWallet ? { wallet: refundedWallet } : {}),
+          failureReason: gemini.reason,
+        } satisfies AdvanceArchitectResponseBody,
+        { status: 200 }
+      );
+    }
+
+    let song = sanitizeArchitectSongProject(gemini.data, input);
+    let totalUsage = gemini.usage;
+    let rhymePassed = true;
+    let wasPolished = false;
+
+    // Post-Validate สัมผัสภาษาไทยในท่อน Chorus / Pre-Chorus / Verse / Outro และคัดเลือกท่อนสำคัญเข้าขัดเกลาได้สูงสุด 1 ครั้ง
+    if (language === 'th') {
+      const polishableTypes = new Set(['chorus', 'pre-chorus', 'verse', 'outro']);
+      const evaluatedSections = song.sections
+        .filter((sec) => polishableTypes.has(sec.type) && sec.bars.length >= 2)
+        .map((sec) => {
+          const budget = getSyllableBudgetForBpm(song.bpm, song.timeSignature, {
+            sectionType: sec.type,
+            songwriterStyle,
+            thaiGenre: effectiveThaiGenre,
+          });
+          const validation = validateThaiLyricCouplets(
+            sec.bars.map((b) => b.lyrics),
+            {
+              bpm: song.bpm,
+              timeSignature: song.timeSignature,
+              minSyllables: budget.min,
+              maxSyllables: budget.max,
+              enforceSyllableBudget: true,
+            }
+          );
+          const overflowBars = (validation.outOfBudgetBars ?? []).filter(
+            (b) => b.syllables > b.expectedMax
+          );
+          return {
+            item: { sec, validation, overflowBars },
+            sectionType: sec.type,
+            passed: validation.passed,
+            hasDuplicates: (validation.duplicateEndWords?.length ?? 0) > 0,
+            syllableOverflowCount: overflowBars.length,
+          };
+        });
+
+      const selectedForPolish = selectPrioritySectionsForPolish(evaluatedSections, 3);
+      const remainingPolishBudgetMs = Math.max(0, 44_000 - (Date.now() - routeStartedAt));
+
+      if (selectedForPolish.length > 0 && remainingPolishBudgetMs >= 4_000) {
+        rhymePassed = evaluatedSections
+          .filter((e) => e.sectionType !== 'outro')
+          .every((e) => e.passed);
+        const polishPrompt = buildRhymePolishPrompt(
+          selectedForPolish.map(({ item: { sec, validation, overflowBars } }) => ({
+            sectionName: sec.name,
+            chords: sec.bars.map((b) => b.chords[0] ?? 'C'),
+            lines: sec.bars.map((b) => b.lyrics),
+            duplicateEndWords: validation.duplicateEndWords,
+            weakPairs: validation.weakPairs,
+            outOfBudgetBars: overflowBars,
+          })),
+          song.bpm
+        );
+
+        const polishRes = await callGeminiJson<{
+          polishedSections?: Array<{ sectionName?: string; lines?: string[] }>;
+        }>(polishPrompt, {
+          model: GEMINI_MODEL_LITE,
+          systemInstruction: 'คุณคือบรรณาธิการคำร้องไทย แก้เฉพาะคำลงท้าย/ส่งสัมผัสและความกระชับของพยางค์ให้ลื่นไหลโดยคงความหมายและจำนวนวรรคเดิม',
+          responseSchema: RHYME_POLISH_RESPONSE_SCHEMA,
+          maxOutputTokens: 1024,
+          thinkingLevel: 'minimal',
+          timeoutMs: Math.min(9_000, remainingPolishBudgetMs),
+        });
+
+        if (polishRes.ok && Array.isArray(polishRes.data.polishedSections)) {
+          totalUsage = addUsageTelemetry(totalUsage, polishRes.usage);
+          wasPolished = true;
+          const mapByName = new Map(
+            polishRes.data.polishedSections
+              .filter((p) => typeof p.sectionName === 'string' && Array.isArray(p.lines))
+              .map((p) => [p.sectionName as string, p.lines as string[]])
+          );
+          song = {
+            ...song,
+            sections: song.sections.map((sec) => {
+              const nextLines = mapByName.get(sec.name);
+              if (!nextLines || nextLines.length === 0) return sec;
+              return {
+                ...sec,
+                bars: sec.bars.map((bar, idx) =>
+                  typeof nextLines[idx] === 'string' && nextLines[idx].trim()
+                    ? { ...bar, lyrics: nextLines[idx].trim() }
+                    : bar
+                ),
+              };
+            }),
+          };
+          const recheckFailed = song.sections
+            .filter(
+              (sec) =>
+                (sec.type === 'verse' || sec.type === 'chorus' || sec.type === 'pre-chorus') &&
+                sec.bars.length >= 2
+            )
+            .some((sec) => {
+              const budget = getSyllableBudgetForBpm(song.bpm, song.timeSignature, {
+                sectionType: sec.type,
+                songwriterStyle,
+                thaiGenre: effectiveThaiGenre,
+              });
+              return !validateThaiLyricCouplets(sec.bars.map((b) => b.lyrics), {
+                bpm: song.bpm,
+                timeSignature: song.timeSignature,
+                minSyllables: budget.min,
+                maxSyllables: budget.max,
+                enforceSyllableBudget: true,
+              }).passed;
+            });
+          rhymePassed = !recheckFailed;
+        }
+      }
+    }
+
+    const rawNotes = gemini.data.producerNotes;
+    const producerNotes = Array.isArray(rawNotes)
+      ? rawNotes.filter((n): n is string => typeof n === 'string' && n.trim().length > 0).slice(0, 4)
+      : [`จัดโครงสร้าง ${song.sections.length} ท่อนในสไตล์ ${preset.nameTh} ด้วย ${gemini.modelUsed}`];
 
     await recordServerFeatureEvent(
       request,
@@ -203,177 +365,48 @@ export async function POST(request: Request): Promise<Response> {
         lyricEra,
         emotionalResolution,
         featureVariant: stylePreset,
-        isSimulated: true,
-        creditsCost: 0,
+        isSimulated: false,
+        creditsCost: architectCost,
       },
       { userId: billing.active && 'userId' in billing ? billing.userId : undefined, skipAuthLookup: billing.active }
     );
 
     return Response.json(
       {
-        isSimulated: true,
-        model: 'demo-offline-architect',
-        song: simulatedSong,
-        producerNotes: [
-          `จัดสไตล์ ${preset.nameTh} (${simulatedSong.bpm} BPM, คีย์ ${simulatedSong.baseKey}, Capo ${simulatedSong.capoFret})`,
-          'แยกย่านเสียงให้ท่อน Verse โปร่งชัดและดันวงเต็มในท่อน Chorus พร้อมโน้ตเมโลดี้ไกด์',
-        ],
-        rhymeValidation: { passed: true, polished: false },
-        tip,
-        ...(refundedWallet ? { wallet: refundedWallet } : {}),
-        failureReason: gemini.reason,
+        isSimulated: false,
+        model: gemini.modelUsed,
+        song,
+        producerNotes,
+        rhymeValidation: { passed: rhymePassed, polished: wasPolished },
+        tip: `สร้างเพลงเต็ม "${song.title}" (${song.sections.length} ท่อน · ${song.bpm} BPM) ด้วย ${gemini.modelUsed} เรียบร้อยแล้ว`,
+        usage: totalUsage,
+        ...(billing.active ? { wallet: billing.wallet } : {}),
       } satisfies AdvanceArchitectResponseBody,
       { status: 200 }
     );
+  } catch (err) {
+    const rawMsg = err instanceof Error ? err.message : String(err);
+    const safeMsg = rawMsg
+      .replace(/AIza[A-Za-z0-9_-]{8,}/g, '[REDACTED]')
+      .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [REDACTED]');
+    console.error('[architect] unexpected failure:', safeMsg);
+
+    const refundedWallet = await refundServerBillingOnFailure(
+      billing,
+      architectCost,
+      'Auto-refund Easy Architect (internal-error)',
+      { modelId: GEMINI_MODEL_MAIN }
+    );
+
+    return Response.json(
+      {
+        error: refundedWallet
+          ? 'เซิร์ฟเวอร์ขัดข้องชั่วคราวระหว่างสร้างเพลง (คืน 4 เครดิตให้แล้วอัตโนมัติ)'
+          : 'เซิร์ฟเวอร์ขัดข้องชั่วคราวระหว่างสร้างเพลง (ไม่หักเครดิต) กรุณาลองใหม่อีกครั้ง',
+        code: 'ARCHITECT_INTERNAL_ERROR',
+        ...(refundedWallet ? { wallet: refundedWallet } : {}),
+      },
+      { status: 500 }
+    );
   }
-
-  let song = sanitizeArchitectSongProject(gemini.data, input);
-  let totalUsage = gemini.usage;
-  let rhymePassed = true;
-  let wasPolished = false;
-
-  // Post-Validate สัมผัสภาษาไทยในท่อน Chorus / Pre-Chorus / Verse / Outro และคัดเลือกท่อนสำคัญเข้าขัดเกลาได้สูงสุด 1 ครั้ง
-  if (language === 'th') {
-    const polishableTypes = new Set(['chorus', 'pre-chorus', 'verse', 'outro']);
-    const evaluatedSections = song.sections
-      .filter((sec) => polishableTypes.has(sec.type) && sec.bars.length >= 2)
-      .map((sec) => {
-        const budget = getSyllableBudgetForBpm(song.bpm, song.timeSignature, {
-          sectionType: sec.type,
-          songwriterStyle,
-          thaiGenre: effectiveThaiGenre,
-        });
-        const validation = validateThaiLyricCouplets(
-          sec.bars.map((b) => b.lyrics),
-          {
-            bpm: song.bpm,
-            timeSignature: song.timeSignature,
-            minSyllables: budget.min,
-            maxSyllables: budget.max,
-            enforceSyllableBudget: true,
-          }
-        );
-        const overflowBars = (validation.outOfBudgetBars ?? []).filter(
-          (b) => b.syllables > b.expectedMax
-        );
-        return {
-          item: { sec, validation, overflowBars },
-          sectionType: sec.type,
-          passed: validation.passed,
-          hasDuplicates: (validation.duplicateEndWords?.length ?? 0) > 0,
-          syllableOverflowCount: overflowBars.length,
-        };
-      });
-
-    const selectedForPolish = selectPrioritySectionsForPolish(evaluatedSections, 3);
-
-    if (selectedForPolish.length > 0) {
-      rhymePassed = evaluatedSections
-        .filter((e) => e.sectionType !== 'outro')
-        .every((e) => e.passed);
-      const polishPrompt = buildRhymePolishPrompt(
-        selectedForPolish.map(({ item: { sec, validation, overflowBars } }) => ({
-          sectionName: sec.name,
-          chords: sec.bars.map((b) => b.chords[0] ?? 'C'),
-          lines: sec.bars.map((b) => b.lyrics),
-          duplicateEndWords: validation.duplicateEndWords,
-          weakPairs: validation.weakPairs,
-          outOfBudgetBars: overflowBars,
-        })),
-        song.bpm
-      );
-
-      const polishRes = await callGeminiJson<{
-        polishedSections?: Array<{ sectionName?: string; lines?: string[] }>;
-      }>(polishPrompt, {
-        model: GEMINI_MODEL_LITE,
-        systemInstruction: 'คุณคือบรรณาธิการคำร้องไทย แก้เฉพาะคำลงท้าย/ส่งสัมผัสและความกระชับของพยางค์ให้ลื่นไหลโดยคงความหมายและจำนวนวรรคเดิม',
-        responseSchema: RHYME_POLISH_RESPONSE_SCHEMA,
-        maxOutputTokens: 1024,
-        thinkingLevel: 'minimal',
-      });
-
-      if (polishRes.ok && Array.isArray(polishRes.data.polishedSections)) {
-        totalUsage = addUsageTelemetry(totalUsage, polishRes.usage);
-        wasPolished = true;
-        const mapByName = new Map(
-          polishRes.data.polishedSections
-            .filter((p) => typeof p.sectionName === 'string' && Array.isArray(p.lines))
-            .map((p) => [p.sectionName as string, p.lines as string[]])
-        );
-        song = {
-          ...song,
-          sections: song.sections.map((sec) => {
-            const nextLines = mapByName.get(sec.name);
-            if (!nextLines || nextLines.length === 0) return sec;
-            return {
-              ...sec,
-              bars: sec.bars.map((bar, idx) =>
-                typeof nextLines[idx] === 'string' && nextLines[idx].trim()
-                  ? { ...bar, lyrics: nextLines[idx].trim() }
-                  : bar
-              ),
-            };
-          }),
-        };
-        const recheckFailed = song.sections
-          .filter(
-            (sec) =>
-              (sec.type === 'verse' || sec.type === 'chorus' || sec.type === 'pre-chorus') &&
-              sec.bars.length >= 2
-          )
-          .some((sec) => {
-            const budget = getSyllableBudgetForBpm(song.bpm, song.timeSignature, {
-              sectionType: sec.type,
-              songwriterStyle,
-              thaiGenre: effectiveThaiGenre,
-            });
-            return !validateThaiLyricCouplets(sec.bars.map((b) => b.lyrics), {
-              bpm: song.bpm,
-              timeSignature: song.timeSignature,
-              minSyllables: budget.min,
-              maxSyllables: budget.max,
-              enforceSyllableBudget: true,
-            }).passed;
-          });
-        rhymePassed = !recheckFailed;
-      }
-    }
-  }
-
-  const rawNotes = gemini.data.producerNotes;
-  const producerNotes = Array.isArray(rawNotes)
-    ? rawNotes.filter((n): n is string => typeof n === 'string' && n.trim().length > 0).slice(0, 4)
-    : [`จัดโครงสร้าง ${song.sections.length} ท่อนในสไตล์ ${preset.nameTh} ด้วย ${gemini.modelUsed}`];
-
-  await recordServerFeatureEvent(
-    request,
-    {
-      eventName: 'ai_easy_mode_architect',
-      category: 'ai',
-      songwriterStyle,
-      thaiGenre: effectiveThaiGenre,
-      lyricDialect,
-      lyricEra,
-      emotionalResolution,
-      featureVariant: stylePreset,
-      isSimulated: false,
-      creditsCost: architectCost,
-    },
-    { userId: billing.active && 'userId' in billing ? billing.userId : undefined, skipAuthLookup: billing.active }
-  );
-
-  return Response.json(
-    {
-      isSimulated: false,
-      model: gemini.modelUsed,
-      song,
-      producerNotes,
-      rhymeValidation: { passed: rhymePassed, polished: wasPolished },
-      tip: `สร้างเพลงเต็ม "${song.title}" (${song.sections.length} ท่อน · ${song.bpm} BPM) ด้วย ${gemini.modelUsed} เรียบร้อยแล้ว`,
-      usage: totalUsage,
-      ...(billing.active ? { wallet: billing.wallet } : {}),
-    } satisfies AdvanceArchitectResponseBody,
-    { status: 200 }
-  );
 }

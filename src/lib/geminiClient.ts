@@ -118,6 +118,7 @@ export interface GeminiJsonCallOptions {
   responseSchema?: Record<string, unknown>;
   maxOutputTokens?: number;
   thinkingLevel?: GeminiThinkingLevel;
+  timeoutMs?: number;
 }
 
 export interface GeminiTtsCallOptions {
@@ -405,6 +406,44 @@ function extractAudioFromGenerateContentResponse(
   return null;
 }
 
+function isAbortOrTimeoutError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const record = error as { name?: unknown; message?: unknown };
+  const name = typeof record.name === 'string' ? record.name.toLowerCase() : '';
+  const message = typeof record.message === 'string' ? record.message.toLowerCase() : '';
+  return (
+    name.includes('abort') ||
+    name.includes('timeout') ||
+    name.includes('interrupted') ||
+    message.includes('gemini_timeout') ||
+    message.includes('timed out') ||
+    message.includes('timeout') ||
+    message.includes('aborted')
+  );
+}
+
+async function runWithAbortTimeout<T>(
+  timeoutMs: number,
+  executor: (signal: AbortSignal) => Promise<T>
+): Promise<T> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error('GEMINI_TIMEOUT');
+      controller.abort(err);
+      reject(err);
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([executor(controller.signal), timeoutPromise]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
+}
+
 function classifyInteractionError(error: unknown, model: string): GeminiFailureResult {
   const httpStatus = extractHttpErrorStatus(error);
   const detail = extractHttpErrorDetail(error);
@@ -428,12 +467,19 @@ function classifyInteractionError(error: unknown, model: string): GeminiFailureR
     };
   }
 
+  const timedOut = isAbortOrTimeoutError(error);
+  if (timedOut) {
+    console.error(`[geminiClient] ${model} request timed out`);
+  }
+
   return {
     ok: false,
     model,
     modelUsed: model,
     reason: 'network-error',
-    failureReason: 'ไม่สามารถเชื่อมต่อกับบริการ Gemini API ได้ชั่วคราว',
+    failureReason: timedOut
+      ? 'Gemini API ใช้เวลาประมวลผลนานเกินกำหนดชั่วคราว (Timeout)'
+      : 'ไม่สามารถเชื่อมต่อกับบริการ Gemini API ได้ชั่วคราว',
     isSimulated: false,
   };
 }
@@ -487,6 +533,8 @@ function extractAudioFromInteraction(interaction: {
   return null;
 }
 
+const DEFAULT_GEMINI_TIMEOUT_MS = 42_000;
+
 /**
  * เรียก Gemini Interactions API ผ่าน official @google/genai SDK และรับ JSON ตาม Schema
  * รองรับทั้ง Prompt ข้อความเดี่ยว และ Multimodal Part Array (ข้อความ + ไฟล์เสียง Base64)
@@ -505,28 +553,36 @@ export async function callGeminiJson<T>(
 
   const thinkingLevel = resolveThinkingLevel(model, options?.thinkingLevel);
   const maxOutputTokens = resolveMaxOutputTokens(model, options?.maxOutputTokens);
+  const timeoutMs =
+    typeof options?.timeoutMs === 'number' && Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
+      ? Math.round(options.timeoutMs)
+      : DEFAULT_GEMINI_TIMEOUT_MS;
 
   try {
     const ai = new GoogleGenAI({ apiKey });
-    const interaction = await ai.interactions.create(
-      {
-        model,
-        input: promptOrInput,
-        ...(options?.systemInstruction ? { system_instruction: options.systemInstruction } : {}),
-        response_format: {
-          type: 'text',
-          mime_type: 'application/json',
-          ...(options?.responseSchema ? { schema: options.responseSchema } : {}),
+    const interaction = await runWithAbortTimeout(timeoutMs, (signal) =>
+      ai.interactions.create(
+        {
+          model,
+          input: promptOrInput,
+          ...(options?.systemInstruction ? { system_instruction: options.systemInstruction } : {}),
+          response_format: {
+            type: 'text',
+            mime_type: 'application/json',
+            ...(options?.responseSchema ? { schema: options.responseSchema } : {}),
+          },
+          generation_config: {
+            max_output_tokens: maxOutputTokens,
+            thinking_level: thinkingLevel,
+          },
+          store: false,
         },
-        generation_config: {
-          max_output_tokens: maxOutputTokens,
-          thinking_level: thinkingLevel,
-        },
-        store: false,
-      },
-      {
-        retries: { strategy: 'none' },
-      }
+        {
+          retries: { strategy: 'none' },
+          timeout_ms: timeoutMs,
+          fetch_options: { signal },
+        }
+      )
     );
 
     const terminalFailure = evaluateInteractionTerminalFailure(interaction, model);
@@ -570,7 +626,7 @@ export async function callGeminiJson<T>(
 export async function callGeminiTranscribeAudio(
   audioBase64: string,
   mimeType: GeminiAudioMimeType,
-  options?: { model?: string }
+  options?: { model?: string; timeoutMs?: number }
 ): Promise<GeminiTranscribeResult> {
   const apiKey = getGeminiApiKey();
   const model = normalizeGeminiModel(options?.model || GEMINI_MODEL_TRANSCRIBE);
@@ -579,23 +635,32 @@ export async function callGeminiTranscribeAudio(
     return buildMissingKeyFailure(model);
   }
 
+  const timeoutMs =
+    typeof options?.timeoutMs === 'number' && Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
+      ? Math.round(options.timeoutMs)
+      : 20_000;
+
   try {
     const ai = new GoogleGenAI({ apiKey });
-    const interaction = await ai.interactions.create(
-      {
-        model,
-        input: [
-          {
-            type: 'audio',
-            data: audioBase64,
-            mime_type: mimeType,
-          },
-        ],
-        store: false,
-      },
-      {
-        retries: { strategy: 'none' },
-      }
+    const interaction = await runWithAbortTimeout(timeoutMs, (signal) =>
+      ai.interactions.create(
+        {
+          model,
+          input: [
+            {
+              type: 'audio',
+              data: audioBase64,
+              mime_type: mimeType,
+            },
+          ],
+          store: false,
+        },
+        {
+          retries: { strategy: 'none' },
+          timeout_ms: timeoutMs,
+          fetch_options: { signal },
+        }
+      )
     );
 
     const terminalFailure = evaluateInteractionTerminalFailure(interaction, model);

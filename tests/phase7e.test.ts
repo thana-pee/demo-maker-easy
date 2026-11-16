@@ -40,6 +40,7 @@ import {
   RHYME_POLISH_RESPONSE_SCHEMA,
 } from '../src/lib/aiPrompts';
 import { validateThaiLyricCouplets } from '../src/lib/thaiRhymeHelper';
+import { callGeminiJson } from '../src/lib/geminiClient';
 import { POST as architectPost } from '../src/app/api/advance/architect/route';
 import { POST as ttsCuePost } from '../src/app/api/advance/tts-cue/route';
 import type { SongBar, SongProject } from '../src/types/song';
@@ -796,4 +797,150 @@ test('Phase 7E API Integration: /api/advance/architect triggers polish when dupl
   assert.match(pianoRollSrc, /ttsModelTier/);
   assert.match(mp3Src, /computeNonOverlappingClipWindow/);
   assert.match(mp3Src, /trimAudioBufferLeadingSilence/);
+});
+
+test('Architect Reliability: Gemini timeoutMs aborts cleanly, refunds billing on timeout/error, returns JSON 500 on RPC failure & slims melodyNotes prompt', async () => {
+  const promptText = buildEasyArchitectSystemPrompt({ songwriterStyle: 'fongbeer-rock' });
+  assert.match(promptText, /ไม่ต้องสร้าง array melodyNotes รายโน้ต/);
+
+  const origKey = process.env.GEMINI_API_KEY;
+  const origUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const origAnon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const origSrv = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const origBillingMode = process.env.NEXT_PUBLIC_BILLING_MODE;
+  const origFetch = globalThis.fetch;
+
+  process.env.GEMINI_API_KEY = 'test-fake-key-timeout';
+  process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://test-project.supabase.co';
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = 'test-anon-key';
+  process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role-key';
+  process.env.NEXT_PUBLIC_BILLING_MODE = 'production';
+
+  try {
+    // 1. callGeminiJson aborts stalled request at timeoutMs (inspecting Request.signal or init.signal)
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        const sig = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+        if (sig?.aborted) {
+          reject(new DOMException('Aborted', 'AbortError'));
+          return;
+        }
+        sig?.addEventListener('abort', () => {
+          reject(new DOMException('GEMINI_TIMEOUT', 'AbortError'));
+        });
+      })) as typeof fetch;
+
+    const timedOutRes = await callGeminiJson('hello', { timeoutMs: 25 });
+    assert.equal(timedOutRes.ok, false);
+    if (!timedOutRes.ok) {
+      assert.equal(timedOutRes.reason, 'network-error');
+      assert.match(timedOutRes.failureReason, /Timeout/);
+    }
+
+    // 2. /api/advance/architect refunds credits cleanly when Gemini aborts/errors
+    let refundCalled = false;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof Request
+            ? input.url
+            : input.toString();
+      if (url.endsWith('/auth/v1/user')) {
+        return new Response(JSON.stringify({ id: 'user-1', email: 'user@example.com' }), { status: 200 });
+      }
+      if (url.endsWith('/rest/v1/rpc/atomic_deduct_credits')) {
+        return new Response(
+          JSON.stringify([{ success: true, trial_credits: 11, purchased_credits: 0, balance: 11 }]),
+          { status: 200 }
+        );
+      }
+      if (url.endsWith('/rest/v1/rpc/atomic_refund_credits')) {
+        refundCalled = true;
+        return new Response(
+          JSON.stringify([{ success: true, trial_credits: 15, purchased_credits: 0, balance: 15 }]),
+          { status: 200 }
+        );
+      }
+      if (url.includes('interactions')) {
+        throw new DOMException('GEMINI_TIMEOUT', 'AbortError');
+      }
+      return new Response('{}', { status: 200 });
+    }) as typeof fetch;
+
+    const timeoutFallbackRes = await architectPost(
+      new Request('http://localhost/api/advance/architect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer jwt-ok' },
+        body: JSON.stringify({
+          stylePreset: 'soft-rock',
+          vocalProfile: 'male',
+          tempoFeel: 'medium',
+          topic: 'ทดสอบ Timeout',
+          songwriterStyle: 'fongbeer-rock',
+        }),
+      })
+    );
+    assert.equal(timeoutFallbackRes.status, 200);
+    const timeoutJson = (await timeoutFallbackRes.json()) as {
+      isSimulated: boolean;
+      tip: string;
+      wallet?: { balance: number };
+    };
+    assert.equal(timeoutJson.isSimulated, true);
+    assert.equal(refundCalled, true, 'Must auto-refund credits on Gemini timeout/error');
+    assert.equal(timeoutJson.wallet?.balance, 15);
+    assert.match(timeoutJson.tip, /Timeout/);
+
+    // 3. Unhandled wallet RPC failure returns clean JSON 500 instead of non-JSON crash
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof Request
+            ? input.url
+            : input.toString();
+      if (url.endsWith('/auth/v1/user')) {
+        return new Response(JSON.stringify({ id: 'user-1', email: 'user@example.com' }), { status: 200 });
+      }
+      if (url.endsWith('/rest/v1/rpc/atomic_deduct_credits')) {
+        return new Response('Supabase RPC internal failure', { status: 500 });
+      }
+      return new Response('{}', { status: 200 });
+    }) as typeof fetch;
+
+    const rpcErrRes = await architectPost(
+      new Request('http://localhost/api/advance/architect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer jwt-ok' },
+        body: JSON.stringify({ topic: 'ทดสอบ RPC พัง' }),
+      })
+    );
+    assert.equal(rpcErrRes.status, 500);
+    const rpcErrJson = (await rpcErrRes.json()) as { error: string; code: string };
+    assert.equal(rpcErrJson.code, 'ARCHITECT_INTERNAL_ERROR');
+    assert.ok(rpcErrJson.error.includes('ไม่หักเครดิต'));
+  } finally {
+    globalThis.fetch = origFetch;
+    if (origKey === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = origKey;
+    if (origUrl === undefined) delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+    else process.env.NEXT_PUBLIC_SUPABASE_URL = origUrl;
+    if (origAnon === undefined) delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    else process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = origAnon;
+    if (origSrv === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    else process.env.SUPABASE_SERVICE_ROLE_KEY = origSrv;
+    if (origBillingMode === undefined) delete process.env.NEXT_PUBLIC_BILLING_MODE;
+    else process.env.NEXT_PUBLIC_BILLING_MODE = origBillingMode;
+  }
+
+  // 4. EasyModeStarterModal client contract: safe text parsing, HTTP 504 diagnostics & 401 refresh
+  const modalSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src/components/EasyModeStarterModal.tsx'),
+    'utf8'
+  );
+  assert.match(modalSrc, /postEasyApiJson/);
+  assert.match(modalSrc, /formatEasyApiFailureMessage/);
+  assert.match(modalSrc, /refreshAuthSession/);
+  assert.match(modalSrc, /HTTP 504|status === 504/);
 });

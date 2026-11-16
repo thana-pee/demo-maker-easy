@@ -1408,7 +1408,7 @@ export function buildEasyArchitectSystemPrompt(options?: {
     "- กฎการหยุดจังหวะ (playStyle): ห้ามตั้ง playStyle: 'break' ในห้องสุดท้ายของท่อน outro (ต้องใช้ 'let-ring'), ห้องแรกของ intro, และห้ามวาง 'break' ติดกัน 2 ห้องในท่อนที่มีเนื้อร้อง (สำหรับเพลงช้า < 78 BPM ให้ใช้ 'let-ring' แทน 'break' ท้ายท่อนส่งเข้าฮุค เพื่อไม่ให้เกิดช่วงเงียบยาวเกินไป)",
     "- กฎความกระชับท่อน outro: ลดจำนวนพยางค์ลงทันทีเมื่อเทียบกับ Chorus — โดยเฉพาะ Outro Bar 1 ต้องสรุปสั้นคมไม่เกิน 6 พยางค์ ห้ามยืดเป็นประโยคยาวเกิน 8 พยางค์ และปล่อย Bar 2 ลากสระเปิดสงบด้วย playStyle: 'let-ring'",
     '- ท่อน intro ต้องเว้น lyrics เป็น "" และ melodyNotes เป็น [] เพื่อให้ดนตรีเกริ่นนำโดยไม่มีเสียงขลุ่ยไกด์ร้องแย่งความโดดเด่นของอินโทร',
-    '- วางโน้ตเมโลดี้ไกด์ (`melodyNotes`) บน step 0..15 ในท่อน Verse / Pre-Chorus / Chorus / Outro ให้สอดคล้องคอร์ด วรรณยุกต์ และระดับพลังท่อน (Chorus สูงกว่า Verse; Outro ลงโน้ต Root อย่างสงบสมบูรณ์)',
+    '- ไม่ต้องสร้าง array melodyNotes รายโน้ตในแต่ละห้อง (ให้ส่ง melodyNotes: [] หรือละเว้นไว้) เพราะระบบ Synth ฝั่งแอปจะสังเคราะห์โน้ตเมโลดี้ที่ตรงคอร์ด พยางค์คำร้อง และวรรณยุกต์ไทยให้โดยอัตโนมัติอย่างแม่นยำและรวดเร็วกว่า',
     `- หลีกเลี่ยงสำนวนซ้ำซาก: ${ANTI_CLICHE_THAI_PHRASES.slice(0, 5).join(', ')}`,
     '',
     dynamicFewShots,
@@ -1898,7 +1898,7 @@ export const ARCHITECT_RESPONSE_SCHEMA: Record<string, unknown> = {
                 lyrics: { type: 'string' },
                 melodyNotes: {
                   type: 'array',
-                  description: 'Up to 12 melody guide notes per bar (keep empty [] for intro)',
+                  description: 'Optional melody guide notes array (leave empty [] for fast generation; engine synthesizes chord- and tone-aligned notes automatically)',
                   items: {
                     type: 'object',
                     properties: {
