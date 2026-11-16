@@ -226,7 +226,7 @@ function isRecoverableRpcSqlError(status: number, errText: string): boolean {
   return lower.includes('42702') || lower.includes('pgrst202') || lower.includes('ambiguous');
 }
 
-async function fetchWalletRowViaRest(
+export async function fetchWalletRowViaRest(
   userId: string,
   config: ServerBillingConfig,
   fetchFn: FetchLike
@@ -257,7 +257,7 @@ async function fetchWalletRowViaRest(
   };
 }
 
-async function insertCreditTransactionViaRest(
+export async function insertCreditTransactionViaRest(
   payload: {
     user_id: string;
     tx_type: 'grant_trial' | 'topup' | 'spend' | 'refund';
@@ -281,7 +281,7 @@ async function insertCreditTransactionViaRest(
   });
 }
 
-async function patchUserWalletViaRest(
+export async function patchUserWalletViaRest(
   userId: string,
   patch: { trial_credits?: number; purchased_credits?: number },
   config: ServerBillingConfig,
@@ -308,7 +308,7 @@ async function patchUserWalletViaRest(
   }
 }
 
-async function ensureWalletViaRest(
+export async function ensureWalletViaRest(
   userId: string,
   config: ServerBillingConfig,
   fetchFn: FetchLike

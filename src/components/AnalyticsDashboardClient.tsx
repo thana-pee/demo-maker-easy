@@ -42,6 +42,7 @@ import {
   getReadableSongwriterLabel,
   getReadableViewModeLabel,
 } from '@/lib/analyticsLabels';
+import { AdminNavTabs } from './AdminNavTabs';
 
 interface SummaryApiResponse {
   ok: boolean;
@@ -434,6 +435,10 @@ export const AnalyticsDashboardClient: React.FC = () => {
       </header>
 
       <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <AdminNavTabs activeTab="analytics" />
+        </div>
+
         {/* Loading State */}
         {isLoading && !report && (
           <div className="rounded-3xl bg-surface-1 border border-hairline shadow-e1 p-10 text-center space-y-3">

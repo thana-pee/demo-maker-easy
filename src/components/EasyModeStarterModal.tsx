@@ -69,6 +69,8 @@ interface EasyModeStarterModalProps {
   onClose: () => void;
 }
 
+export const EASY_WHOLE_SONG_COST = CREDIT_COST_TABLE.aiEasyWholeSong;
+
 interface ArchitectApiResult {
   isSimulated: boolean;
   model: string;
