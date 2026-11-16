@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   Sparkles,
   Play,
@@ -22,6 +22,7 @@ import {
   canAfford,
   deductCredits,
   getCreditBalance,
+  getEasyArchitectCreditCost,
   type WalletBreakdown,
 } from '@/lib/creditManager';
 import { getAuthAccessToken, refreshAuthSession } from '@/lib/cloudSync';
@@ -40,10 +41,15 @@ import {
   THAI_ERA_PROFILES,
   SONGWRITER_STYLE_PROFILES,
 } from '@/lib/aiPrompts';
-import { transposeChord } from '@/lib/chordUtils';
+import {
+  transposeChord,
+  POPULAR_CHORD_FORMULAS,
+  resolveChordProgressionFormula,
+} from '@/lib/chordUtils';
 import { useLanguage } from '@/context/LanguageContext';
 import { MicRecorder, playAudioDataUrl } from '@/lib/micRecorder';
 import type {
+  SectionType,
   SongProject,
   ThaiEmotionalResolution,
   ThaiLyricDialect,
@@ -84,7 +90,6 @@ interface HumClipState {
   sourceName?: string;
 }
 
-const EASY_WHOLE_SONG_COST = CREDIT_COST_TABLE.aiEasyWholeSong;
 const EASY_HUM_SONG_COST = CREDIT_COST_TABLE.aiHumToSong;
 const MAX_HUM_SECONDS = 45;
 const MAX_HUM_BYTES = 8 * 1024 * 1024;
@@ -182,6 +187,56 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
   const [emotionalResolution, setEmotionalResolution] =
     useState<ThaiEmotionalResolution>('auto');
   const [topic, setTopic] = useState<string>('');
+
+  // Feature 1: Song Structure & Chord Progression Selection
+  const [structurePreset, setStructurePreset] = useState<'standard-5' | 'full-hit-7' | 'extended-9' | 'custom'>('standard-5');
+  const [customSections, setCustomSections] = useState<Array<{ type: SectionType; bars: number; name?: string }>>([
+    { type: 'intro', bars: 2, name: 'Intro' },
+    { type: 'verse', bars: 4, name: 'Verse' },
+    { type: 'pre-chorus', bars: 2, name: 'Pre-Chorus' },
+    { type: 'chorus', bars: 4, name: 'Chorus' },
+    { type: 'outro', bars: 2, name: 'Outro' },
+  ]);
+  const [chordMode, setChordMode] = useState<string>('auto'); // 'auto' | formulaId | 'custom'
+  const [customChordsInput, setCustomChordsInput] = useState<string>('C, G, Am, F');
+
+  const activeSections = useMemo(() => {
+    if (structurePreset === 'custom') return customSections;
+    if (structurePreset === 'full-hit-7') {
+      return [
+        { type: 'intro' as SectionType, bars: 2, name: 'Intro' },
+        { type: 'verse' as SectionType, bars: 4, name: 'Verse 1' },
+        { type: 'pre-chorus' as SectionType, bars: 2, name: 'Pre-Chorus' },
+        { type: 'chorus' as SectionType, bars: 4, name: 'Chorus' },
+        { type: 'verse' as SectionType, bars: 4, name: 'Verse 2' },
+        { type: 'chorus' as SectionType, bars: 4, name: 'Chorus' },
+        { type: 'outro' as SectionType, bars: 2, name: 'Outro' },
+      ];
+    }
+    if (structurePreset === 'extended-9') {
+      return [
+        { type: 'intro' as SectionType, bars: 2, name: 'Intro' },
+        { type: 'verse' as SectionType, bars: 4, name: 'Verse 1' },
+        { type: 'pre-chorus' as SectionType, bars: 2, name: 'Pre-Chorus' },
+        { type: 'chorus' as SectionType, bars: 4, name: 'Chorus 1' },
+        { type: 'verse' as SectionType, bars: 4, name: 'Verse 2' },
+        { type: 'bridge' as SectionType, bars: 2, name: 'Bridge' },
+        { type: 'solo' as SectionType, bars: 4, name: 'Solo' },
+        { type: 'chorus' as SectionType, bars: 4, name: 'Chorus 2' },
+        { type: 'outro' as SectionType, bars: 2, name: 'Outro' },
+      ];
+    }
+    return [
+      { type: 'intro' as SectionType, bars: 2, name: 'Intro' },
+      { type: 'verse' as SectionType, bars: 4, name: 'Verse' },
+      { type: 'pre-chorus' as SectionType, bars: 2, name: 'Pre-Chorus' },
+      { type: 'chorus' as SectionType, bars: 4, name: 'Chorus' },
+      { type: 'outro' as SectionType, bars: 2, name: 'Outro' },
+    ];
+  }, [structurePreset, customSections]);
+
+  const currentCreditCost = getEasyArchitectCreditCost(activeSections.length);
+  const estimatedKey = vocalProfile === 'female' ? 'G' : 'C';
 
   const [showCostConfirm, setShowCostConfirm] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -306,12 +361,12 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
       );
       return;
     }
-    if (!canAfford(EASY_WHOLE_SONG_COST)) {
+    if (!canAfford(currentCreditCost)) {
       setShowCostConfirm(false);
       setErrorMsg(
         lang === 'th'
-          ? `เครดิตไม่เพียงพอ (ต้องใช้ ${EASY_WHOLE_SONG_COST} เหรียญ) กรุณาเติมเครดิตก่อนครับ`
-          : `Insufficient credits (requires ${EASY_WHOLE_SONG_COST} credits). Please top up in Wallet.`
+          ? `เครดิตไม่เพียงพอ (ต้องใช้ ${currentCreditCost} เหรียญ) กรุณาเติมเครดิตก่อนครับ`
+          : `Insufficient credits (requires ${currentCreditCost} credits). Please top up in Wallet.`
       );
       return;
     }
@@ -320,7 +375,7 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
 
   const handleConfirmGenerate = async () => {
     setShowCostConfirm(false);
-    if (!canAfford(EASY_WHOLE_SONG_COST)) {
+    if (!canAfford(currentCreditCost)) {
       setErrorMsg(lang === 'th' ? 'เครดิตไม่เพียงพอ' : 'Insufficient credits');
       return;
     }
@@ -339,6 +394,13 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
         lyricDialect,
         songwriterStyle,
         emotionalResolution,
+        customStructure: activeSections,
+        chordProgressionPreset:
+          chordMode !== 'auto' && chordMode !== 'custom' ? chordMode : undefined,
+        customChords:
+          chordMode === 'custom' && customChordsInput.trim()
+            ? customChordsInput.split(/[\s,]+/).map((c) => c.trim()).filter(Boolean)
+            : undefined,
       });
 
       if (!res.ok || !data?.song) {
@@ -355,7 +417,7 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
         onCreditsChange(synced.balance);
       } else if (!data.isSimulated) {
         const deduction = deductCredits(
-          EASY_WHOLE_SONG_COST,
+          currentCreditCost,
           `Easy Mode Architect (${data.model}): ${topic.trim().slice(0, 24)}`
         );
         if (deduction.success) {
@@ -866,10 +928,225 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
                     </div>
                   )}
 
-                  {/* Step 3: 1-Sentence Idea */}
+                  {/* Step 3: Song Structure Selection (4 / 6 / 8 Cr) */}
+                  <div className="space-y-2 p-3.5 rounded-2xl bg-surface-2/60 border border-hairline">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <label className="text-xs font-bold text-ink-900 block">
+                        {lang === 'th' ? '3. โครงสร้างท่อนเพลง (Song Structure):' : '3. Song Structure:'}
+                      </label>
+                      <span className="px-2.5 py-0.5 rounded-full bg-accent-50 text-accent-text border border-accent-200 text-[11px] font-bold">
+                        {activeSections.length} {lang === 'th' ? 'ท่อน' : 'Sections'} · {currentCreditCost} {lang === 'th' ? 'เหรียญ' : 'Credits'}
+                      </span>
+                    </div>
+
+                    {/* Presets 3 Sizes + Custom */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {[
+                        {
+                          id: 'standard-5' as const,
+                          nameTh: 'Standard (5 ท่อน)',
+                          nameEn: 'Standard (5 Sec)',
+                          desc: '4 Credits',
+                          count: 5,
+                        },
+                        {
+                          id: 'full-hit-7' as const,
+                          nameTh: 'Full Hit (7 ท่อน)',
+                          nameEn: 'Full Hit (7 Sec)',
+                          desc: '6 Credits',
+                          count: 7,
+                        },
+                        {
+                          id: 'extended-9' as const,
+                          nameTh: 'Extended (9 ท่อน)',
+                          nameEn: 'Extended (9 Sec)',
+                          desc: '8 Credits',
+                          count: 9,
+                        },
+                        {
+                          id: 'custom' as const,
+                          nameTh: 'ปรับท่อนเอง',
+                          nameEn: 'Custom Structure',
+                          desc: `${getEasyArchitectCreditCost(customSections.length)} Cr`,
+                          count: customSections.length,
+                        },
+                      ].map((preset) => (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          onClick={() => setStructurePreset(preset.id)}
+                          className={`p-2.5 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${
+                            structurePreset === preset.id
+                              ? 'bg-accent-50 border-accent-500 ring-2 ring-accent-500/20'
+                              : 'bg-surface-1 border-hairline hover:border-accent-200'
+                          }`}
+                        >
+                          <div className="text-xs font-bold text-ink-900">
+                            {lang === 'th' ? preset.nameTh : preset.nameEn}
+                          </div>
+                          <div className="text-[10px] font-semibold text-accent-text mt-1">
+                            {preset.desc}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Custom Chip Editor Mode */}
+                    {structurePreset === 'custom' ? (
+                      <div className="mt-2.5 pt-2.5 border-t border-hairline space-y-2">
+                        <div className="text-[11px] text-ink-500">
+                          {lang === 'th'
+                            ? 'กดปุ่มชิปเพื่อสลับ 2 หรือ 4 ห้อง / กด ✕ เพื่อลบท่อน (รองรับสูงสุด 9 ท่อน):'
+                            : 'Click chip to toggle 2/4 bars, or ✕ to remove (up to 9 sections):'}
+                        </div>
+                        <div className="flex flex-wrap gap-1.5 items-center">
+                          {customSections.map((sec, idx) => (
+                            <span
+                              key={`${sec.type}-${idx}`}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-surface-1 border border-hairline text-xs font-medium text-ink-900 shadow-xs"
+                            >
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setCustomSections(
+                                    customSections.map((s, i) =>
+                                      i === idx ? { ...s, bars: s.bars === 2 ? 4 : 2 } : s
+                                    )
+                                  );
+                                }}
+                                className="cursor-pointer hover:text-accent-500 font-bold"
+                                title={lang === 'th' ? 'คลิกเพื่อสลับจำนวนห้อง (2/4 ห้อง)' : 'Click to toggle bars'}
+                              >
+                                {sec.name || sec.type} ({sec.bars}บาร์)
+                              </button>
+                              {customSections.length > 2 && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setCustomSections(customSections.filter((_, i) => i !== idx));
+                                  }}
+                                  className="text-ink-400 hover:text-rose-600 cursor-pointer ml-1 text-xs"
+                                >
+                                  ✕
+                                </button>
+                              )}
+                            </span>
+                          ))}
+                        </div>
+
+                        {customSections.length < 9 && (
+                          <div className="flex flex-wrap gap-1.5 pt-1">
+                            <span className="text-[11px] font-bold text-ink-600 self-center mr-1">
+                              {lang === 'th' ? '+ เพิ่มท่อน:' : '+ Add:'}
+                            </span>
+                            {[
+                              { type: 'intro' as SectionType, label: 'Intro' },
+                              { type: 'verse' as SectionType, label: 'Verse' },
+                              { type: 'pre-chorus' as SectionType, label: 'Pre-Chorus' },
+                              { type: 'chorus' as SectionType, label: 'Chorus' },
+                              { type: 'solo' as SectionType, label: 'Solo' },
+                              { type: 'bridge' as SectionType, label: 'Bridge' },
+                              { type: 'outro' as SectionType, label: 'Outro' },
+                            ].map((item) => (
+                              <button
+                                key={item.type}
+                                type="button"
+                                onClick={() => {
+                                  if (customSections.length >= 9) return;
+                                  const count =
+                                    customSections.filter((s) => s.type === item.type).length + 1;
+                                  const name =
+                                    item.type === 'verse' || item.type === 'chorus'
+                                      ? `${item.label} ${count}`
+                                      : item.label;
+                                  const bars =
+                                    item.type === 'intro' || item.type === 'outro' || item.type === 'pre-chorus'
+                                      ? 2
+                                      : 4;
+                                  setCustomSections([...customSections, { type: item.type, bars, name }]);
+                                }}
+                                className="px-2 py-1 rounded-md bg-surface-1 hover:bg-accent-50 border border-hairline hover:border-accent-300 text-[11px] font-semibold text-ink-700 cursor-pointer transition"
+                              >
+                                + {item.label}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-ink-600 flex flex-wrap gap-1 pt-1">
+                        {activeSections.map((s, idx) => (
+                          <span
+                            key={idx}
+                            className="px-2 py-0.5 rounded bg-surface-1 border border-hairline text-[10px] font-semibold text-ink-700"
+                          >
+                            {s.name || s.type} ({s.bars}บาร์)
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Step 4: Chord Progression Selection */}
+                  <div className="space-y-2 p-3.5 rounded-2xl bg-surface-2/60 border border-hairline">
+                    <label htmlFor="easy-chord-progression" className="text-xs font-bold text-ink-900 block">
+                      {lang === 'th' ? '4. ทางคอร์ด (Chord Progression):' : '4. Chord Progression:'}
+                    </label>
+                    <div className="space-y-2">
+                      <select
+                        id="easy-chord-progression"
+                        value={chordMode}
+                        onChange={(e) => setChordMode(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl bg-surface-1 border border-hairline text-xs font-semibold text-ink-900 focus:outline-none focus:ring-2 focus:ring-accent-500/30"
+                      >
+                        <option value="auto">
+                          {lang === 'th' ? 'Auto — อัตโนมัติตามสไตล์เพลงที่เลือก' : 'Auto — Preset Default Chords'}
+                        </option>
+                        {POPULAR_CHORD_FORMULAS.map((f) => {
+                          const preview = resolveChordProgressionFormula(f.id, estimatedKey).join(' - ');
+                          return (
+                            <option key={f.id} value={f.id}>
+                              {f.nameTh} ({preview})
+                            </option>
+                          );
+                        })}
+                        <option value="custom">
+                          {lang === 'th' ? 'พิมพ์คอร์ดเอง (Custom Chords)' : 'Custom Chords Input'}
+                        </option>
+                      </select>
+
+                      {chordMode !== 'auto' && chordMode !== 'custom' && (
+                        <div className="p-2.5 rounded-xl bg-surface-1 border border-hairline text-[11px] font-medium text-ink-700">
+                          <span className="font-bold text-accent-text mr-1">
+                            {lang === 'th' ? `คอร์ดใน Key ${estimatedKey}:` : `Chords in Key ${estimatedKey}:`}
+                          </span>
+                          <span className="font-mono font-bold">
+                            {resolveChordProgressionFormula(chordMode, estimatedKey).join('  ·  ')}
+                          </span>
+                        </div>
+                      )}
+
+                      {chordMode === 'custom' && (
+                        <div className="space-y-1">
+                          <input
+                            type="text"
+                            value={customChordsInput}
+                            onChange={(e) => setCustomChordsInput(e.target.value)}
+                            placeholder="เช่น C, G, Am, F หรือ G, D, Em, C"
+                            className="w-full px-3 py-2 rounded-xl bg-surface-1 border border-hairline text-xs font-mono font-bold text-ink-900 focus:outline-none focus:ring-2 focus:ring-accent-500/30"
+                          />
+                          <p className="text-[10px] text-ink-500">
+                            {lang === 'th' ? 'คั่นชื่อคอร์ดด้วยจุลภาคหรือเว้นวรรค' : 'Separate chords by commas or spaces'}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Step 5: 1-Sentence Idea */}
                   <div className="space-y-1.5">
                     <label htmlFor="easy-song-topic" className="text-xs font-bold text-ink-900 block">
-                      {lang === 'th' ? '3. เล่าไอเดียเพลงสั้นๆ (1 ประโยค):' : '3. Describe your song idea (1 sentence):'}
+                      {lang === 'th' ? '5. เล่าไอเดียเพลงสั้นๆ (1 ประโยค):' : '5. Describe your song idea (1 sentence):'}
                     </label>
                     <textarea
                       id="easy-song-topic"
@@ -889,7 +1166,7 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
                   {errorMsg && (
                     <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold flex items-center justify-between gap-2">
                       <span>{errorMsg}</span>
-                      {!canAfford(EASY_WHOLE_SONG_COST) && (
+                      {!canAfford(currentCreditCost) && (
                         <button
                           type="button"
                           onClick={() => {
@@ -912,13 +1189,13 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
                           {lang === 'th' ? 'ยืนยันสร้างเพลงเต็มด้วย AI' : 'Confirm Full-Song AI Generation'}
                         </span>
                         <span className="px-2.5 py-0.5 rounded-full bg-amber-200 text-amber-950">
-                          ใช้ {EASY_WHOLE_SONG_COST} เหรียญ / {EASY_WHOLE_SONG_COST} Credits
+                          ใช้ {currentCreditCost} เหรียญ / {currentCreditCost} Credits
                         </span>
                       </div>
                       <p className="text-[11px] text-amber-900">
                         {lang === 'th'
-                          ? `เรียกใช้ Gemini 3.8 Flash เสก 5 ท่อน (คอร์ด + เนื้อเพลงมีสัมผัส + เมโลดี้ไกด์ + มิกซ์) คงเหลือหลังใช้ ${currentBalance - EASY_WHOLE_SONG_COST} Credits (ตัดเฉพาะเมื่อผลลัพธ์ไม่จำลอง)`
-                          : `Calls Gemini 3.8 Flash to compose a complete 5-section song (${currentBalance - EASY_WHOLE_SONG_COST} credits remaining on live success).`}
+                          ? `เรียกใช้ Gemini 4 Hydrogen เสก ${activeSections.length} ท่อน (คอร์ด + เนื้อเพลงมีสัมผัส + เมโลดี้ไกด์ + มิกซ์) คงเหลือหลังใช้ ${currentBalance - currentCreditCost} Credits (ตัดเฉพาะเมื่อผลลัพธ์ไม่จำลอง)`
+                          : `Calls Gemini 4 Hydrogen to compose a complete ${activeSections.length}-section song (${currentBalance - currentCreditCost} credits remaining on live success).`}
                       </p>
                       <div className="flex gap-2">
                         <button
@@ -927,7 +1204,7 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
                           disabled={isGenerating}
                           className="flex-1 py-2.5 rounded-xl bg-accent-500 hover:bg-accent-hover text-white font-black text-xs cursor-pointer transition"
                         >
-                          ✓ {lang === 'th' ? `ยืนยันเสกทั้งเพลง (${EASY_WHOLE_SONG_COST} เหรียญ)` : `Generate (${EASY_WHOLE_SONG_COST} Credits)`}
+                          ✓ {lang === 'th' ? `ยืนยันเสกทั้งเพลง (${currentCreditCost} เหรียญ)` : `Generate (${currentCreditCost} Credits)`}
                         </button>
                         <button
                           type="button"
@@ -951,8 +1228,8 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
                             ? 'กำลังแต่งทั้งเพลง + เช็กสัมผัสไทย...'
                             : 'Composing full song...'
                           : lang === 'th'
-                            ? `✨ เสกทั้งเพลง (ใช้ ${EASY_WHOLE_SONG_COST} เหรียญ)`
-                            : `✨ Generate Full Song (${EASY_WHOLE_SONG_COST} Credits)`}
+                            ? `✨ เสกทั้งเพลง (${activeSections.length} ท่อน · ใช้ ${currentCreditCost} เหรียญ)`
+                            : `✨ Generate Full Song (${activeSections.length} Secs · ${currentCreditCost} Credits)`}
                       </span>
                     </button>
                   )}

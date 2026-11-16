@@ -1,6 +1,6 @@
 import { generateUniqueId } from './sectionUtils';
 import { generateLyricAlignedGuideMelody } from './melodyUtils';
-import { getChordEmotionalHint } from './chordUtils';
+import { getChordEmotionalHint, resolveChordProgressionFormula } from './chordUtils';
 import { findThaiRhymes } from './thaiRhymeHelper';
 import type {
   Ambience3DMode,
@@ -60,6 +60,9 @@ export interface EasyArchitectInput {
   lyricDialect?: ThaiLyricDialect;
   songwriterStyle?: ThaiSongwriterStyle;
   emotionalResolution?: ThaiEmotionalResolution;
+  customStructure?: Array<{ type: SectionType; bars: number; name?: string }>;
+  chordProgressionPreset?: string;
+  customChords?: string[];
 }
 
 export const EASY_STYLE_PRESETS: EasyStylePresetConfig[] = [
@@ -537,7 +540,7 @@ export function sanitizeArchitectSongProject(
       ? obj.title.trim().slice(0, 80)
       : input.topic.trim().slice(0, 50) || preset.nameTh;
 
-  const rawSections = Array.isArray(obj.sections) ? obj.sections.slice(0, 7) : [];
+  const rawSections = Array.isArray(obj.sections) ? obj.sections.slice(0, 9) : [];
   const baseSections =
     rawSections.length >= 2
       ? rawSections.map((sec, idx) => sanitizeSection(sec, preset, input.language, idx))
@@ -1308,7 +1311,16 @@ export function buildSimulatedArchitectSong(input: EasyArchitectInput): SongProj
   const bpm = preset.bpmByTempo[input.tempoFeel];
   const baseKey = input.vocalProfile === 'female' ? 'G' : 'C';
   const capoFret = input.vocalProfile === 'female' ? 2 : input.vocalProfile === 'neutral' ? 1 : 0;
-  const chords = preset.defaultChords;
+  
+  const resolvedFormulaChords = input.chordProgressionPreset
+    ? resolveChordProgressionFormula(input.chordProgressionPreset, baseKey)
+    : [];
+  const effectiveChords =
+    input.customChords && input.customChords.length > 0
+      ? input.customChords
+      : resolvedFormulaChords.length > 0
+        ? resolvedFormulaChords
+        : preset.defaultChords;
   const effectiveGenre: ThaiSongGenre = input.thaiGenre ?? preset.thaiGenre ?? 'thai-pop';
 
   const isEn = input.language === 'en';
@@ -1333,7 +1345,7 @@ export function buildSimulatedArchitectSong(input: EasyArchitectInput): SongProj
     ringEnd = false
   ): SongBar[] =>
     lines.map((lyrics, idx) => {
-      const chord = sectionChords[idx % sectionChords.length];
+      const chord = sectionChords[idx % sectionChords.length] || 'C';
       return {
         id: generateUniqueId('bar'),
         chordsPerBar: 1,
@@ -1346,6 +1358,150 @@ export function buildSimulatedArchitectSong(input: EasyArchitectInput): SongProj
       };
     });
 
+  let simulatedSections;
+  if (input.customStructure && input.customStructure.length > 0) {
+    const rawStructure = input.customStructure.slice(0, 9);
+    simulatedSections = rawStructure.map((structItem, sIdx) => {
+      const type = structItem.type;
+      const barCount = Math.max(1, Math.min(8, structItem.bars || (type === 'intro' || type === 'outro' ? 2 : 4)));
+      const name = structItem.name?.trim() || defaultSectionTitle(type, input.language);
+      const isIntro = type === 'intro';
+      const isOutro = type === 'outro' || sIdx === rawStructure.length - 1;
+      const isChorus = type === 'chorus';
+      const isSolo = type === 'solo';
+      const isPre = type === 'pre-chorus';
+      const isBridge = type === 'bridge';
+
+      let lines: string[] = [];
+      if (isIntro || isSolo) {
+        lines = Array(barCount).fill('');
+      } else {
+        const pool = (bundle[type] && bundle[type].length > 0)
+          ? bundle[type]
+          : type === 'bridge'
+            ? bundle['pre-chorus'] || bundle.verse
+            : bundle.verse;
+        lines = Array.from({ length: barCount }, (_, i) => pool[i % pool.length] ?? '');
+      }
+
+      const secChords =
+        input.customChords && input.customChords.length > 0
+          ? input.customChords
+          : resolvedFormulaChords.length > 0
+            ? resolvedFormulaChords
+            : isPre
+              ? [effectiveChords[3] ?? 'F', effectiveChords[1] ?? 'G']
+              : isOutro
+                ? [effectiveChords[2] ?? 'Am', effectiveChords[0] ?? 'C']
+                : effectiveChords;
+
+      const intensity: SectionIntensity = isChorus ? 'high' : isPre || isSolo ? 'medium' : 'low';
+      return {
+        name,
+        type,
+        intensity,
+        instruments: {
+          guitarRhythm: true,
+          guitarLead: isChorus && preset.id === 'soft-rock' ? true : isSolo,
+          bass: !isIntro,
+          piano: isPre || isChorus || isBridge || isSolo || isOutro,
+          drums: isPre || isChorus || isBridge || isSolo,
+          guitarRhythmStyle: isChorus ? preset.chorusRhythmStyle : isOutro ? 'fingerpicking' : preset.verseRhythmStyle,
+          guitarLeadStyle: isSolo ? ('melodic-solo' as LeadGuitarStyle) : ('riff-fills' as LeadGuitarStyle),
+          guitarLeadDrive: (preset.id === 'soft-rock' || isSolo ? 'overdrive' : 'clean') as LeadGuitarDrive,
+          bassStyle: (isChorus ? 'root-fifth' : 'warm-sustain') as BassStyle,
+          pianoStyle: 'warm-pad' as PianoStyle,
+          drumsStyle: isChorus || isSolo ? preset.chorusDrumsStyle : isPre ? 'shaker-cajon' : 'off',
+        },
+        bars: mkBars(lines, secChords, type, isIntro || isOutro),
+      };
+    });
+  } else {
+    simulatedSections = [
+      {
+        name: defaultSectionTitle('intro', input.language),
+        type: 'intro' as SectionType,
+        intensity: 'low' as SectionIntensity,
+        instruments: {
+          guitarRhythm: true,
+          guitarLead: false,
+          bass: false,
+          piano: false,
+          drums: false,
+          guitarRhythmStyle: preset.verseRhythmStyle,
+          drumsStyle: 'off' as DrumStyle,
+        },
+        bars: mkBars(['', ''], effectiveChords.slice(0, 2), 'intro', true),
+      },
+      {
+        name: defaultSectionTitle('verse', input.language),
+        type: 'verse' as SectionType,
+        intensity: 'low' as SectionIntensity,
+        instruments: {
+          guitarRhythm: true,
+          guitarLead: false,
+          bass: true,
+          piano: false,
+          drums: false,
+          guitarRhythmStyle: preset.verseRhythmStyle,
+          bassStyle: 'warm-sustain' as BassStyle,
+          drumsStyle: 'off' as DrumStyle,
+        },
+        bars: mkBars(verseLyrics, effectiveChords, 'verse'),
+      },
+      {
+        name: defaultSectionTitle('pre-chorus', input.language),
+        type: 'pre-chorus' as SectionType,
+        intensity: 'medium' as SectionIntensity,
+        instruments: {
+          guitarRhythm: true,
+          guitarLead: false,
+          bass: true,
+          piano: true,
+          drums: true,
+          guitarRhythmStyle: 'soft-strum' as GuitarStyle,
+          pianoStyle: 'warm-pad' as PianoStyle,
+          drumsStyle: 'shaker-cajon' as DrumStyle,
+        },
+        bars: mkBars(preChorusLyrics, [effectiveChords[3] ?? 'F', effectiveChords[1] ?? 'G'], 'pre-chorus'),
+      },
+      {
+        name: defaultSectionTitle('chorus', input.language),
+        type: 'chorus' as SectionType,
+        intensity: 'high' as SectionIntensity,
+        instruments: {
+          guitarRhythm: true,
+          guitarLead: preset.id === 'soft-rock',
+          bass: true,
+          piano: true,
+          drums: true,
+          guitarRhythmStyle: preset.chorusRhythmStyle,
+          guitarLeadStyle: 'riff-fills' as LeadGuitarStyle,
+          guitarLeadDrive: preset.id === 'soft-rock' ? ('overdrive' as LeadGuitarDrive) : ('clean' as LeadGuitarDrive),
+          bassStyle: 'root-fifth' as BassStyle,
+          pianoStyle: 'warm-pad' as PianoStyle,
+          drumsStyle: preset.chorusDrumsStyle,
+        },
+        bars: mkBars(chorusLyrics, effectiveChords, 'chorus', true),
+      },
+      {
+        name: defaultSectionTitle('outro', input.language),
+        type: 'outro' as SectionType,
+        intensity: 'low' as SectionIntensity,
+        instruments: {
+          guitarRhythm: true,
+          guitarLead: false,
+          bass: true,
+          piano: true,
+          drums: false,
+          guitarRhythmStyle: 'fingerpicking' as GuitarStyle,
+          drumsStyle: 'off' as DrumStyle,
+        },
+        bars: mkBars(outroLyrics, [effectiveChords[2] ?? 'Am', effectiveChords[0] ?? 'C'], 'outro', true),
+      },
+    ];
+  }
+
   const rawSimulated = {
     title: isEn
       ? `Easy Demo: ${topicText.slice(0, 32)}`
@@ -1357,89 +1513,7 @@ export function buildSimulatedArchitectSong(input: EasyArchitectInput): SongProj
     guitarModel: preset.guitarModel,
     stringGauge: preset.stringGauge,
     ambience3D: preset.ambience3D,
-    sections: [
-      {
-        name: defaultSectionTitle('intro', input.language),
-        type: 'intro',
-        intensity: 'low',
-        instruments: {
-          guitarRhythm: true,
-          guitarLead: false,
-          bass: false,
-          piano: false,
-          drums: false,
-          guitarRhythmStyle: preset.verseRhythmStyle,
-          drumsStyle: 'off',
-        },
-        bars: mkBars(['', ''], chords.slice(0, 2), 'intro', true),
-      },
-      {
-        name: defaultSectionTitle('verse', input.language),
-        type: 'verse',
-        intensity: 'low',
-        instruments: {
-          guitarRhythm: true,
-          guitarLead: false,
-          bass: true,
-          piano: false,
-          drums: false,
-          guitarRhythmStyle: preset.verseRhythmStyle,
-          bassStyle: 'warm-sustain',
-          drumsStyle: 'off',
-        },
-        bars: mkBars(verseLyrics, chords, 'verse'),
-      },
-      {
-        name: defaultSectionTitle('pre-chorus', input.language),
-        type: 'pre-chorus',
-        intensity: 'medium',
-        instruments: {
-          guitarRhythm: true,
-          guitarLead: false,
-          bass: true,
-          piano: true,
-          drums: true,
-          guitarRhythmStyle: 'soft-strum',
-          pianoStyle: 'warm-pad',
-          drumsStyle: 'shaker-cajon',
-        },
-        bars: mkBars(preChorusLyrics, [chords[3] ?? 'F', chords[1] ?? 'G'], 'pre-chorus'),
-      },
-      {
-        name: defaultSectionTitle('chorus', input.language),
-        type: 'chorus',
-        intensity: 'high',
-        instruments: {
-          guitarRhythm: true,
-          guitarLead: preset.id === 'soft-rock',
-          bass: true,
-          piano: true,
-          drums: true,
-          guitarRhythmStyle: preset.chorusRhythmStyle,
-          guitarLeadStyle: 'riff-fills',
-          guitarLeadDrive: preset.id === 'soft-rock' ? 'overdrive' : 'clean',
-          bassStyle: 'root-fifth',
-          pianoStyle: 'warm-pad',
-          drumsStyle: preset.chorusDrumsStyle,
-        },
-        bars: mkBars(chorusLyrics, chords, 'chorus', true),
-      },
-      {
-        name: defaultSectionTitle('outro', input.language),
-        type: 'outro',
-        intensity: 'low',
-        instruments: {
-          guitarRhythm: true,
-          guitarLead: false,
-          bass: true,
-          piano: true,
-          drums: false,
-          guitarRhythmStyle: 'fingerpicking',
-          drumsStyle: 'off',
-        },
-        bars: mkBars(outroLyrics, [chords[2] ?? 'Am', chords[0] ?? 'C'], 'outro', true),
-      },
-    ],
+    sections: simulatedSections,
   };
 
   return sanitizeArchitectSongProject(rawSimulated, input);

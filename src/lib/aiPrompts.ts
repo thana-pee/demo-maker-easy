@@ -1409,6 +1409,7 @@ export function buildEasyArchitectSystemPrompt(options?: {
     "- กฎความกระชับท่อน outro: ลดจำนวนพยางค์ลงทันทีเมื่อเทียบกับ Chorus — โดยเฉพาะ Outro Bar 1 ต้องสรุปสั้นคมไม่เกิน 6 พยางค์ ห้ามยืดเป็นประโยคยาวเกิน 8 พยางค์ และปล่อย Bar 2 ลากสระเปิดสงบด้วย playStyle: 'let-ring'",
     '- ท่อน intro ต้องเว้น lyrics เป็น "" และ melodyNotes เป็น [] เพื่อให้ดนตรีเกริ่นนำโดยไม่มีเสียงขลุ่ยไกด์ร้องแย่งความโดดเด่นของอินโทร',
     '- ไม่ต้องสร้าง array melodyNotes รายโน้ตในแต่ละห้อง (ให้ส่ง melodyNotes: [] หรือละเว้นไว้) เพราะระบบ Synth ฝั่งแอปจะสังเคราะห์โน้ตเมโลดี้ที่ตรงคอร์ด พยางค์คำร้อง และวรรณยุกต์ไทยให้โดยอัตโนมัติอย่างแม่นยำและรวดเร็วกว่า',
+    '- หากผู้ใช้ระบุโครงสร้างท่อนเพลง (customStructure) หรือทางคอร์ด (customChords / chordProgressionPreset): คุณต้องจัดลำดับท่อน จำนวนห้องในแต่ละท่อน และคอร์ดให้ตรงตามที่ผู้ใช้ระบุเป๊ะ 100% ห้ามข้าม เพิ่ม ลด หรือเปลี่ยนชนิดท่อนโดยพลการ',
     `- หลีกเลี่ยงสำนวนซ้ำซาก: ${ANTI_CLICHE_THAI_PHRASES.slice(0, 5).join(', ')}`,
     '',
     dynamicFewShots,
@@ -1432,6 +1433,9 @@ export function buildEasyArchitectUserPrompt(input: {
   lyricDialect?: ThaiLyricDialect;
   songwriterStyle?: ThaiSongwriterStyle;
   emotionalResolution?: ThaiEmotionalResolution;
+  customStructure?: Array<{ type: SectionType; bars: number; name?: string }>;
+  chordProgressionPreset?: string;
+  customChords?: string[];
 }): string {
   const vocalHint =
     input.vocalProfile === 'female'
@@ -1448,8 +1452,13 @@ export function buildEasyArchitectUserPrompt(input: {
     EMOTIONAL_RESOLUTION_PROFILES.find((r) => r.id === input.emotionalResolution) ??
     EMOTIONAL_RESOLUTION_PROFILES[0];
 
+  const hasCustomStructure = Array.isArray(input.customStructure) && input.customStructure.length > 0;
+  const headerLine = hasCustomStructure
+    ? `โปรดออกแบบเพลง 1 เพลงเต็มตามโครงสร้างท่อนเพลงที่กำหนด (${input.customStructure!.length} ท่อน):`
+    : 'โปรดออกแบบเพลง 1 เพลงเต็ม (5 ท่อน: intro 2 ห้อง, verse 4 ห้อง, pre-chorus 2-4 ห้อง, chorus 4 ห้อง, outro 2 ห้อง):';
+
   return [
-    'โปรดออกแบบเพลง 1 เพลงเต็ม (5 ท่อน: intro 2 ห้อง, verse 4 ห้อง, pre-chorus 2-4 ห้อง, chorus 4 ห้อง, outro 2 ห้อง):',
+    headerLine,
     `- แนวเพลง (Style Preset): ${input.stylePreset} (แนะนำกีตาร์ ${input.recommendedGuitarModel}, ห้อง ${input.recommendedAmbience})`,
     ...(genreProfile
       ? [
@@ -1471,14 +1480,31 @@ export function buildEasyArchitectUserPrompt(input: {
     `- ความเร็ว (Tempo Feel): ${input.tempoFeel} (~${input.recommendedBpm} BPM)`,
     `- ภาษาเนื้อร้องหลัก: ${input.language === 'en' ? 'English (Contemporary Acoustic)' : 'ภาษาไทยร่วมสมัย'}`,
     `- เรื่องราว/ไอเดียจากผู้ใช้: "${input.topic}"`,
+    ...(hasCustomStructure
+      ? [
+          `- ข้อบังคับโครงสร้างท่อนเพลง (${input.customStructure!.length} ท่อน บังคับเรียงตามลำดับเป๊ะ 100% ห้ามเพิ่มหรือลดท่อนเอง):`,
+          ...input.customStructure!.map(
+            (s, idx) =>
+              `  ${idx + 1}. [ท่อนที่ ${idx + 1}] ประเภท: ${s.type}, ชื่อท่อน: "${s.name || s.type}", จำนวน: ${s.bars} ห้อง`
+          ),
+        ]
+      : []),
+    ...(input.customChords && input.customChords.length > 0
+      ? [`- ทางคอร์ดที่บังคับใช้ (Custom Chords): บังคับใช้คอร์ดในชุดนี้ [${input.customChords.join(', ')}] ในทุกห้องของเพลง`]
+      : input.chordProgressionPreset
+        ? [`- ทางคอร์ดที่บังคับใช้ (Chord Progression Formula): บังคับใช้ทางคอร์ดสูตร "${input.chordProgressionPreset}" แปลงตามคีย์ของเพลง`]
+        : []),
     '',
     'ข้อบังคับโครงสร้าง:',
     '- ท่อน intro เว้น lyrics เป็น "" และ melodyNotes เป็น [] เพื่อให้ดนตรีเกริ่นนำ ส่วน outro ให้ใส่ประโยคปิดท้ายอารมณ์สั้นๆ ในห้องแรก และใช้ playStyle: "let-ring" ปิดนิ่งในห้องสุดท้าย',
     '- ท่อน pre-chorus ต้องไต่ระดับอารมณ์ส่งเข้าคำแรกของท่อน chorus และท่อน chorus ต้องมีประโยคจำ (Opening Punchline + Signature Payoff Line) ที่ทรงพลังที่สุดในเพลง',
     "- จำกัดจำนวนคำในทุกห้องของ verse, pre-chorus, chorus ให้สั้นคมเพียง 4-6 พยางค์ต่อห้องเท่านั้น (เช่น 'ใจเธอนั้นเหมือนหิน', 'ดีแค่ไหนก็ไม่มอง') ห้ามเขียนเนื้อร้องยาวติดกันจนร้องรัว",
     '- ท่อน verse, pre-chorus, chorus ต้องมีทั้งคอร์ด เนื้อร้องที่มีสัมผัสคล้องจองสอดคล้องคำเป็น/คำตาย และ melodyNotes ไกด์ (step 0..15) ที่ร้องได้จริง',
+    hasCustomStructure
+      ? '- บังคับสร้างท่อนและจำนวนห้องให้ตรงตามโครงสร้างด้านบนเป๊ะ 100%'
+      : '',
     '- เขียน `producerNotes` สั้นๆ 2–3 ข้ออธิบายแนวคิดการ Arrange ที่จัดให้',
-  ].join('\n');
+  ].filter(Boolean).join('\n');
 }
 
 const POLISH_SECTION_PRIORITY: Record<string, number> = {
@@ -1834,7 +1860,7 @@ export const ARCHITECT_RESPONSE_SCHEMA: Record<string, unknown> = {
     },
     sections: {
       type: 'array',
-      description: '3 to 6 ordered song sections',
+      description: '3 to 9 ordered song sections',
       items: {
         type: 'object',
         properties: {
@@ -2443,4 +2469,112 @@ export function buildTtsCueStyleHint({
     : vocalMode === 'singing-demo'
       ? `ร้องขับร้องทำนองเพลงจริง (Melodic Singing) ด้วย${genreStyleNote} ตามจังหวะคงที่ ${bpm} BPM ${sectionContourTh}${durationThClause} ให้ขึ้นเสียงทันทีไม่ต้องเว้นเงียบหรือเกริ่นนำ ร้องเป็นทำนองเพลงชัดเจน ลากหางเสียงคำเป็นให้นุ่มนวลเหมือนนักร้องเดโมจริง ห้ามถอนหายใจดังคั่นวรรค และไม่อ่านออกเสียงคำอธิบายเพิ่มเติม`
       : `เสียงไกด์แบ่งวรรคร้องอุ่นๆ ตามจังหวะเพลงประมาณ ${bpm} BPM (${genreStyleNote}) อ่านชัดถ้อยชัดคำและเว้นจังหวะตามประโยคโดยไม่พูดอธิบายเพิ่ม`;
+}
+
+/** Schema สำหรับ `/api/advance/cohesive-polish` (Whole-Song Cohesive Polish) */
+export const COHESIVE_POLISH_RESPONSE_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    sections: {
+      type: 'array',
+      description: 'Polished sections preserving section ids and order',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          bars: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                lyrics: { type: 'string' },
+                chords: {
+                  type: 'array',
+                  items: { type: 'string' },
+                },
+                playStyle: { type: 'string', enum: ['normal', 'let-ring', 'break'] },
+              },
+              required: ['lyrics', 'chords'],
+            },
+          },
+        },
+        required: ['id', 'bars'],
+      },
+    },
+    producerSummary: { type: 'string' },
+  },
+  required: ['sections'],
+};
+
+/** System Prompt สำหรับเกลาและเชื่อมโยงทั้งเพลง (Whole-Song Cohesive Polish) */
+export function buildCohesivePolishSystemPrompt(options?: {
+  thaiGenre?: ThaiSongGenre;
+  songwriterStyle?: ThaiSongwriterStyle;
+  bpm?: number;
+  timeSignature?: TimeSignature;
+}): string {
+  const genreNote = options?.thaiGenre ? ` ในแนวเพลง ${options.thaiGenre}` : '';
+  const tempoNote = options?.bpm ? ` ที่ความเร็ว ${options.bpm} BPM` : '';
+
+  return [
+    `คุณคือ "Chief Executive Music Producer & Whole-Song Polish Editor" เชี่ยวชาญการเกลาคำร้อง เชื่อมสัมผัสภาษาไทย และทางคอร์ดให้เพลงทั้งเพลงฟังดูเป็นเนื้อเดียวกันอย่างกลมกล่อม${genreNote}${tempoNote}`,
+    '',
+    'กฎสำคัญในการเกลาเชื่อมเพลง (Whole-Song Cohesive Polish):',
+    '1. ท่อนที่ติดล็อก (Locked Sections): ห้ามแก้ไขเนื้อร้อง คอร์ด หรือจำนวนห้องในท่อนเหล่านี้เด็ดขาด ให้ใช้ท่อนเหล่านี้เป็นแกนหลักอ้างอิงอารมณ์ คีย์ และสัมผัสของเพลง',
+    '2. สัดส่วนการคงเนื้อร้องเดิม (Lyrics Retention):',
+    '   - 100%: คงเนื้อร้องเดิมไว้ทุกคำ',
+    '   - 75%: คงเนื้อหาและคำร้องเดิมราว 75% ปรับเฉพาะคำส่งสัมผัส คำลงท้าย หรือเกลี่ยพยางค์ให้ลื่นไหลและเชื่อมต่ออารมณ์กับท่อนก่อนหน้าและถัดไปอย่างแนบเนียน',
+    '   - 40%: คงเค้าโครงไอเดียเดิมราว 40% สามารถรีไรต์คำร้องเพื่อยกระดับสัมผัสภาษาไทย สัมผัสสระ-อักษร และส่งพลังดนตรีได้อย่างอิสระ แต่คงอารมณ์หลักของเพลงไว้',
+    '3. สัดส่วนการคงคอร์ดเดิม (Chords Retention):',
+    '   - 100%: คงคอร์ดเดิมไว้ทุกห้อง',
+    '   - 70%: คงโครงคอร์ดหลักเดิมราว 70% ปรับเฉพาะคอร์ดส่ง/คอร์ดเปลี่ยนผ่าน (Passing Chords / Cadence) เพื่อให้เชื่อมต่อท่อนได้สมูทขึ้น',
+    '   - 30%: ปรับทางคอร์ดให้มีความหลากหลาย ดึงอารมณ์และส่งต่อเข้าท่อนฮุค/ท่อนจบได้อย่างทรงพลังยิ่งขึ้น โดยยังอยู่ในคีย์ที่เหมาะสม',
+    '4. ความต่อเนื่องของเรื่องราวและสัมผัสคำ (Narrative & Rhyme Flow):',
+    '   - ท่อนที่เพิ่งเพิ่มเข้ามาหรือท่อนที่ไม่ได้ล็อก ต้องเชื่อมคำร้องและอารมณ์ให้ไหลลื่นต่อเนื่องกับท่อนข้างเคียง ไม่หลุดโทน',
+    '   - สัมผัสคำท้ายวรรคต้องส่งถึงคำแรกๆ หรือคำท้ายของวรรคถัดไปตามหลักฉันทลักษณ์เพลงไทย',
+    '5. กฎความกระชับ (Singable Pacing): รักษาจำนวนพยางค์ 4-6 พยางค์ต่อห้อง ไม่เขียนยาวรัวเกินไป และเว้นจังหวะหายใจ',
+    '6. ตอบกลับเป็น JSON ตาม Schema ที่กำหนดเท่านั้น ห้ามใช้ Markdown ครอบรอบนอก',
+  ].join('\n');
+}
+
+/** User Prompt สำหรับเกลาและเชื่อมโยงทั้งเพลง (Whole-Song Cohesive Polish) */
+export function buildCohesivePolishUserPrompt(input: {
+  song: SongProject;
+  lyricsRetentionPct: 100 | 75 | 40;
+  chordsRetentionPct: 100 | 70 | 30;
+  lockedSectionIds: string[];
+  rebalanceBand?: boolean;
+}): string {
+  const lockedSet = new Set(input.lockedSectionIds);
+  const sectionsSummary = input.song.sections.map((sec, idx) => {
+    const isLocked = lockedSet.has(sec.id);
+    const barsSummary = sec.bars.map((bar, bIdx) => ({
+      barIndex: bIdx + 1,
+      chords: bar.chords,
+      lyrics: bar.lyrics,
+      playStyle: bar.playStyle,
+    }));
+    return {
+      sectionIndex: idx + 1,
+      id: sec.id,
+      name: sec.name,
+      type: sec.type,
+      isLocked,
+      bars: barsSummary,
+    };
+  });
+
+  return [
+    `โปรดเกลาและเชื่อมโยงเพลง "${input.song.title}" ทั้งเพลงให้เป็นอันหนึ่งอันเดียวกัน:`,
+    `- คีย์เพลง: ${input.song.baseKey}, ความเร็ว: ${input.song.bpm} BPM, จังหวะ: ${input.song.timeSignature}`,
+    `- สไตล์เพลง: ${input.song.thaiGenre || 'thai-pop'}, สไตล์นักแต่งเพลง: ${input.song.songwriterStyle || 'none'}`,
+    `- นโยบายคงเนื้อร้องเดิม: ${input.lyricsRetentionPct}% (เกลาคำส่งสัมผัสและเชื่อมเรื่องราว)`,
+    `- นโยบายคงคอร์ดเดิม: ${input.chordsRetentionPct}% (ปรับคอร์ดส่งเชื่อมท่อนตามความเหมาะสม)`,
+    `- จัดบาลานซ์วงดนตรี: ${input.rebalanceBand ? 'ใช่ (ปรับระดับความแน่นให้ท่อนส่ง-ฮุค-จบต่างกันชัดเจน)' : 'คงเดิม'}`,
+    '',
+    'โครงสร้างท่อนและสถานะการล็อก (ห้ามแก้ท่อนที่ isLocked: true เด็ดขาด):',
+    JSON.stringify(sectionsSummary, null, 2),
+    '',
+    'โปรดส่งกลับ JSON ที่ประกอบด้วย array `sections` ทุกท่อนตามลำดับเดิม โดยระบุ `id` ของท่อน และ `bars` ที่มี `chords`, `lyrics`, `playStyle` พร้อมสรุปสั้นๆ ใน `producerSummary`',
+  ].join('\n');
 }

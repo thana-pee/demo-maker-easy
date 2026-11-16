@@ -2,7 +2,7 @@ const CHROMATIC_SHARP = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', '
 const CHROMATIC_FLAT  = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
 
 // Map note names to chromatic index (0..11)
-const NOTE_TO_INDEX: Record<string, number> = {
+export const NOTE_TO_INDEX: Record<string, number> = {
   'C': 0, 'B#': 0,
   'C#': 1, 'DB': 1, 'Db': 1,
   'D': 2,
@@ -222,4 +222,73 @@ export function getChordEmotionalHint(chordSymbol: string, lang: 'th' | 'en' = '
   }
 
   return isEn ? 'Bright, grounded warmth' : 'สดใส มั่นคง อบอุ่นชัดเจน';
+}
+
+export interface PopularChordFormula {
+  id: string;
+  nameTh: string;
+  nameEn: string;
+  formula: string;
+  descriptionTh: string;
+  chordsKeyC: string[];
+}
+
+export const POPULAR_CHORD_FORMULAS: PopularChordFormula[] = [
+  {
+    id: 'I-V-vi-IV',
+    nameTh: 'I - V - vi - IV (ป๊อปฮิตติดหู)',
+    nameEn: 'I - V - vi - IV (Pop Standard)',
+    formula: 'I-V-vi-IV',
+    descriptionTh: 'ทางคอร์ดฮิต 4 คอร์ดมหัศจรรย์ตลอดกาล (C - G - Am - F)',
+    chordsKeyC: ['C', 'G', 'Am', 'F'],
+  },
+  {
+    id: 'I-iii-vi-IV',
+    nameTh: 'I - iii - vi - IV (ป๊อปซึ้ง บัลลาด)',
+    nameEn: 'I - iii - vi - IV (Emotional Ballad)',
+    formula: 'I-iii-vi-IV',
+    descriptionTh: 'เพิ่มอารมณ์เหงาอบอุ่น ละมุนชวนฝัน (C - Em - Am - F)',
+    chordsKeyC: ['C', 'Em', 'Am', 'F'],
+  },
+  {
+    id: 'IV-V-iii-vi',
+    nameTh: 'IV - V - iii - vi (รอยัลโรด สไตล์เอเชียนฮิต)',
+    nameEn: 'IV - V - iii - vi (Royal Road / J-Pop & Thai Hit)',
+    formula: 'IV-V-iii-vi',
+    descriptionTh: 'ทางคอร์ดเพลงฮิตเอเชีย อารมณ์พุ่งทะยาน (F - G - Em - Am)',
+    chordsKeyC: ['F', 'G', 'Em', 'Am'],
+  },
+  {
+    id: 'ii7-V7-Imaj7-vi7',
+    nameTh: 'ii7 - V7 - Imaj7 - vi7 (นีโอโซล ซิตี้ป๊อป)',
+    nameEn: 'ii7 - V7 - Imaj7 - vi7 (Neo-Soul / City Pop)',
+    formula: 'ii7-V7-Imaj7-vi7',
+    descriptionTh: 'คอร์ดแจ๊สป๊อป 2-5-1-6 นุ่มหรูมีระดับ (Dm7 - G7 - Cmaj7 - Am7)',
+    chordsKeyC: ['Dm7', 'G7', 'Cmaj7', 'Am7'],
+  },
+  {
+    id: 'vi-V-IV-III7',
+    nameTh: 'vi - V - IV - III7 (ดราม่าไมเนอร์ อันดาลูเซียน)',
+    nameEn: 'vi - V - IV - III7 (Andalusian Drama)',
+    formula: 'vi-V-IV-III7',
+    descriptionTh: 'บันไดเสียงไมเนอร์ลง บีบหัวใจเข้มข้น (Am - G - F - E7)',
+    chordsKeyC: ['Am', 'G', 'F', 'E7'],
+  },
+];
+
+/**
+ * แปลงสูตรทางคอร์ดตาม Key ตั้งต้นของเพลงอัตโนมัติ (เช่น ในคีย์ G หรือ D)
+ */
+export function resolveChordProgressionFormula(formulaIdOrFormula: string, baseKey = 'C'): string[] {
+  const cleanId = formulaIdOrFormula.trim();
+  const found = POPULAR_CHORD_FORMULAS.find(
+    (f) => f.id.toLowerCase() === cleanId.toLowerCase() || f.formula.toLowerCase() === cleanId.toLowerCase()
+  );
+  if (!found) return [];
+
+  const parsed = parseChord(baseKey || 'C');
+  const rootIdx = NOTE_TO_INDEX[parsed.root] ?? 0;
+  const semitonesFromC = (rootIdx - 0 + 120) % 12;
+
+  return found.chordsKeyC.map((c) => transposeChord(c, semitonesFromC, false));
 }

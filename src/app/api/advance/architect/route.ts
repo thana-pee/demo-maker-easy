@@ -13,7 +13,7 @@ import {
   GEMINI_MODEL_MAIN,
   type GeminiTokenUsage,
 } from '@/lib/geminiClient';
-import { CREDIT_COST_TABLE } from '@/lib/creditManager';
+import { getEasyArchitectCreditCost } from '@/lib/creditManager';
 import {
   refundServerBillingOnFailure,
   tryServerBillingPreDeduct,
@@ -31,6 +31,7 @@ import {
 } from '@/lib/songArchitect';
 import { validateThaiLyricCouplets } from '@/lib/thaiRhymeHelper';
 import type {
+  SectionType,
   SongProject,
   ThaiEmotionalResolution,
   ThaiLyricDialect,
@@ -123,6 +124,17 @@ export async function POST(request: Request): Promise<Response> {
   const preset = getPresetConfig(stylePreset);
   const effectiveThaiGenre = thaiGenre ?? preset.thaiGenre;
 
+  const customStructure = Array.isArray(obj.customStructure)
+    ? (obj.customStructure as Array<{ type: SectionType; bars: number; name?: string }>).slice(0, 9)
+    : undefined;
+  const chordProgressionPreset =
+    typeof obj.chordProgressionPreset === 'string' && obj.chordProgressionPreset.trim()
+      ? obj.chordProgressionPreset.trim()
+      : undefined;
+  const customChords = Array.isArray(obj.customChords)
+    ? (obj.customChords as string[]).filter((c) => typeof c === 'string' && c.trim().length > 0)
+    : undefined;
+
   const input: EasyArchitectInput = {
     stylePreset,
     vocalProfile,
@@ -134,10 +146,15 @@ export async function POST(request: Request): Promise<Response> {
     lyricDialect,
     songwriterStyle,
     emotionalResolution,
+    customStructure,
+    chordProgressionPreset,
+    customChords,
   };
 
   const routeStartedAt = Date.now();
-  const architectCost = CREDIT_COST_TABLE.aiEasyWholeSong;
+  const sectionCount = customStructure && customStructure.length > 0 ? customStructure.length : 5;
+  const architectCost = getEasyArchitectCreditCost(sectionCount);
+  const timeoutMs = sectionCount <= 5 ? 28_000 : 38_000;
   let billing: ServerBillingPreDeductResult = { active: false };
 
   try {
@@ -175,14 +192,14 @@ export async function POST(request: Request): Promise<Response> {
       responseSchema: ARCHITECT_RESPONSE_SCHEMA,
       maxOutputTokens: 4096,
       thinkingLevel: 'low',
-      timeoutMs: 28_000,
+      timeoutMs,
     });
 
     if (!gemini.ok) {
       const simulatedSong = buildSimulatedArchitectSong(input);
       let tip: string;
       if (gemini.reason === 'missing-key') {
-        tip = `โหมดจำลอง Easy Mode (ยังไม่ได้ตั้งค่า GEMINI_API_KEY บนเซิร์ฟเวอร์) — ไม่หัก 4 เครดิต สามารถฟังพรีวิวและแก้ต่อได้ทันที`;
+        tip = `โหมดจำลอง Easy Mode (ยังไม่ได้ตั้งค่า GEMINI_API_KEY บนเซิร์ฟเวอร์) — ไม่หัก ${architectCost} เครดิต สามารถฟังพรีวิวและแก้ต่อได้ทันที`;
       } else if (gemini.reason === 'rate-limit') {
         tip = 'โควตาคำขอ Gemini API เต็มชั่วคราว (429) — สร้างโครงเพลงจำลองให้ลองเล่นแทนโดยไม่หักเครดิต';
       } else if (gemini.reason === 'auth-error') {
@@ -401,7 +418,7 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json(
       {
         error: refundedWallet
-          ? 'เซิร์ฟเวอร์ขัดข้องชั่วคราวระหว่างสร้างเพลง (คืน 4 เครดิตให้แล้วอัตโนมัติ)'
+          ? `เซิร์ฟเวอร์ขัดข้องชั่วคราวระหว่างสร้างเพลง (คืน ${architectCost} เครดิตให้แล้วอัตโนมัติ)`
           : 'เซิร์ฟเวอร์ขัดข้องชั่วคราวระหว่างสร้างเพลง (ไม่หักเครดิต) กรุณาลองใหม่อีกครั้ง',
         code: 'ARCHITECT_INTERNAL_ERROR',
         ...(refundedWallet ? { wallet: refundedWallet } : {}),

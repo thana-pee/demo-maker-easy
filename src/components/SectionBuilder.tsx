@@ -87,6 +87,7 @@ import {
   validateThaiLyricCouplets,
 } from '@/lib/thaiRhymeHelper';
 import { useLanguage } from '@/context/LanguageContext';
+import { CohesivePolishModal } from '@/components/CohesivePolishModal';
 
 interface SectionBuilderProps {
   song: SongProject;
@@ -251,6 +252,7 @@ export function SectionBuilder({
     rawText: string;
   } | null>(null);
   const [addSectionMenuOpen, setAddSectionMenuOpen] = useState(false);
+  const [isCohesivePolishOpen, setIsCohesivePolishOpen] = useState(false);
   const [deletedUndo, setDeletedUndo] = useState<{
     section: SongSection;
     index: number;
@@ -1465,6 +1467,23 @@ export function SectionBuilder({
               {lang === 'th'
                 ? '🎚️ จัดวงอัตโนมัติตามสไตล์เพลง (0 เครดิต)'
                 : '🎚️ Auto-Arrange Band by Genre (0 Credits)'}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setIsCohesivePolishOpen(true)}
+            title={
+              lang === 'th'
+                ? 'เกลาคำร้อง ส่งสัมผัส และเชื่อมต่ออารมณ์ทุกท่อนให้กลมกลืนเป็นหนึ่งเดียว'
+                : 'Harmonize rhymes, emotional narrative, and chord transitions seamlessly'
+            }
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 border border-indigo-500/30 text-xs font-semibold transition cursor-pointer"
+          >
+            <span>
+              {lang === 'th'
+                ? '🪄 เกลาเชื่อมทั้งเพลง'
+                : '🪄 Polish Full Song'}
             </span>
           </button>
 
@@ -3815,6 +3834,16 @@ export function SectionBuilder({
           </button>
         </div>
       )}
+
+      <CohesivePolishModal
+        isOpen={isCohesivePolishOpen}
+        song={song}
+        creditBalance={getCreditBalance()}
+        onClose={() => setIsCohesivePolishOpen(false)}
+        onApplySong={(updatedSong) => onUpdateSong(() => updatedSong)}
+        onCreditsChange={onCreditsChange}
+        onOpenWallet={onOpenWallet}
+      />
     </div>
   );
 }

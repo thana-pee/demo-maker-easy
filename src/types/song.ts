@@ -185,3 +185,25 @@ export interface SongProject {
     generatedAt?: string;
   };
 }
+
+export interface EasyArchitectCustomSection {
+  type: SectionType;
+  bars: number;
+  name?: string;
+}
+
+export interface EasyArchitectInput {
+  stylePreset: string;
+  vocalProfile: 'female' | 'male' | 'neutral';
+  tempoFeel: 'slow' | 'medium' | 'fast';
+  topic: string;
+  language: 'th' | 'en';
+  thaiGenre?: ThaiSongGenre;
+  lyricEra?: ThaiLyricEra;
+  lyricDialect?: ThaiLyricDialect;
+  songwriterStyle?: ThaiSongwriterStyle;
+  emotionalResolution?: ThaiEmotionalResolution;
+  customStructure?: Array<{ type: SectionType; bars: number; name?: string }>;
+  chordProgressionPreset?: string;
+  customChords?: string[];
+}

@@ -51,12 +51,28 @@ export const CREDIT_COST_TABLE = {
   aiLyricsQuick: 1,         // gemini-3.5-flash-lite (แต่ง/ขัดเกลาเนื้อร้อง 1 ท่อน)
   aiDirectorComplex: 1,     // gemini-3.5-flash-lite (AI Song Director แบบวิเคราะห์อารมณ์ซับซ้อน)
   aiSectionDeepMelody: 2,   // gemini-4-hydrogen (แต่งเนื้อ + คอร์ด + โน้ตเมโลดี้ 1 ท่อน)
+  aiCohesivePolishPartial: 2,// gemini-3.5-flash-lite (เกลาเชื่อมท่อนเพลง <= 3 ท่อน)
+  aiCohesivePolishWhole: 3, // gemini-4-hydrogen (เกลาเชื่อมทั้งเพลง)
   aiTtsCue: 2,              // gemini-3.8-flash-lite-tts / gemini-3.8-flash-tts (เสียงไกด์/นับจังหวะ)
   aiHumToSong: 3,           // gemini-3.5-transcribe + gemini-4-hydrogen (ฮัมเพลงเป็นโครงเดโม)
-  aiEasyWholeSong: 4,       // gemini-4-hydrogen (สร้างเพลงทั้งเพลงในโหมด Easy)
+  aiEasyWholeSong: 4,       // gemini-4-hydrogen (สร้างเพลงทั้งเพลงในโหมด Easy ขนาดมาตรฐาน 3–5 ท่อน)
+  aiEasyMediumSong: 6,      // gemini-4-hydrogen (สร้างเพลง 6–7 ท่อนในโหมด Easy)
+  aiEasyExtendedSong: 8,    // gemini-4-hydrogen (สร้างเพลง 8–9 ท่อนในโหมด Easy)
   aiReferenceTrackLyria: 8, // lyria-3.5 (Paid-Only Reference Track Preview ~30 วินาที)
   aiProArgonArranger: 10,   // gemini-4-argon (Paid-Only Deep Producer Arranger)
 } as const;
+
+/**
+ * คำนวณค่าเครดิตสำหรับ Easy Mode Song Architect ตามจำนวนท่อนเพลง (4 / 6 / 8 Credits)
+ * - 3–5 ท่อน (Standard): 4 Credits
+ * - 6–7 ท่อน (Full Hit): 6 Credits
+ * - 8–9 ท่อน (Extended): 8 Credits
+ */
+export function getEasyArchitectCreditCost(sectionCount: number): 4 | 6 | 8 {
+  if (sectionCount >= 8) return CREDIT_COST_TABLE.aiEasyExtendedSong;
+  if (sectionCount >= 6) return CREDIT_COST_TABLE.aiEasyMediumSong;
+  return CREDIT_COST_TABLE.aiEasyWholeSong;
+}
 
 export const CREDIT_PACKAGES: CreditPackage[] = [
   {
