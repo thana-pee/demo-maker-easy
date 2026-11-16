@@ -42,6 +42,9 @@ import {
 } from '../src/lib/creditManager';
 import {
   MAX_SLIP_FILE_BYTES,
+  atomicDeductCredits,
+  atomicRefundCredits,
+  getOrInitWallet,
   normalizeSlipApiPayload,
   refundServerBillingOnFailure,
   tryServerBillingPreDeduct,
@@ -985,4 +988,104 @@ test('Activation Readiness: evaluateProductionReadiness, /api/health, ALL_IN_ONE
   );
   assert.equal(slipOkHeaders['x-authorization'], 'ok-key');
   assert.deepEqual(slipOkKeys, ['files', 'amount', 'log']);
+});
+
+test('Phase 5F Fallback: serverWallet falls back cleanly to PostgREST tables when RPC hits SQL 42702 ambiguity', async () => {
+  const walletState = new Map<string, { trial_credits: number; purchased_credits: number }>();
+  const ledgerRows: Array<Record<string, unknown>> = [];
+
+  const mock42702Fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof Request ? input.url : input.toString();
+    const method = (init?.method || 'GET').toUpperCase();
+    const bodyText = typeof init?.body === 'string' ? init.body : '';
+
+    if (url.includes('/rest/v1/rpc/')) {
+      return new Response(
+        JSON.stringify({
+          code: '42702',
+          details: 'It could refer to either a PL/pgSQL variable or a table column.',
+          message: 'column reference "user_id" is ambiguous',
+        }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (url.includes('/rest/v1/user_wallets')) {
+      const uidMatch = url.match(/user_id=eq\.([^&]+)/);
+      const uid = uidMatch ? decodeURIComponent(uidMatch[1]) : 'u-fallback-1';
+      if (method === 'GET') {
+        const row = walletState.get(uid);
+        return new Response(
+          JSON.stringify(row ? [{ user_id: uid, ...row, updated_at: '2026-11-16T03:00:00Z' }] : []),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      if (method === 'POST') {
+        const parsed = JSON.parse(bodyText) as { user_id: string; trial_credits: number; purchased_credits: number };
+        if (!walletState.has(parsed.user_id)) {
+          walletState.set(parsed.user_id, {
+            trial_credits: parsed.trial_credits,
+            purchased_credits: parsed.purchased_credits,
+          });
+          return new Response(JSON.stringify([parsed]), {
+            status: 201,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (method === 'PATCH') {
+        const patch = JSON.parse(bodyText) as { trial_credits?: number; purchased_credits?: number };
+        const existing = walletState.get(uid) ?? { trial_credits: 15, purchased_credits: 0 };
+        walletState.set(uid, {
+          trial_credits: patch.trial_credits ?? existing.trial_credits,
+          purchased_credits: patch.purchased_credits ?? existing.purchased_credits,
+        });
+        return new Response(null, { status: 204 });
+      }
+    }
+
+    if (url.includes('/rest/v1/credit_transactions')) {
+      if (method === 'POST') {
+        ledgerRows.push(JSON.parse(bodyText) as Record<string, unknown>);
+        return new Response('', { status: 201 });
+      }
+      if (method === 'GET') {
+        return new Response(JSON.stringify(ledgerRows), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
+    return new Response('Not found', { status: 404 });
+  }) as typeof fetch;
+
+  const initialized = await getOrInitWallet('u-fallback-1', {
+    config: TEST_BILLING_CONFIG,
+    fetchFn: mock42702Fetch,
+  });
+  assert.equal(initialized.balance, 15);
+  assert.equal(initialized.trialCredits, 15);
+  assert.equal(initialized.transactions.length, 1);
+  assert.equal(initialized.transactions[0].type, 'grant_trial');
+
+  const deducted = await atomicDeductCredits('u-fallback-1', 4, 'Easy Mode Test', {
+    modelId: 'gemini-4-hydrogen',
+    config: TEST_BILLING_CONFIG,
+    fetchFn: mock42702Fetch,
+  });
+  assert.equal(deducted.success, true);
+  assert.equal(deducted.balance, 11);
+  assert.equal(deducted.trialCredits, 11);
+
+  const refunded = await atomicRefundCredits('u-fallback-1', 4, 'Auto-refund Test', {
+    modelId: 'gemini-4-hydrogen',
+    config: TEST_BILLING_CONFIG,
+    fetchFn: mock42702Fetch,
+  });
+  assert.equal(refunded.success, true);
+  assert.equal(refunded.balance, 15);
+  assert.equal(refunded.trialCredits, 15);
+  assert.equal(ledgerRows.length, 3);
 });

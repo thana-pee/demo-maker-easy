@@ -220,6 +220,151 @@ function mapDbTransactions(rows: unknown[]): CreditTransaction[] {
     }));
 }
 
+function isRecoverableRpcSqlError(status: number, errText: string): boolean {
+  if (status === 400 || status === 404) return true;
+  const lower = errText.toLowerCase();
+  return lower.includes('42702') || lower.includes('pgrst202') || lower.includes('ambiguous');
+}
+
+async function fetchWalletRowViaRest(
+  userId: string,
+  config: ServerBillingConfig,
+  fetchFn: FetchLike
+): Promise<WalletBalanceSummary | null> {
+  const headers = getServiceRoleHeaders(config);
+  const res = await fetchFn(
+    `${config.supabaseUrl}/rest/v1/user_wallets?user_id=eq.${encodeURIComponent(
+      userId
+    )}&select=user_id,trial_credits,purchased_credits,updated_at&limit=1`,
+    { headers }
+  );
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Wallet REST query failed (${res.status}): ${errText}`);
+  }
+  const rows = (await res.json()) as Array<{
+    trial_credits?: number;
+    purchased_credits?: number;
+  }>;
+  const row = Array.isArray(rows) ? rows[0] : undefined;
+  if (!row) return null;
+  const trialCredits = Math.max(0, Number(row.trial_credits ?? 0));
+  const purchasedCredits = Math.max(0, Number(row.purchased_credits ?? 0));
+  return {
+    trialCredits,
+    purchasedCredits,
+    balance: trialCredits + purchasedCredits,
+  };
+}
+
+async function insertCreditTransactionViaRest(
+  payload: {
+    user_id: string;
+    tx_type: 'grant_trial' | 'topup' | 'spend' | 'refund';
+    amount: number;
+    description: string;
+    model_id?: string | null;
+    trans_ref?: string | null;
+    metadata?: Record<string, unknown>;
+  },
+  config: ServerBillingConfig,
+  fetchFn: FetchLike
+): Promise<Response> {
+  const headers = {
+    ...getServiceRoleHeaders(config),
+    Prefer: 'return=minimal',
+  };
+  return fetchFn(`${config.supabaseUrl}/rest/v1/credit_transactions`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload),
+  });
+}
+
+async function patchUserWalletViaRest(
+  userId: string,
+  patch: { trial_credits?: number; purchased_credits?: number },
+  config: ServerBillingConfig,
+  fetchFn: FetchLike
+): Promise<void> {
+  const headers = {
+    ...getServiceRoleHeaders(config),
+    Prefer: 'return=minimal',
+  };
+  const res = await fetchFn(
+    `${config.supabaseUrl}/rest/v1/user_wallets?user_id=eq.${encodeURIComponent(userId)}`,
+    {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({
+        ...patch,
+        updated_at: new Date().toISOString(),
+      }),
+    }
+  );
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Wallet REST update failed (${res.status}): ${errText}`);
+  }
+}
+
+async function ensureWalletViaRest(
+  userId: string,
+  config: ServerBillingConfig,
+  fetchFn: FetchLike
+): Promise<WalletBalanceSummary> {
+  const existing = await fetchWalletRowViaRest(userId, config, fetchFn);
+  if (existing) {
+    return existing;
+  }
+
+  const headers = {
+    ...getServiceRoleHeaders(config),
+    Prefer: 'resolution=ignore-duplicates,return=representation',
+  };
+  const insertRes = await fetchFn(`${config.supabaseUrl}/rest/v1/user_wallets`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      user_id: userId,
+      trial_credits: 15,
+      purchased_credits: 0,
+    }),
+  });
+  if (!insertRes.ok) {
+    const errText = await insertRes.text();
+    throw new Error(`Wallet REST init failed (${insertRes.status}): ${errText}`);
+  }
+
+  const inserted = (await insertRes.json().catch(() => [])) as Array<{
+    trial_credits?: number;
+    purchased_credits?: number;
+  }>;
+  if (Array.isArray(inserted) && inserted.length > 0) {
+    await insertCreditTransactionViaRest(
+      {
+        user_id: userId,
+        tx_type: 'grant_trial',
+        amount: 15,
+        description: 'Starter Trial Bonus (15 Credits) สำหรับทดลอง AI Lyrics / Director เบื้องต้น',
+      },
+      config,
+      fetchFn
+    ).catch(() => null);
+    const trialCredits = Math.max(0, Number(inserted[0].trial_credits ?? 15));
+    const purchasedCredits = Math.max(0, Number(inserted[0].purchased_credits ?? 0));
+    return {
+      trialCredits,
+      purchasedCredits,
+      balance: trialCredits + purchasedCredits,
+    };
+  }
+
+  const raced = await fetchWalletRowViaRest(userId, config, fetchFn);
+  if (raced) return raced;
+  return { trialCredits: 15, purchasedCredits: 0, balance: 15 };
+}
+
 /** ดึงข้อมูล Wallet ปัจจุบันจาก Postgres (สร้าง Trial Credits 15 ให้อัตโนมัติครั้งแรก) */
 export async function getOrInitWallet(
   userId: string,
@@ -229,6 +374,10 @@ export async function getOrInitWallet(
   const headers = getServiceRoleHeaders(config);
   const fetchFn = options?.fetchFn ?? fetch;
 
+  let trialCredits = 0;
+  let purchasedCredits = 0;
+  let balance = 0;
+
   const rpcRes = await fetchFn(`${config.supabaseUrl}/rest/v1/rpc/init_user_wallet`, {
     method: 'POST',
     headers,
@@ -236,19 +385,25 @@ export async function getOrInitWallet(
   });
   if (!rpcRes.ok) {
     const errText = await rpcRes.text();
-    throw new Error(`Wallet RPC init failed (${rpcRes.status}): ${errText}`);
+    if (!isRecoverableRpcSqlError(rpcRes.status, errText)) {
+      throw new Error(`Wallet RPC init failed (${rpcRes.status}): ${errText}`);
+    }
+    const restSummary = await ensureWalletViaRest(userId, config, fetchFn);
+    trialCredits = restSummary.trialCredits;
+    purchasedCredits = restSummary.purchasedCredits;
+    balance = restSummary.balance;
+  } else {
+    const walletRows = (await rpcRes.json()) as Array<{
+      user_id?: string;
+      trial_credits?: number;
+      purchased_credits?: number;
+      balance?: number;
+    }>;
+    const walletRow = Array.isArray(walletRows) ? walletRows[0] : walletRows;
+    trialCredits = Math.max(0, Number(walletRow?.trial_credits ?? 0));
+    purchasedCredits = Math.max(0, Number(walletRow?.purchased_credits ?? 0));
+    balance = Math.max(0, Number(walletRow?.balance ?? trialCredits + purchasedCredits));
   }
-
-  const walletRows = (await rpcRes.json()) as Array<{
-    user_id?: string;
-    trial_credits?: number;
-    purchased_credits?: number;
-    balance?: number;
-  }>;
-  const walletRow = Array.isArray(walletRows) ? walletRows[0] : walletRows;
-  const trialCredits = Math.max(0, Number(walletRow?.trial_credits ?? 0));
-  const purchasedCredits = Math.max(0, Number(walletRow?.purchased_credits ?? 0));
-  const balance = Math.max(0, Number(walletRow?.balance ?? trialCredits + purchasedCredits));
 
   let transactions: CreditTransaction[] = [];
   const txRes = await fetchFn(
@@ -295,13 +450,14 @@ export async function atomicDeductCredits(
   const config = options?.config ?? getServerBillingConfig();
   const headers = getServiceRoleHeaders(config);
   const fetchFn = options?.fetchFn ?? fetch;
+  const roundedAmount = Math.round(amount);
 
   const rpcRes = await fetchFn(`${config.supabaseUrl}/rest/v1/rpc/atomic_deduct_credits`, {
     method: 'POST',
     headers,
     body: JSON.stringify({
       p_user_id: userId,
-      p_amount: Math.round(amount),
+      p_amount: roundedAmount,
       p_description: description,
       p_require_purchased: Boolean(options?.requirePurchased),
       p_model_id: options?.modelId ?? null,
@@ -310,7 +466,88 @@ export async function atomicDeductCredits(
 
   if (!rpcRes.ok) {
     const errText = await rpcRes.text();
-    throw new Error(`Wallet deduction RPC failed (${rpcRes.status}): ${errText}`);
+    if (!isRecoverableRpcSqlError(rpcRes.status, errText)) {
+      throw new Error(`Wallet deduction RPC failed (${rpcRes.status}): ${errText}`);
+    }
+
+    if (!Number.isFinite(roundedAmount) || roundedAmount <= 0) {
+      return {
+        success: false,
+        errorCode: 'INVALID_AMOUNT',
+        trialCredits: 0,
+        purchasedCredits: 0,
+        balance: 0,
+      };
+    }
+
+    const current = await ensureWalletViaRest(userId, config, fetchFn);
+    if (options?.requirePurchased) {
+      if (current.purchasedCredits < roundedAmount) {
+        return {
+          success: false,
+          errorCode: 'REQUIRES_PURCHASED_CREDITS',
+          ...current,
+        };
+      }
+      const nextPurchased = current.purchasedCredits - roundedAmount;
+      await patchUserWalletViaRest(userId, { purchased_credits: nextPurchased }, config, fetchFn);
+      await insertCreditTransactionViaRest(
+        {
+          user_id: userId,
+          tx_type: 'spend',
+          amount: -roundedAmount,
+          description: description.trim() || 'AI Generation',
+          model_id: options?.modelId ?? null,
+          metadata: { from_trial: 0, from_purchased: roundedAmount },
+        },
+        config,
+        fetchFn
+      );
+      return {
+        success: true,
+        trialCredits: current.trialCredits,
+        purchasedCredits: nextPurchased,
+        balance: current.trialCredits + nextPurchased,
+      };
+    }
+
+    if (current.balance < roundedAmount) {
+      return {
+        success: false,
+        errorCode: 'INSUFFICIENT_CREDITS',
+        ...current,
+      };
+    }
+
+    const fromTrial = Math.min(current.trialCredits, roundedAmount);
+    const fromPurchased = roundedAmount - fromTrial;
+    const nextTrial = current.trialCredits - fromTrial;
+    const nextPurchased = current.purchasedCredits - fromPurchased;
+
+    await patchUserWalletViaRest(
+      userId,
+      { trial_credits: nextTrial, purchased_credits: nextPurchased },
+      config,
+      fetchFn
+    );
+    await insertCreditTransactionViaRest(
+      {
+        user_id: userId,
+        tx_type: 'spend',
+        amount: -roundedAmount,
+        description: description.trim() || 'AI Generation',
+        model_id: options?.modelId ?? null,
+        metadata: { from_trial: fromTrial, from_purchased: fromPurchased },
+      },
+      config,
+      fetchFn
+    );
+    return {
+      success: true,
+      trialCredits: nextTrial,
+      purchasedCredits: nextPurchased,
+      balance: nextTrial + nextPurchased,
+    };
   }
 
   const rows = (await rpcRes.json()) as Array<{
@@ -351,13 +588,14 @@ export async function atomicRefundCredits(
   const config = options?.config ?? getServerBillingConfig();
   const headers = getServiceRoleHeaders(config);
   const fetchFn = options?.fetchFn ?? fetch;
+  const roundedAmount = Math.round(amount);
 
   const rpcRes = await fetchFn(`${config.supabaseUrl}/rest/v1/rpc/atomic_refund_credits`, {
     method: 'POST',
     headers,
     body: JSON.stringify({
       p_user_id: userId,
-      p_amount: Math.round(amount),
+      p_amount: roundedAmount,
       p_description: description,
       p_to_purchased: Boolean(options?.toPurchased),
       p_model_id: options?.modelId ?? null,
@@ -366,7 +604,45 @@ export async function atomicRefundCredits(
 
   if (!rpcRes.ok) {
     const errText = await rpcRes.text();
-    throw new Error(`Wallet refund RPC failed (${rpcRes.status}): ${errText}`);
+    if (!isRecoverableRpcSqlError(rpcRes.status, errText)) {
+      throw new Error(`Wallet refund RPC failed (${rpcRes.status}): ${errText}`);
+    }
+
+    if (!Number.isFinite(roundedAmount) || roundedAmount <= 0) {
+      return { success: false, trialCredits: 0, purchasedCredits: 0, balance: 0 };
+    }
+
+    const current = await ensureWalletViaRest(userId, config, fetchFn);
+    const nextTrial = options?.toPurchased
+      ? current.trialCredits
+      : current.trialCredits + roundedAmount;
+    const nextPurchased = options?.toPurchased
+      ? current.purchasedCredits + roundedAmount
+      : current.purchasedCredits;
+
+    await patchUserWalletViaRest(
+      userId,
+      { trial_credits: nextTrial, purchased_credits: nextPurchased },
+      config,
+      fetchFn
+    );
+    await insertCreditTransactionViaRest(
+      {
+        user_id: userId,
+        tx_type: 'refund',
+        amount: roundedAmount,
+        description: description.trim() || 'AI Failure Auto-Refund',
+        model_id: options?.modelId ?? null,
+      },
+      config,
+      fetchFn
+    );
+    return {
+      success: true,
+      trialCredits: nextTrial,
+      purchasedCredits: nextPurchased,
+      balance: nextTrial + nextPurchased,
+    };
   }
 
   const rows = (await rpcRes.json()) as Array<{
@@ -948,7 +1224,124 @@ export async function completeTopUpFromSlipInDb(
         balance: 0,
       };
     }
-    throw new Error(`Top-up credit RPC failed (${rpcRes.status}): ${errText}`);
+    if (!isRecoverableRpcSqlError(rpcRes.status, errText)) {
+      throw new Error(`Top-up credit RPC failed (${rpcRes.status}): ${errText}`);
+    }
+
+    const roundedCredits = Math.round(params.credits);
+    const trimmedRef = params.transRef.trim();
+    if (!Number.isFinite(roundedCredits) || roundedCredits <= 0 || !trimmedRef) {
+      return {
+        success: false,
+        errorCode: 'INVALID_TOPUP_INPUT',
+        trialCredits: 0,
+        purchasedCredits: 0,
+        balance: 0,
+      };
+    }
+
+    const order = await getTopUpOrderById(params.orderId, params.userId, { config, fetchFn });
+    if (!order) {
+      return {
+        success: false,
+        errorCode: 'ORDER_NOT_FOUND',
+        trialCredits: 0,
+        purchasedCredits: 0,
+        balance: 0,
+      };
+    }
+    if (order.status !== 'pending') {
+      return {
+        success: false,
+        errorCode: 'ORDER_ALREADY_SETTLED',
+        trialCredits: 0,
+        purchasedCredits: 0,
+        balance: 0,
+      };
+    }
+
+    const duplicate = await isTransRefAlreadyUsed(trimmedRef, { config, fetchFn });
+    if (duplicate) {
+      return {
+        success: false,
+        errorCode: 'SLIP_DUPLICATE_REF',
+        trialCredits: 0,
+        purchasedCredits: 0,
+        balance: 0,
+      };
+    }
+
+    const orderPatchRes = await fetchFn(
+      `${config.supabaseUrl}/rest/v1/topup_orders?id=eq.${encodeURIComponent(
+        params.orderId
+      )}&user_id=eq.${encodeURIComponent(params.userId)}&status=eq.pending`,
+      {
+        method: 'PATCH',
+        headers: {
+          ...headers,
+          Prefer: 'return=representation',
+        },
+        body: JSON.stringify({
+          status: 'paid',
+          trans_ref: trimmedRef,
+          slip_sender_bank: params.senderBank ?? null,
+          slip_verified_at: new Date().toISOString(),
+        }),
+      }
+    );
+    if (!orderPatchRes.ok) {
+      const patchErr = await orderPatchRes.text();
+      if (orderPatchRes.status === 409 || patchErr.includes('23505')) {
+        return {
+          success: false,
+          errorCode: 'SLIP_DUPLICATE_REF',
+          trialCredits: 0,
+          purchasedCredits: 0,
+          balance: 0,
+        };
+      }
+      throw new Error(`Top-up order REST update failed (${orderPatchRes.status}): ${patchErr}`);
+    }
+
+    const current = await ensureWalletViaRest(params.userId, config, fetchFn);
+    const nextPurchased = current.purchasedCredits + roundedCredits;
+    await patchUserWalletViaRest(
+      params.userId,
+      { purchased_credits: nextPurchased },
+      config,
+      fetchFn
+    );
+    const txInsertRes = await insertCreditTransactionViaRest(
+      {
+        user_id: params.userId,
+        tx_type: 'topup',
+        amount: roundedCredits,
+        description: params.description.trim() || 'PromptPay Top-Up',
+        trans_ref: trimmedRef,
+      },
+      config,
+      fetchFn
+    );
+    if (!txInsertRes.ok) {
+      const txErr = await txInsertRes.text();
+      if (txInsertRes.status === 409 || txErr.includes('23505')) {
+        return {
+          success: false,
+          errorCode: 'SLIP_DUPLICATE_REF',
+          trialCredits: 0,
+          purchasedCredits: 0,
+          balance: 0,
+        };
+      }
+      throw new Error(`Top-up ledger REST insert failed (${txInsertRes.status}): ${txErr}`);
+    }
+
+    return {
+      success: true,
+      trialCredits: current.trialCredits,
+      purchasedCredits: nextPurchased,
+      balance: current.trialCredits + nextPurchased,
+    };
   }
 
   const rows = (await rpcRes.json()) as Array<{

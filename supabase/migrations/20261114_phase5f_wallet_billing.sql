@@ -80,12 +80,13 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
+#variable_conflict use_column
 DECLARE
   v_inserted boolean := false;
 BEGIN
   INSERT INTO public.user_wallets (user_id, trial_credits, purchased_credits)
   VALUES (p_user_id, 15, 0)
-  ON CONFLICT (user_id) DO NOTHING;
+  ON CONFLICT ON CONSTRAINT user_wallets_pkey DO NOTHING;
 
   GET DIAGNOSTICS v_inserted = ROW_COUNT;
 
@@ -130,6 +131,7 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
+#variable_conflict use_column
 DECLARE
   v_trial integer;
   v_purchased integer;
@@ -210,6 +212,7 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
+#variable_conflict use_column
 DECLARE
   v_trial integer;
   v_purchased integer;
@@ -273,6 +276,7 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
+#variable_conflict use_column
 DECLARE
   v_order_status text;
   v_trial integer;
