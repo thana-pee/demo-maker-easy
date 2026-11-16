@@ -269,6 +269,8 @@ export const VALID_SONGWRITER_STYLES = new Set<ThaiSongwriterStyle>([
   'asanee-chotikul',
   'nga-caravan',
   'kob-bigass',
+  'fongbeer-rock',
+  'fongbeer-pop',
 ]);
 
 const CHORD_TOKEN_REGEX =
@@ -758,6 +760,18 @@ function resolveSimulatedOutroLines(
       'ไม่เคยท้อตราบที่หัวใจยังเต้นอยู่',
     ];
   }
+  if (writer === 'fongbeer-rock') {
+    return [
+      'ปากบอกไหวทั้งที่ข้างในยังรักเธอ',
+      'เจอความจริงกี่ครั้งใจก็ไม่เคยจำ',
+    ];
+  }
+  if (writer === 'fongbeer-pop') {
+    return [
+      'ทุกนาทีที่ผ่านยังคงมีแค่เธอ',
+      'เจอกับรักแสนดีนี้ก็คุ้มค่าแล้ว',
+    ];
+  }
   if (genre === 'thai-rock' || writer === 'sek-loso' || writer === 'suea-thanapol') {
     return [
       'ไม่ว่าจะล้มสักกี่ครา',
@@ -930,6 +944,58 @@ export function buildStyledSimulatedSongLyrics(
       'สู้จนกว่าความฝันจะเป็นความจริง',
     ];
     rhymeNote = 'สไตล์กบ บิ๊กแอส (Big Ass / Bodyslam / Labanoon): ภาษาตรงไปตรงมา กระแทกบีตสู้ชีวิต ฮุคติดหูร้องตามได้ทั้งฮอลล์';
+  } else if (writer === 'fongbeer-rock') {
+    verse = [
+      `${topicShort ? `เก็บเรื่อง${topicShort}` : 'เก็บคำลา'}เอาไว้ข้างในไม่พูดออก`,
+      'บอกตัวเองให้ทนทั้งที่ยังปวดใจ',
+      'ไม่เคยลืมภาพเดิมที่เธอเคยเคียงข้าง',
+      'อ้างว่าไม่เป็นไรทั้งที่ยังรักเธอ',
+      'เจอหน้ากันทีไรใจก็ยังสั่นไหว',
+      'ให้ฉันทำอย่างไรเมื่อใจลืมไม่ลง',
+      'คงเป็นฉันคนเดียวที่ยังรอตรงนี้',
+      'มีคำถามมากมายที่อยากให้เธอฟัง',
+    ];
+    preChorus = [
+      'ปากบอกใครต่อใครว่าลืมเธอได้แล้ว',
+      'แววตาก็ยังฟ้องว่าใจไม่เคยเปลี่ยน',
+    ];
+    chorus = [
+      'เธอยังรักกันอยู่บ้างไหมในวันนี้',
+      'ที่ทุ่มเทให้เธอหมดใจไม่เคยพอ',
+      'รอเธออยู่ตรงนี้แม้จะเจ็บเจียนตาย',
+      'หายไปโดยไม่ลาฉันควรต้องทำไง',
+    ];
+    bridge = [
+      'ถ้าไม่รักกันเลยก็พูดมาตรงตรง',
+      'คงดีกว่าปล่อยให้ฉันหลอกตัวเอง',
+    ];
+    rhymeNote = 'สไตล์ฟองเบียร์ ร็อกพูดตรง 2000s (Potato / Zeal / Clash): ไม่ประดิษฐ์คำสวยหรู พูดความจริงที่เจ็บลึกและย้ำคำถามแทงใจลงบีตร็อก';
+  } else if (writer === 'fongbeer-pop') {
+    verse = [
+      `${topicShort ? `นึกถึง${topicShort}` : 'นั่งมองเข็มนาฬิกา'}เดินผ่านไปช้าช้า`,
+      'ถ้าเธออยู่ตรงนี้คงได้คุยกันนาน',
+      'ผ่านเรื่องราวมากมายตั้งแต่วันแรกเจอ',
+      'เธอคือคนธรรมดาที่สำคัญที่สุด',
+      'หยุดเวลาเอาไว้แค่เพียงเท่านี้ได้ไหม',
+      'ในทุกทุกวันฉันยังเก็บเรื่องดีไว้',
+      'ไม่เคยลืมรอยยิ้มที่เธอส่งให้กัน',
+      'วันเวลาหมุนไปใจก็ยังเหมือนเดิม',
+    ];
+    preChorus = [
+      'แค่คำธรรมดาที่เธอเคยเอ่ยมา',
+      'ค่าของมันยังอยู่เต็มหัวใจฉันเลย',
+    ];
+    chorus = [
+      'แสนล้านวันเวลาไม่เคยเปลี่ยนใจฉัน',
+      'มันยังรอแค่เธออยู่ที่เดิมไม่หาย',
+      'ปลายทางจะแสนไกลหรือไม่มีตรงกลาง',
+      'ข้างข้างกันวันไหนใจก็ยังรักเธอ',
+    ];
+    bridge = [
+      'เก็บกุญแจความทรงจำเอาไว้ข้างใจ',
+      'ไม่ว่านานเท่าไรก็จะไม่ลืมเธอ',
+    ];
+    rhymeNote = 'สไตล์ฟองเบียร์ ป๊อปซึ้งภาษาพูด (แสนล้านนาที / ไม่มีตรงกลาง): เล่าเรื่องจริงในชีวิตประจำวันด้วยภาษาเรียบง่าย พร้อมวลีซ้ำกินใจ';
   } else if (writer === 'joey-boy') {
     verse = [
       `คิดถึงจัดเลยหยิบโทรศัพท์มากดทัก${topicShort ? `เรื่อง${topicShort}` : ''}`,
@@ -1468,6 +1534,8 @@ export function applyGenreBandArrangement(song: SongProject): SongProject {
   const isLukThung =
     writer !== 'nga-caravan' &&
     writer !== 'kob-bigass' &&
+    writer !== 'fongbeer-rock' &&
+    writer !== 'fongbeer-pop' &&
     (genre === 'luk-thung' ||
       genre === 'phuea-chiwit' ||
       writer === 'aed-carabao' ||
@@ -1492,6 +1560,7 @@ export function applyGenreBandArrangement(song: SongProject): SongProject {
     !isRnB &&
     (genre === 'thai-rock' ||
       writer === 'kob-bigass' ||
+      writer === 'fongbeer-rock' ||
       writer === 'sek-loso' ||
       writer === 'asanee-chotikul' ||
       writer === 'suea-thanapol' ||

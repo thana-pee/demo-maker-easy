@@ -34,7 +34,9 @@ export type ThaiSongwriterStyle =
   | 'aed-carabao'
   | 'asanee-chotikul'
   | 'nga-caravan'
-  | 'kob-bigass';
+  | 'kob-bigass'
+  | 'fongbeer-rock'
+  | 'fongbeer-pop';
 
 export type ThaiEmotionalResolution =
   | 'auto'

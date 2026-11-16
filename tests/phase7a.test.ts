@@ -22,8 +22,8 @@ import { validateThaiLyricCouplets } from '../src/lib/thaiRhymeHelper';
 import type { SongBar } from '../src/types/song';
 
 test('Phase 7A: aed-carabao and asanee-chotikul profiles, few-shot exemplars & syllable budgets', () => {
-  assert.equal(SONGWRITER_STYLE_PROFILES.length, 20);
-  assert.equal(Object.keys(MASTER_LYRIC_FEW_SHOT_BANK.songwriters).length, 20);
+  assert.equal(SONGWRITER_STYLE_PROFILES.length, 22);
+  assert.equal(Object.keys(MASTER_LYRIC_FEW_SHOT_BANK.songwriters).length, 22);
   assert.ok(VALID_SONGWRITER_STYLES.has('aed-carabao'));
   assert.ok(VALID_SONGWRITER_STYLES.has('asanee-chotikul'));
 
@@ -270,6 +270,81 @@ test('nga-caravan and kob-bigass songwriter guides, few-shots, budgets, simulate
     } else {
       assert.equal(arranged.mixer.guitarRhythm.style, 'rock-power');
       assert.equal(arranged.mixer.drums.style, 'rock-drive');
+    }
+  }
+});
+
+test('fongbeer-rock and fongbeer-pop songwriter guides, few-shots, budgets, simulated lyrics & band arrangement', () => {
+  assert.ok(VALID_SONGWRITER_STYLES.has('fongbeer-rock'));
+  assert.ok(VALID_SONGWRITER_STYLES.has('fongbeer-pop'));
+
+  const rockProfile = SONGWRITER_STYLE_PROFILES.find((p) => p.id === 'fongbeer-rock');
+  const popProfile = SONGWRITER_STYLE_PROFILES.find((p) => p.id === 'fongbeer-pop');
+  assert.ok(rockProfile);
+  assert.ok(popProfile);
+  assert.match(rockProfile.label, /ฟองเบียร์/);
+  assert.match(rockProfile.label, /Potato.*Zeal.*Clash/);
+  assert.match(popProfile.label, /ฟองเบียร์/);
+  assert.match(popProfile.label, /แสนล้านนาที.*ไม่มีตรงกลาง/);
+
+  const rockBudget = getSyllableBudgetForBpm(96, '4/4', { songwriterStyle: 'fongbeer-rock' });
+  assert.ok(rockBudget.guidance.includes('ฟองเบียร์'));
+
+  const popBudget = getSyllableBudgetForBpm(84, '4/4', { songwriterStyle: 'fongbeer-pop' });
+  assert.ok(popBudget.guidance.includes('ฟองเบียร์'));
+
+  const slowPopBudget = getSyllableBudgetForBpm(72, '4/4', {
+    songwriterStyle: 'fongbeer-pop',
+    thaiGenre: 'thai-pop',
+  });
+  assert.ok(slowPopBudget.guidance.includes('ฟองเบียร์'));
+  assert.equal(slowPopBudget.min, 5);
+  assert.equal(slowPopBudget.max, 8);
+
+  assert.match(buildDynamicLyricFewShots({ songwriterStyle: 'fongbeer-rock' }), /ฟองเบียร์/);
+  assert.match(buildDynamicLyricFewShots({ songwriterStyle: 'fongbeer-pop' }), /ฟองเบียร์/);
+  assert.match(buildLyricsSystemPrompt({ songwriterStyle: 'fongbeer-rock', sectionType: 'chorus' }), /ฟองเบียร์/);
+  assert.match(buildLyricsSystemPrompt({ songwriterStyle: 'fongbeer-pop', sectionType: 'chorus' }), /ฟองเบียร์/);
+
+  for (const style of ['fongbeer-rock', 'fongbeer-pop'] as const) {
+    const genre = style === 'fongbeer-rock' ? 'thai-rock' : 'thai-pop';
+    const bundle = buildStyledSimulatedSongLyrics({
+      topic: 'เรื่องจริงของหัวใจ',
+      mood: 'bittersweet',
+      language: 'th',
+      thaiGenre: genre,
+      songwriterStyle: style,
+    });
+    assert.ok(bundle.verse.length >= 4);
+    assert.ok(bundle.chorus.length >= 4);
+    assert.ok(bundle.outro.length >= 2);
+
+    const verseRhyme = validateThaiLyricCouplets(bundle.verse.slice(0, 4));
+    assert.equal(verseRhyme.passed, true, `Expected verse rhyme to pass for ${style}`);
+    assert.ok((verseRhyme.chainContinuityRatio ?? 0) >= 0.67);
+
+    const chorusRhyme = validateThaiLyricCouplets(bundle.chorus.slice(0, 4));
+    assert.equal(chorusRhyme.passed, true, `Expected chorus rhyme to pass for ${style}`);
+    assert.ok((chorusRhyme.chainContinuityRatio ?? 0) >= 0.67);
+
+    const simulated = buildSimulatedArchitectSong({
+      stylePreset: style === 'fongbeer-rock' ? 'thai-rock-90s' : 'campfire-pop',
+      vocalProfile: 'male',
+      tempoFeel: 'medium',
+      topic: 'คืนวันเก่า',
+      language: 'th',
+      thaiGenre: genre,
+      songwriterStyle: style,
+    });
+    assert.equal(simulated.songwriterStyle, style);
+
+    const arranged = applyGenreBandArrangement(simulated);
+    if (style === 'fongbeer-rock') {
+      assert.equal(arranged.mixer.guitarRhythm.style, 'rock-power');
+      assert.equal(arranged.mixer.drums.style, 'rock-drive');
+    } else {
+      assert.equal(arranged.mixer.guitarRhythm.style, 'campfire-strum');
+      assert.equal(arranged.mixer.drums.style, 'simple-kit');
     }
   }
 });
