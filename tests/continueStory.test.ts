@@ -51,6 +51,8 @@ test('Continue Story: ContinueStoryModal and AdvanceModeModal contracts', () => 
   assert.match(continueStoryModalSrc, /POPULAR_CHORD_FORMULAS/);
   assert.match(continueStoryModalSrc, /handleSelectSectionType/);
   assert.match(continueStoryModalSrc, /actionType:\s*'ai-lyric'\s*\|\s*'blank'/);
+  assert.match(continueStoryModalSrc, /max-h-\[92vh\]|max-h-\[88vh\]/);
+  assert.match(continueStoryModalSrc, /flex-1 overflow-y-auto/);
 
   // 2. AdvanceModeModal supports switching target section, editing section type, and editing chords
   assert.match(advanceModalSrc, /handleSwitchTargetSection/);
