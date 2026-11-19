@@ -33,7 +33,11 @@ import {
   type TempoFeel,
   type VocalProfile,
 } from '@/lib/songArchitect';
-import { validateThaiLyricCouplets } from '@/lib/thaiRhymeHelper';
+import {
+  shouldAcceptPolishedSection,
+  validateThaiLyricCouplets,
+  type ValidateThaiLyricOptions,
+} from '@/lib/thaiRhymeHelper';
 import type {
   LyricDensityMode,
   SectionType,
@@ -357,39 +361,65 @@ export async function POST(request: Request): Promise<Response> {
     let rhymePassed = true;
     let wasPolished = false;
 
-    // Post-Validate สัมผัสภาษาไทยในท่อน Chorus / Pre-Chorus / Verse / Outro และคัดเลือกท่อนสำคัญเข้าขัดเกลาได้สูงสุด 1 ครั้ง
+    // Post-Validate สัมผัสภาษาไทยในท่อน Chorus / Pre-Chorus / Verse / Outro และคัดเลือกท่อนสำคัญเข้าขัดเกลาได้สูงสุด 1 ครั้ง (Option B: gemini-3.8-flash + Non-Destructive Gate)
     if (language === 'th') {
       const polishableTypes = new Set(['chorus', 'pre-chorus', 'verse', 'outro']);
+      const allowIntentionalHookMotif =
+        emotionalResolution === 'catchy-earworm' || songwriterStyle === 'asanee-chotikul';
+
+      const buildSectionValidationOpts = (
+        secType: SectionType
+      ): { budget: ReturnType<typeof getSyllableBudgetForBpm>; validationOpts: ValidateThaiLyricOptions } => {
+        const budget = getSyllableBudgetForBpm(song.bpm, song.timeSignature, {
+          sectionType: secType,
+          songwriterStyle,
+          thaiGenre: effectiveThaiGenre,
+          lyricDensity,
+        });
+        return {
+          budget,
+          validationOpts: {
+            bpm: song.bpm,
+            timeSignature: song.timeSignature,
+            sectionType: secType,
+            minSyllables: budget.min,
+            maxSyllables: budget.max,
+            ...(budget.barBudgets ? { barBudgets: budget.barBudgets } : {}),
+            enforceSyllableBudget: true,
+            allowCoupletOrAlternateRhyme: true,
+            ignoredMotifTerms: allPromptAnchors,
+            allowIntentionalHookMotif,
+          },
+        };
+      };
+
       const evaluatedSections = song.sections
         .filter((sec) => polishableTypes.has(sec.type) && sec.bars.length >= 2)
         .map((sec) => {
-          const budget = getSyllableBudgetForBpm(song.bpm, song.timeSignature, {
-            sectionType: sec.type,
-            songwriterStyle,
-            thaiGenre: effectiveThaiGenre,
-            lyricDensity,
-          });
+          const { budget, validationOpts } = buildSectionValidationOpts(sec.type);
           const validation = validateThaiLyricCouplets(
             sec.bars.map((b) => b.lyrics),
-            {
-              bpm: song.bpm,
-              timeSignature: song.timeSignature,
-              minSyllables: budget.min,
-              maxSyllables: budget.max,
-              enforceSyllableBudget: true,
-            }
+            validationOpts
           );
           const overflowBars = (validation.outOfBudgetBars ?? []).filter(
             (b) => b.syllables > b.expectedMax
           );
           return {
-            item: { sec, validation, overflowBars, budget },
+            item: { sec, validation, overflowBars, budget, validationOpts },
             sectionType: sec.type,
             passed: validation.passed,
             hasDuplicates: (validation.duplicateEndWords?.length ?? 0) > 0,
+            hasRepeatedContentWords: (validation.repeatedContentWords?.length ?? 0) > 0,
             syllableOverflowCount: overflowBars.length,
           };
         });
+
+      const validationBySectionId = new Map(
+        evaluatedSections.map((entry) => [
+          entry.item.sec.id,
+          { validation: entry.item.validation, validationOpts: entry.item.validationOpts },
+        ])
+      );
 
       const selectedForPolish = selectPrioritySectionsForPolish(
         evaluatedSections,
@@ -409,6 +439,7 @@ export async function POST(request: Request): Promise<Response> {
             chords: sec.bars.map((b) => b.chords[0] ?? 'C'),
             lines: sec.bars.map((b) => b.lyrics),
             duplicateEndWords: validation.duplicateEndWords,
+            repeatedContentWords: validation.repeatedContentWords,
             weakPairs: validation.weakPairs,
             outOfBudgetBars: overflowBars,
             expectedMin: budget.min,
@@ -427,12 +458,14 @@ export async function POST(request: Request): Promise<Response> {
         const polishRes = await callGeminiJson<{
           polishedSections?: Array<{ sectionId?: string; sectionName?: string; lines?: string[] }>;
         }>(polishPrompt, {
-          model: GEMINI_MODEL_LITE,
-          systemInstruction: 'คุณคือบรรณาธิการคำร้องไทย แก้เฉพาะคำลงท้าย/ส่งสัมผัสและความกระชับของพยางค์ให้ลื่นไหลโดยคงความหมาย จำนวนวรรค และคำหมุดหมายของผู้ใช้ไว้ครบถ้วน',
+          model: GEMINI_MODEL_FLASH,
+          fallbackModels: [GEMINI_MODEL_LITE],
+          systemInstruction:
+            'คุณคือบรรณาธิการคำร้องไทยมืออาชีพ แก้เฉพาะคำลงท้าย/สัมผัส คำซ้ำ และความกระชับให้ร้องลื่นเป็นภาษาพูดธรรมชาติ (ห้ามกลับคำเป็น Yoda, ห้ามประดิษฐ์คำแปลก, ใช้กลอนคู่ AABB หรือสลับ ABAB ได้) โดยคงความหมาย จำนวนวรรค และคำหมุดหมายของผู้ใช้ไว้ครบถ้วน',
           responseSchema: RHYME_POLISH_RESPONSE_SCHEMA,
           maxOutputTokens: 2048,
           thinkingLevel: 'low',
-          timeoutMs: Math.min(10_000, remainingPolishBudgetMs),
+          timeoutMs: Math.min(12_000, remainingPolishBudgetMs),
         });
 
         if (polishRes.ok && Array.isArray(polishRes.data.polishedSections)) {
@@ -475,46 +508,70 @@ export async function POST(request: Request): Promise<Response> {
             }
           }
 
-          wasPolished = mapById.size > 0;
+          let acceptedPolishedCount = 0;
           song = {
             ...song,
             sections: song.sections.map((sec) => {
               const nextLines = mapById.get(sec.id);
               if (!nextLines || nextLines.length === 0) return sec;
-              return {
-                ...sec,
-                bars: sec.bars.map((bar, idx) => {
-                  const candidate =
-                    typeof nextLines[idx] === 'string' && nextLines[idx].trim()
-                      ? nextLines[idx].trim()
-                      : bar.lyrics;
-                  // ป้องกันการลบหมุดหมาย Exact Anchor ของผู้ใช้ออกระหว่างรอบ Polish
-                  const lostExactAnchor = exactProtectedAnchors.some(
-                    (anchor) => bar.lyrics.includes(anchor) && !candidate.includes(anchor)
-                  );
-                  const nextLyric = lostExactAnchor ? bar.lyrics : candidate;
-                  if (nextLyric === bar.lyrics) {
-                    return bar;
-                  }
-                  return {
-                    ...bar,
-                    lyrics: nextLyric,
-                    melodyNotes:
-                      sec.type === 'intro'
-                        ? []
-                        : buildDiatonicGuideNotesForChord(
-                            bar.chords[0] || song.baseKey || 'C',
-                            idx,
-                            nextLyric,
-                            bar.chords[1],
-                            sec.type,
-                            melodyCtx
-                          ),
-                  };
-                }),
-              };
+
+              const mergedLines = sec.bars.map((bar, idx) => {
+                const candidate =
+                  typeof nextLines[idx] === 'string' && nextLines[idx].trim()
+                    ? nextLines[idx].trim()
+                    : bar.lyrics;
+                // ป้องกันการลบหมุดหมาย Exact Anchor ของผู้ใช้ออกระหว่างรอบ Polish
+                const lostExactAnchor = exactProtectedAnchors.some(
+                  (anchor) => bar.lyrics.includes(anchor) && !candidate.includes(anchor)
+                );
+                return lostExactAnchor ? bar.lyrics : candidate;
+              });
+
+              const evalEntry = validationBySectionId.get(sec.id);
+              const { validationOpts } = buildSectionValidationOpts(sec.type);
+              const originalReport =
+                evalEntry?.validation ??
+                validateThaiLyricCouplets(
+                  sec.bars.map((b) => b.lyrics),
+                  validationOpts
+                );
+              const candidateReport = validateThaiLyricCouplets(mergedLines, validationOpts);
+
+              if (!shouldAcceptPolishedSection(originalReport, candidateReport)) {
+                return sec;
+              }
+
+              let sectionChanged = false;
+              const nextBars = sec.bars.map((bar, idx) => {
+                const nextLyric = mergedLines[idx];
+                if (nextLyric === bar.lyrics) {
+                  return bar;
+                }
+                sectionChanged = true;
+                return {
+                  ...bar,
+                  lyrics: nextLyric,
+                  melodyNotes:
+                    sec.type === 'intro'
+                      ? []
+                      : buildDiatonicGuideNotesForChord(
+                          bar.chords[0] || song.baseKey || 'C',
+                          idx,
+                          nextLyric,
+                          bar.chords[1],
+                          sec.type,
+                          melodyCtx
+                        ),
+                };
+              });
+
+              if (sectionChanged) {
+                acceptedPolishedCount += 1;
+              }
+              return { ...sec, bars: nextBars };
             }),
           };
+          wasPolished = acceptedPolishedCount > 0;
           const recheckFailed = song.sections
             .filter(
               (sec) =>
@@ -522,18 +579,11 @@ export async function POST(request: Request): Promise<Response> {
                 sec.bars.length >= 2
             )
             .some((sec) => {
-              const budget = getSyllableBudgetForBpm(song.bpm, song.timeSignature, {
-                sectionType: sec.type,
-                songwriterStyle,
-                thaiGenre: effectiveThaiGenre,
-                lyricDensity,
-              });
+              const { budget, validationOpts } = buildSectionValidationOpts(sec.type);
               return !validateThaiLyricCouplets(sec.bars.map((b) => b.lyrics), {
-                bpm: song.bpm,
-                timeSignature: song.timeSignature,
+                ...validationOpts,
                 minSyllables: budget.min,
                 maxSyllables: budget.max,
-                enforceSyllableBudget: true,
               }).passed;
             });
           rhymePassed = !recheckFailed;

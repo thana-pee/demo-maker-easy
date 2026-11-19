@@ -1784,8 +1784,11 @@ export function SectionBuilder({
                   {
                     bpm: song.bpm,
                     timeSignature: song.timeSignature,
+                    sectionType: section.type,
                     minSyllables: sectionBudget.min,
                     maxSyllables: sectionBudget.max,
+                    ...(sectionBudget.barBudgets ? { barBudgets: sectionBudget.barBudgets } : {}),
+                    allowCoupletOrAlternateRhyme: true,
                   }
                 )
               : null;

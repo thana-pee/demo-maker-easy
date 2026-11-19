@@ -91,7 +91,13 @@ interface ArchitectApiResult {
   transcribedLyrics?: string;
   confidenceNote?: string;
   tip: string;
-  usage?: { totalTokens?: number };
+  usage?: {
+    inputTokens?: number;
+    cachedTokens?: number;
+    outputTokens?: number;
+    thoughtTokens?: number;
+    totalTokens?: number;
+  };
   wallet?: WalletBreakdown;
 }
 
@@ -1830,11 +1836,38 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
                         Simulation (0 เครดิต)
                       </span>
                     ) : (
-                      typeof generatedResult.usage?.totalTokens === 'number' && (
-                        <span className="px-2 py-0.5 rounded-full bg-accent-50 text-accent-text text-[10px] font-bold">
-                          {generatedResult.usage.totalTokens} tokens
-                        </span>
-                      )
+                      <>
+                        {generatedResult.rhymeValidation?.polished && (
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-ok-500 text-[10px] font-bold">
+                            {lang === 'th' ? '✓ ขัดเกลาแล้ว' : '✓ Polished'}
+                          </span>
+                        )}
+                        {typeof generatedResult.usage?.totalTokens === 'number' && (
+                          <span
+                            title={[
+                              typeof generatedResult.usage.inputTokens === 'number'
+                                ? `Input: ${generatedResult.usage.inputTokens}`
+                                : null,
+                              typeof generatedResult.usage.outputTokens === 'number'
+                                ? `Output: ${generatedResult.usage.outputTokens}`
+                                : null,
+                              typeof generatedResult.usage.thoughtTokens === 'number' &&
+                              generatedResult.usage.thoughtTokens > 0
+                                ? `Thought: ${generatedResult.usage.thoughtTokens}`
+                                : null,
+                              typeof generatedResult.usage.cachedTokens === 'number' &&
+                              generatedResult.usage.cachedTokens > 0
+                                ? `Cached: ${generatedResult.usage.cachedTokens}`
+                                : null,
+                            ]
+                              .filter(Boolean)
+                              .join(' · ') || `${generatedResult.usage.totalTokens} total tokens`}
+                            className="px-2 py-0.5 rounded-full bg-accent-50 text-accent-text text-[10px] font-bold cursor-help"
+                          >
+                            {generatedResult.usage.totalTokens} tokens
+                          </span>
+                        )}
+                      </>
                     )}
                   </div>
                 </div>

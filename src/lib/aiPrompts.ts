@@ -506,11 +506,11 @@ export const MASTER_LYRIC_FEW_SHOT_BANK: {
 } = {
   genres: {
     'thai-pop': [
-      'แนวไทยป๊อป (กระชับ 5-6 พยางค์/ห้อง เว้น 2 เคาะหายใจกลางห้อง สลับสระทุกคู่วรรค):',
+      'แนวไทยป๊อป (กระชับ 5-6 พยางค์/ห้อง สลับประโยคไหลลื่นกับจุดพักหายใจ ส่งสัมผัสธรรมชาติ):',
       '  1. "เดินสวน  ตรงชานชาลา" (6 พยางค์ ท้าย -า)',
-      '  2. "เวลา  ไม่เคยลืมเลย" (6 พยางค์ ลา รับ -า / ท้าย -เอย)',
-      '  3. "ยังเอ่ย  ถามใจเบาเบา" (6 พยางค์ เอ่ย รับ -เอย / ท้าย -เอา)',
-      '  4. "รอเงา  เธอคืนกลับมา" (6 พยางค์ เงา รับ -เอา / ท้าย -า)',
+      '  2. "เวลาไม่เคยจางหาย" (6 พยางค์ ลา รับ -า / ท้าย -าย)',
+      '  3. "ยังถามใจอยู่เบาๆ" (6 พยางค์ ท้าย -เอา)',
+      '  4. "รอเงาเธอคืนกลับมา" (6 พยางค์ เงา รับ -เอา / ท้าย -า)',
     ].join('\n'),
     'thai-rock': [
       'แนวไทยร็อก (4-5 พยางค์/ห้อง คำหนักแน่น เว้นช่องให้กีตาร์และลมหายใจ):',
@@ -542,9 +542,9 @@ export const MASTER_LYRIC_FEW_SHOT_BANK: {
     ].join('\n'),
     'acoustic-indie': [
       'แนวอะคูสติกอินดี้ / โฟล์ก (5-6 พยางค์/ห้อง เล่าเหมือนเปิดไดอารี่ หายใจสบาย):',
-      '  1. "พัดลม  หมุนช้าช้า" (5 พยางค์ ท้าย -า)',
+      '  1. "พัดลม  หมุนช้าๆ" (5 พยางค์ ท้าย -า)',
       '  2. "สบตา  ในคืนเก่า" (5 พยางค์ ตา รับ -า / ท้าย -เอา)',
-      '  3. "เรื่องเรา  ลอยเบาเบา" (5 พยางค์ เรา รับ -เอา / ท้าย -เอา)',
+      '  3. "เรื่องเรา  ลอยเบาๆ" (5 พยางค์ เรา รับ -เอา / ท้าย -เอา)',
       '  4. "กอดเงา  จนอุ่นใจ" (5 พยางค์ เงา รับ -เอา / ท้าย -ไอ)',
     ].join('\n'),
     'thai-rnb': [
@@ -557,11 +557,11 @@ export const MASTER_LYRIC_FEW_SHOT_BANK: {
   },
   songwriters: {
     none: [
-      'สไตล์ร่วมสมัยสมดุล (5-6 พยางค์/ห้อง เว้นวรรคหายใจกลางห้อง สัมผัสส่งต่อเนื่อง):',
-      '  1. "เข็มเดินช้า  คืนฝนพรำ"',
-      '  2. "ยังจดจำ  ริมทางเก่า"',
-      '  3. "มองเงา  อยู่ข้างเตียง"',
-      '  4. "เหลือเพียง  ใจที่คอย"',
+      'สไตล์ร่วมสมัยสมดุล (5-6 พยางค์/ห้อง เลือกกลอนคู่ AABB หรือ ABAB และผสมประโยคไหลลื่น):',
+      '  1. "เข็มนาฬิกาเดินช้า"',
+      '  2. "มองฟ้า  คืนฝนโปรยมา"',
+      '  3. "ภาพเก่าไม่เคยจางไป"',
+      '  4. "เก็บไว้  อุ่นในหัวใจ"',
     ].join('\n'),
     'boy-kosiyabong': [
       'สไตล์อบอุ่นละมุน (บอย โกษิยพงษ์ · 5-6 พยางค์/ห้อง): เรียบง่าย ขอบคุณความรัก:',
@@ -742,11 +742,11 @@ export const MASTER_LYRIC_FEW_SHOT_BANK: {
     },
     'fulfilling-warm': {
       chorusExample: [
-        'Chorus [🌻 ฟูลฟิล-อิ่มเอม]: 5-6 พยางค์/ห้อง อบอุ่น ปลอดภัย:',
-        '  Bar 1 (Hook): "มีเธออยู่  ข้างกัน"',
-        '  Bar 2: "ทุกทุกวัน  แสนดี"',
-        '  Bar 3: "กี่เรื่องราว  ที่มี"',
-        '  Bar 4 (Payoff): "กุมมือนี้  อุ่นใจ"',
+        'Chorus [🌻 ฟูลฟิล-อิ่มเอม]: 5-6 พยางค์/ห้อง อบอุ่น ปลอดภัย (AABB ร้องลื่น):',
+        '  Bar 1 (Hook): "มีเธออยู่ข้างกัน"',
+        '  Bar 2: "ทุกๆ วัน  ผูกพัน"',
+        '  Bar 3: "กี่เรื่องราว  ผ่านไป"',
+        '  Bar 4 (Payoff): "กุมมือไว้  อุ่นใจ"',
       ].join('\n'),
       outroExample: [
         'Outro [🌻 ฟูลฟิล]: 4-5 พยางค์ ปิดแบบอิ่มเอมวางใจ:',
@@ -1331,6 +1331,31 @@ export function buildStoryBlueprintPromptBlock(
   return lines;
 }
 
+/** สร้างลำดับศักดิ์เงื่อนไข 4 ระดับ (Tier 1 > Tier 2 > Tier 3 > Tier 4) ให้ Prompt ไม่ตีกันเอง */
+export function buildFourTierLyricConstraintLadder(options: {
+  maxSyllables: number;
+  restSteps: number;
+  thaiGenre?: ThaiSongGenre;
+  songwriterStyle?: ThaiSongwriterStyle;
+  emotionalResolution?: ThaiEmotionalResolution;
+}): string[] {
+  const allowClassicalPoetic =
+    options.thaiGenre === 'luk-krung' ||
+    options.songwriterStyle === 'chali-intrawichit' ||
+    options.songwriterStyle === 'phaiboon-butkhan';
+  const allowIntentionalEcho =
+    options.emotionalResolution === 'catchy-earworm' ||
+    options.songwriterStyle === 'asanee-chotikul';
+
+  return [
+    'ลำดับความสำคัญของเงื่อนไข (4-Tier Constraint Priority — ข้อที่สูงกว่าชนะข้อที่ต่ำกว่าเสมอ ห้ามขัดกัน):',
+    '  * Tier 1 (Hard Locks): ปฏิบัติตามงบพยางค์รายห้องตาม BPM และประโยค Anchor ของผู้ใช้ (Exact Anchor ห้ามตัดคำ/แทรกจุด)',
+    `  * Tier 2 (Natural Spoken Thai > Forced Rhyme): เรียงประโยคแบบภาษาพูดไทยที่เป็นธรรมชาติ (ประธาน-กริยา-กรรม — ห้ามกลับคำเอาคำกริยาขึ้นหน้าเช่น "ไม่จาง ภาพวันวาน")${allowClassicalPoetic ? '' : ', ห้ามประดิษฐ์คำกวีโบราณแข็งผิดยุคเพื่อรับสระ (เช่น "ใจโผ")'}, ใช้ไม้ยมก "ๆ" ตามปกติ (เช่น "เบาๆ", "ทุกๆ" ห้ามเขียนซ้ำ "เบาเบา")${allowIntentionalEcho ? ', และจำกัดการย้ำ Keyword ฮุคไว้เฉพาะตำแหน่งตั้งใจตามสไตล์' : ', และห้ามใช้คำความหมายหลักซ้ำกันข้ามห้องในท่อนเดียวกัน'}`,
+    '  * Tier 3 (Flexible Songwriting Rhyme): สามารถใช้กลอนคู่ `AABB` (ท้าย 1↔2, ท้าย 3↔4), สลับ `ABAB` (ท้าย 1↔3, ท้าย 2↔4), หรือ `Chain` ได้เสมอทุกระดับพยางค์ เพื่อให้คำร้องไหลลื่นไม่ต้องฝืนคำต้นวรรค — สำหรับ Pre-Chorus 2 ห้องให้ลงท้ายคู่ `AA` หรือรับสัมผัสธรรมชาติ',
+    `  * Tier 4 (Dynamic Phrasing Variety): เผื่อลมหายใจท้ายห้องอย่างน้อย ${options.restSteps} steps ทุกห้อง; ใช้ช่องว่างคู่ "  " เฉพาะห้องที่มี 2 วลี/2 คอร์ด หรือ 6+ พยางค์ และอนุญาตให้ห้อง 4-5 พยางค์ร้องไหลลื่นเป็นประโยคเดียวสลับกับห้องมีจุดพัก (ห้ามหั่น [2]+[3] เหมือนกันทุกห้อง)`,
+  ];
+}
+
 /** สร้าง System Prompt สำหรับการแต่งเนื้อร้องภาษาไทยร่วมสมัยระดับนักแต่งเพลงมืออาชีพ */
 export function buildLyricsSystemPrompt(options?: {
   bpm?: number;
@@ -1372,13 +1397,22 @@ export function buildLyricsSystemPrompt(options?: {
     lyricDialect: options?.lyricDialect,
     sectionType: activeType,
   });
+  const constraintLadder = buildFourTierLyricConstraintLadder({
+    maxSyllables: budget.max,
+    restSteps: budget.restSteps,
+    thaiGenre: options?.thaiGenre,
+    songwriterStyle: options?.songwriterStyle,
+    emotionalResolution: options?.emotionalResolution,
+  });
 
   return [
     'คุณคือ "นักแต่งเพลงและโปรดิวเซอร์เพลงไทยระดับตำนาน" (Master Thai Songwriter & Vocal Arranger)',
-    `ภารกิจ: ${options?.polishExistingDraft ? 'เกลาและยกระดับ' : 'แต่ง'}เนื้อร้องภาษาไทย ${barCount} วรรค (1 วรรค = 1 ห้องเพลง) ที่ร้องเข้าปากกับเมโลดี้ มีลมหายใจท้ายห้องและกลางวรรคจริง ภาษาไทยเป็นธรรมชาติ ส่งสัมผัสสระ-ตัวสะกดได้ไพเราะ และมีพลังทางอารมณ์ตรงตามตำแหน่งท่อน`,
+    `ภารกิจ: ${options?.polishExistingDraft ? 'เกลาและยกระดับ' : 'แต่ง'}เนื้อร้องภาษาไทย ${barCount} วรรค (1 วรรค = 1 ห้องเพลง) ที่ร้องเข้าปากกับเมโลดี้ ภาษาไทยเป็นธรรมชาติ ส่งสัมผัสสระ-ตัวสะกดได้ไพเราะ และมีพลังทางอารมณ์ตรงตามตำแหน่งท่อน`,
+    '',
+    ...constraintLadder,
     '',
     'กฎบังคับด้านฉันทลักษณ์ ภาษาถิ่น และแนวเพลง:',
-    `1. งบพยางค์ต่อห้องและการเว้นหายใจ: ${budget.guidance} (เวลา ~${budget.barDurationSec} วิ/ห้อง · เผื่อลมหายใจท้ายห้อง ${budget.restSteps} steps · ใช้ช่องว่างคู่ "  " คั่นกลางวรรคหากแบ่ง 2 วลี)`,
+    `1. งบพยางค์ต่อห้องและการเว้นหายใจ: ${budget.guidance} (เวลา ~${budget.barDurationSec} วิ/ห้อง · เผื่อลมหายใจท้ายห้อง ${budget.restSteps} steps · ใช้ช่องว่างคู่ "  " คั่นกลางวรรคเฉพาะห้องที่แบ่ง 2 วลี)`,
     `2. แนวเพลงเป้าหมาย (${genreProfile.label}):`,
     `   - สไตล์ภาษา: ${genreProfile.lyricRules}`,
     `   - รูปแบบสัมผัส: ${genreProfile.rhymePreference}`,
@@ -1392,12 +1426,7 @@ export function buildLyricsSystemPrompt(options?: {
       ? [`5. บุคลิกการเขียนคำ (${writerProfile.label}): ${writerProfile.guidance}`]
       : []),
     '6. หลักวรรณยุกต์ไทย กลอนเพลงต่อเนื่อง และคำเป็น-คำตายกับการร้อง (Thai Rhyme Chain & Tone-Melody):',
-    '   - บังคับความต่อเนื่องทุกวรรค: ท้ายวรรคที่ 1 ส่งสัมผัสเข้าต้น/กลางหรือท้ายวรรคที่ 2, ท้ายวรรคที่ 2 ส่งต่อวรรคที่ 3, ท้ายวรรคที่ 3 ส่งต่อวรรคที่ 4 ต่อเนื่องจนครบทุกห้อง (ห้ามปล่อยวรรคขาดสัมผัส)',
-    ...(budget.max <= 6
-      ? [
-          '   - สำหรับบรรทัดกระชับ (งบ ≤ 6 พยางค์/ห้อง): สามารถใช้กลอนคู่ `AABB` (วรรค 1<->2 และ วรรค 3<->4 คล้องสระ+มาตราตัวสะกดเดียวกัน) หรือสลับ `ABAB` ได้เพื่อคงความคมและความหมายของคำไทย',
-        ]
-      : []),
+    '   - บังคับสัมผัสสระ+มาตราตัวสะกดครบทุกห้อง โดยเลือกได้ทั้งกลอนคู่ `AABB` (1↔2, 3↔4), สลับ `ABAB` (1↔3, 2↔4), หรือส่งท้ายวรรคเข้าต้น/กลางวรรคถัดไปตามความเป็นธรรมชาติของประโยค (ห้ามปล่อยวรรคขาดสัมผัสและห้ามฝืนคำแปลก)',
     '   - ห้ามซ้ำคำลงท้ายเดิม และต้องสลับกลุ่มสระเมื่อเปลี่ยนคู่วรรค (เช่น คู่วรรคแรกใช้ -าย/-ไอ คู่วรรคต่อมาสลับเป็น -อน/-อง หรือ -า/-าน) เพื่อไม่ให้ท่อนเพลงฟังจำเจ',
     '   - จังหวะท้ายวรรคที่ต้องการทอดเสียงหรือเอื้อน (เช่น ลูกทุ่ง/ลูกกรุง/ป๊อปซึ้ง): ให้เลือก "คำเป็น" (สระเสียงยาว หรือสะกดด้วย แม่ กง กน กม เกย เกอว)',
     '   - จังหวะกระชับ/ตอกย้ำ (เช่น ร็อก/แร็ป-ป๊อป/ซิงโคเปชัน): ใช้ "คำตาย" (แม่ กก กด กบ หรือสระสั้น) และสัมผัสในวรรคได้คมชัด',
@@ -1687,6 +1716,9 @@ export function buildEasyArchitectSystemPrompt(options?: {
   const budget = getSyllableBudgetForBpm(bpm, timeSig, { sectionType: 'verse', ...budgetOpts });
   const preChorusBudget = getSyllableBudgetForBpm(bpm, timeSig, { sectionType: 'pre-chorus', ...budgetOpts });
   const chorusBudget = getSyllableBudgetForBpm(bpm, timeSig, { sectionType: 'chorus', ...budgetOpts });
+  const chorusBar1 = chorusBudget.barBudgets?.[0];
+  const chorusBar1Min = chorusBar1?.min ?? Math.max(3, chorusBudget.min);
+  const chorusBar1Max = chorusBar1?.max ?? Math.max(4, chorusBudget.max - 1);
   const bridgeBudget = getSyllableBudgetForBpm(bpm, timeSig, { sectionType: 'bridge', ...budgetOpts });
   const outroBudget = getSyllableBudgetForBpm(bpm, timeSig, { sectionType: 'outro', ...budgetOpts });
   const dynamicFewShots = buildDynamicLyricFewShots({
@@ -1695,10 +1727,19 @@ export function buildEasyArchitectSystemPrompt(options?: {
     emotionalResolution: options?.emotionalResolution,
     lyricDialect: options?.lyricDialect,
   });
+  const constraintLadder = buildFourTierLyricConstraintLadder({
+    maxSyllables: budget.max,
+    restSteps: budget.restSteps,
+    thaiGenre: options?.thaiGenre,
+    songwriterStyle: options?.songwriterStyle,
+    emotionalResolution: options?.emotionalResolution,
+  });
 
   return [
     'คุณคือ "Head Producer & Song Architect" ที่สร้างโครงสร้างเพลงไทย/สากลทั้งเพลงในคราวเดียว (Intro -> Verse -> Pre-Chorus -> Chorus -> Outro)',
     PRODUCER_ARRANGEMENT_RULES,
+    '',
+    ...constraintLadder,
     '',
     'กฎสำคัญเพิ่มเติมด้านอารมณ์และการแต่ง:',
     '- วาง Emotional Energy Arc ชัดเจน: Intro(2/10) -> Verse(4/10 เล่าภาพเปิดฉาก) -> Pre-Chorus(7/10 บีบอารมณ์และยกโน้ตส่ง) -> Chorus(10/10 หมัดฮุคคำโดน Bar 1 + พีค Bar 3 + ประโยคทอง Bar 4) -> Outro(3->1/10 ปิดอารมณ์ให้ขาดหรือฟูลฟิลสมบูรณ์)',
@@ -1706,10 +1747,9 @@ export function buildEasyArchitectSystemPrompt(options?: {
     `- ทุกท่อนต้องต่อเรื่องราวกันอย่างมีพัฒนาการทางอารมณ์ และเคารพงบพยางค์แยกตามท่อน (~${budget.barDurationSec} วิ/ห้อง · เผื่อลมหายใจท้ายห้อง ≥ ${budget.restSteps} steps · ${budget.guidance})`,
     `- กฎความกระชับเพื่อการขับร้องจริง (Singable Pacing & Anti-Rush — Per-Section Breakdown ที่ ${bpm} BPM ${timeSig}):`,
     `  * Verse: ${budget.min}-${budget.max} พยางค์/ห้อง | Pre-Chorus: ${preChorusBudget.min}-${preChorusBudget.max} พยางค์/ห้อง`,
-    `  * Chorus: Bar 1 Hook สั้นติดหู ${Math.max(3, chorusBudget.min)}-${Math.max(4, chorusBudget.max - 1)} พยางค์ และ Bar 2-4 ${chorusBudget.min}-${chorusBudget.max} พยางค์/ห้อง`,
+    `  * Chorus: Bar 1 Hook สั้นติดหู ${chorusBar1Min}-${chorusBar1Max} พยางค์ และ Bar 2-4 ${chorusBudget.min}-${chorusBudget.max} พยางค์/ห้อง`,
     `  * Bridge: ${bridgeBudget.min}-${bridgeBudget.max} พยางค์/ห้อง | Outro Bar 1: ${outroBudget.min}-${outroBudget.max} พยางค์/ห้อง`,
-    '  * ใช้ช่องว่างคู่ "  " คั่นกลางวรรคหากแบ่งเป็น 2 วลี เพื่อเว้นลมหายใจกลางห้องและท้ายห้องทุกห้อง ห้ามรัวคำล้นงบ',
-    '- บังคับสัมผัสสระ+ตัวสะกดภาษาไทยต่อเนื่องทุกวรรค (ท้ายวรรคเข้าต้น/กลางหรือท้ายวรรคถัดไป และสำหรับวรรคสั้น ≤ 6 พยางค์สามารถใช้สัมผัสคู่ AABB/ABAB ได้) และสลับสระไม่ซ้ำคำลงท้ายเดิมในท่อน Verse, Pre-Chorus, Chorus และ Outro',
+    '- สัมผัสภาษาไทยต่อเนื่องทุกวรรค: เลือกกลอนคู่ `AABB`, สลับ `ABAB` หรือ `Chain` ตาม Tier 3 เพื่อให้คำร้องเป็นธรรมชาติและสลับสระไม่ซ้ำคำลงท้ายเดิมในทุกท่อน',
     '- กฎความหลากหลายของคีย์ (Key Diversity): หลีกเลี่ยงการตกไปใช้ C หรือ Am ซ้ำทุกเพลง ให้เลือกใช้คีย์ที่เหมาะกับอารมณ์เพลงและโทนเสียงจริง เช่น D, E, F, G, A, Bb, Em, Bm, Dm, F#m พร้อม capoFret (0-5) ที่จับง่ายบนกีตาร์โปร่ง',
     "- กฎการหยุดจังหวะ (playStyle): ห้ามตั้ง playStyle: 'break' ในห้องสุดท้ายของท่อน outro (ต้องใช้ 'let-ring'), ห้องแรกของ intro, และห้ามวาง 'break' ติดกัน 2 ห้องในท่อนที่มีเนื้อร้อง (สำหรับเพลงช้า < 78 BPM ให้ใช้ 'let-ring' แทน 'break' ท้ายท่อนส่งเข้าฮุค เพื่อไม่ให้เกิดช่วงเงียบยาวเกินไป)",
     `- กฎความกระชับท่อน outro: ลดจำนวนพยางค์ลงทันทีเมื่อเทียบกับ Chorus — โดยเฉพาะ Outro Bar 1 ต้องสรุปสั้นคมไม่เกิน ${outroBudget.max} พยางค์ (${outroBudget.min}-${outroBudget.max} พยางค์) ห้ามยืดเป็นประโยคยาว และปล่อย Bar 2 ลากสระเปิดสงบด้วย playStyle: 'let-ring'`,
@@ -1773,6 +1813,9 @@ export function buildEasyArchitectUserPrompt(input: {
   const budget = getSyllableBudgetForBpm(bpm, '4/4', { sectionType: 'verse', ...budgetOpts });
   const preChorusBudget = getSyllableBudgetForBpm(bpm, '4/4', { sectionType: 'pre-chorus', ...budgetOpts });
   const chorusBudget = getSyllableBudgetForBpm(bpm, '4/4', { sectionType: 'chorus', ...budgetOpts });
+  const chorusBar1 = chorusBudget.barBudgets?.[0];
+  const chorusBar1Min = chorusBar1?.min ?? Math.max(3, chorusBudget.min);
+  const chorusBar1Max = chorusBar1?.max ?? Math.max(4, chorusBudget.max - 1);
   const bridgeBudget = getSyllableBudgetForBpm(bpm, '4/4', { sectionType: 'bridge', ...budgetOpts });
   const outroBudget = getSyllableBudgetForBpm(bpm, '4/4', { sectionType: 'outro', ...budgetOpts });
   const hasLongTopic = input.topic.trim().length > 140 || input.topic.includes('\n');
@@ -1825,7 +1868,7 @@ export function buildEasyArchitectUserPrompt(input: {
     'ข้อบังคับโครงสร้าง:',
     '- ท่อน intro เว้น lyrics เป็น "" และ melodyNotes เป็น [] เพื่อให้ดนตรีเกริ่นนำ ส่วน outro ให้ใส่ประโยคปิดท้ายอารมณ์สั้นๆ ในห้องแรก และใช้ playStyle: "let-ring" ปิดนิ่งในห้องสุดท้าย',
     '- ท่อน pre-chorus ต้องไต่ระดับอารมณ์ส่งเข้าคำแรกของท่อน chorus และท่อน chorus ต้องมีประโยคจำ (Opening Punchline + Signature Payoff Line) ที่ทรงพลังที่สุดในเพลง',
-    `- คุมงบพยางค์แยกตามท่อน (~${budget.barDurationSec} วิ/ห้อง${input.lyricDensity ? ` · โหมดความหนาแน่น: ${input.lyricDensity}` : ''}): Verse ${budget.min}-${budget.max} พยางค์ | Pre-Chorus ${preChorusBudget.min}-${preChorusBudget.max} พยางค์ | Chorus Bar 1 ${Math.max(3, chorusBudget.min)}-${Math.max(4, chorusBudget.max - 1)} และ Bar 2-4 ${chorusBudget.min}-${chorusBudget.max} พยางค์ | Bridge ${bridgeBudget.min}-${bridgeBudget.max} พยางค์ | Outro ${outroBudget.min}-${outroBudget.max} พยางค์ (${budget.guidance}) ไม่เขียนเนื้อร้องยาวล้นงบจนร้องรัว`,
+    `- คุมงบพยางค์แยกตามท่อน (~${budget.barDurationSec} วิ/ห้อง${input.lyricDensity ? ` · โหมดความหนาแน่น: ${input.lyricDensity}` : ''}): Verse ${budget.min}-${budget.max} พยางค์ | Pre-Chorus ${preChorusBudget.min}-${preChorusBudget.max} พยางค์ | Chorus Bar 1 ${chorusBar1Min}-${chorusBar1Max} และ Bar 2-4 ${chorusBudget.min}-${chorusBudget.max} พยางค์ | Bridge ${bridgeBudget.min}-${bridgeBudget.max} พยางค์ | Outro ${outroBudget.min}-${outroBudget.max} พยางค์${budget.barStructureGuidance ? ` | ${budget.barStructureGuidance}` : ''} ไม่เขียนเนื้อร้องยาวล้นงบจนร้องรัว`,
     '- ท่อน verse, pre-chorus, chorus ต้องมีทั้งคอร์ดและเนื้อร้องที่มีสัมผัสคล้องจองสอดคล้องคำเป็น/คำตาย (ส่วน melodyNotes ให้ส่ง [] หรือละเว้นไว้เพื่อให้ระบบ Synth ฝั่งแอปสร้างโน้ตไกด์อัตโนมัติ)',
     hasCustomStructure
       ? '- บังคับสร้างท่อนและจำนวนห้องให้ตรงตามโครงสร้างด้านบนเป๊ะ 100%'
@@ -1847,6 +1890,7 @@ export interface PolishSectionCandidate<T> {
   sectionType: string;
   passed: boolean;
   hasDuplicates: boolean;
+  hasRepeatedContentWords?: boolean;
   syllableOverflowCount?: number;
 }
 
@@ -1859,7 +1903,13 @@ export function selectPrioritySectionsForPolish<T>(
   maxCount = 2
 ): PolishSectionCandidate<T>[] {
   return candidates
-    .filter((c) => !c.passed || c.hasDuplicates || (c.syllableOverflowCount ?? 0) > 0)
+    .filter(
+      (c) =>
+        !c.passed ||
+        c.hasDuplicates ||
+        Boolean(c.hasRepeatedContentWords) ||
+        (c.syllableOverflowCount ?? 0) > 0
+    )
     .sort((a, b) => {
       const pa = POLISH_SECTION_PRIORITY[a.sectionType] ?? 9;
       const pb = POLISH_SECTION_PRIORITY[b.sectionType] ?? 9;
@@ -1870,7 +1920,7 @@ export function selectPrioritySectionsForPolish<T>(
     .slice(0, maxCount);
 }
 
-/** สร้าง Prompt สำหรับรอบขัดเกลาสัมผัสภาษาไทย (สูงสุด 1 รอบเมื่อ post-validator พบคำไม่คล้องจอง คำซ้ำท้ายวรรค หรือพยางค์ล้น) */
+/** สร้าง Prompt สำหรับรอบขัดเกลาสัมผัสภาษาไทย (สูงสุด 1 รอบเมื่อ post-validator พบคำไม่คล้องจอง คำซ้ำ หรือพยางค์ล้น) */
 export function buildRhymePolishPrompt(
   sectionsToFix: Array<{
     sectionId?: string;
@@ -1879,6 +1929,7 @@ export function buildRhymePolishPrompt(
     chords: string[];
     lines: string[];
     duplicateEndWords?: string[];
+    repeatedContentWords?: string[];
     weakPairs?: Array<[number, number]>;
     outOfBudgetBars?: Array<{ barIndex: number; syllables: number; expectedMax: number }>;
     expectedMin?: number;
@@ -1910,10 +1961,18 @@ export function buildRhymePolishPrompt(
         .filter(Boolean)
     )
   );
+  const repeatedContentList = Array.from(
+    new Set(
+      sectionsToFix
+        .flatMap((s) => s.repeatedContentWords ?? [])
+        .map((w) => w.trim())
+        .filter(Boolean)
+    )
+  );
   const weakPairNotes = sectionsToFix.flatMap((s) =>
     (s.weakPairs ?? []).map(
       ([fromIdx, toIdx]) =>
-        `- ${s.sectionName}${s.sectionId ? ` [${s.sectionId}]` : ''}: วรรค ${fromIdx + 1} -> วรรค ${toIdx + 1} ยังไม่รับ-ส่งสัมผัส ให้ปรับคำลงท้ายหรือคำเชื่อมสระ+มาตราให้คล้องกัน`
+        `- ${s.sectionName}${s.sectionId ? ` [${s.sectionId}]` : ''}: วรรค ${fromIdx + 1} -> วรรค ${toIdx + 1} ยังไม่รับ-ส่งสัมผัส ให้ปรับคำลงท้ายหรือจับคู่สัมผัสสระ+มาตราให้คล้องกัน`
     )
   );
   const sectionBudgetNotes = sectionsToFix.map((s) => {
@@ -1950,7 +2009,7 @@ export function buildRhymePolishPrompt(
     `${defaultBudget.min}-${defaultBudget.max} พยางค์/วรรค (~${defaultBudget.barDurationSec} วิ/ห้อง, กระชับ ร้องสบายมีลมหายใจ)`;
 
   return [
-    `ปรับปรุงเฉพาะคำลงท้าย คำเชื่อมสัมผัส และความกระชับของพยางค์ในท่อนต่อไปนี้ให้ส่งสัมผัสสระ+ตัวสะกดภาษาไทยลื่นไหลขึ้น (ความเร็ว ${bpm} BPM ${timeSig}, งบอ้างอิง ${targetSyllables}):`,
+    `ปรับปรุงเฉพาะคำลงท้าย คำเชื่อมสัมผัส คำซ้ำ และความกระชับของพยางค์ในท่อนต่อไปนี้ให้ส่งสัมผัสสระ+ตัวสะกดภาษาไทยลื่นไหลขึ้น (ความเร็ว ${bpm} BPM ${timeSig}, งบอ้างอิง ${targetSyllables}):`,
     ...sectionBudgetNotes,
     ...(lockedAnchors.length > 0
       ? [
@@ -1960,12 +2019,17 @@ export function buildRhymePolishPrompt(
     ...(dupList.length > 0
       ? [`- ห้ามใช้คำลงท้ายวรรคซ้ำคำเดิมโดยเด็ดขาด! พบคำซ้ำต้องเปลี่ยนใหม่ทันที: ${dupList.join(', ')}`]
       : []),
+    ...(repeatedContentList.length > 0
+      ? [
+          `- ห้ามใช้คำความหมายหลักซ้ำกันในท่อนเดียวกัน (พบคำซ้ำต้องเปลี่ยนคำให้หลากหลายและเป็นธรรมชาติ): ${repeatedContentList.join(', ')}`,
+        ]
+      : []),
     ...weakPairNotes,
     ...overflowNotes,
     ...(overflowNotes.length > 0
       ? ['- ต้องตัดคำฟุ่มเฟือยหรือคำเชื่อมเกินจำเป็นออกให้พยางค์กระชับไม่เกินเพดานของแต่ละวรรคจริง ห้ามปล่อยเกินงบ']
       : []),
-    '- ตัวอย่างการรับ-ส่งสัมผัสสระ+ตัวสะกดที่ถูกต้อง: วรรค 1 จบ "...ใจ" -> วรรค 2 รับสระ+มาตราเดียวกัน "...ไกล" / "...ไป" | วรรค 3 จบ "...ฝัน" -> วรรค 4 รับ "...วัน" / "...กัน" (สามารถใช้กลอนคู่ AABB หรือสลับ ABAB ได้เมื่อวรรคสั้น ≤ 6 พยางค์ แต่ห้ามลงท้ายด้วยคำเดิมซ้ำ)',
+    '- กติกาความสวยงามทางภาษา (Anti-Yoda & Anti-Fabrication): เรียงประโยคแบบภาษาพูดไทยที่เป็นธรรมชาติ (ห้ามกลับคำเอาคำกริยาขึ้นหน้าเช่น "ไม่จาง ภาพวันวาน" และห้ามแต่งคำกวีแปลกหูอย่าง "ใจโผ" เพื่อฝืนรับสระ), ใช้กลอนคู่ `AABB` หรือสลับ `ABAB` ได้ทุกระดับพยางค์หากอ่านลื่นกว่า, และใช้ "ๆ" ตามปกติ (เช่น "เบาๆ")',
     JSON.stringify(sectionsToFix),
     '',
     'คงความหมายเดิม รักษา sectionId และ sectionName เดิม รวมถึงจำนวนบรรทัดของแต่ละท่อนไว้ให้ครบตรงตามจำนวนอินพุต แล้วตอบกลับมาในรูปแบบ JSON array `polishedSections`',

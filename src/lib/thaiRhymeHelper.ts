@@ -397,7 +397,6 @@ export function segmentThaiWordToSyllables(rawInput: string): string[] {
   const trimmed = rawInput
     .trim()
     .replace(/[\s,.;:!?'"()\[\]{}\/\\|~\-–—]+/g, ' ')
-    .replace(/ๆ/g, '')
     .trim();
   if (!trimmed) return [];
 
@@ -406,9 +405,10 @@ export function segmentThaiWordToSyllables(rawInput: string): string[] {
     const seg = new Intl.Segmenter('th', { granularity: 'word' });
     for (const part of seg.segment(trimmed)) {
       const s = part.segment.trim();
-      if (/[\u0E01-\u0E2E]/.test(s)) {
-        wordTokens.push(s);
-      } else if (/[a-zA-Z0-9]+/.test(s)) {
+      if (!s) continue;
+      if (s === 'ๆ') {
+        wordTokens.push('ๆ');
+      } else if (/[\u0E01-\u0E2E]/.test(s) || /[a-zA-Z0-9]+/.test(s)) {
         wordTokens.push(s);
       }
     }
@@ -417,17 +417,18 @@ export function segmentThaiWordToSyllables(rawInput: string): string[] {
   }
 
   const syllables: string[] = [];
+  let lastWordSyllables: string[] = [];
 
-  for (const rawToken of wordTokens) {
+  const segmentSingleToken = (rawToken: string): string[] => {
     if (!/[\u0E01-\u0E2E]/.test(rawToken)) {
-      syllables.push(rawToken);
-      continue;
+      return [rawToken];
     }
 
     const token = rawToken
       .replace(/(ชา|ญา|ธา|บั|มั|วั|เกียร)ต\u0E34(?=$|[\u0E40-\u0E44])/g, '$1ต')
       .replace(/(เห|ธา|เก)ต\u0E38(?=$|[\u0E40-\u0E44])/g, '$1ต');
 
+    const tokenSyllables: string[] = [];
     let i = 0;
     const len = token.length;
 
@@ -662,11 +663,47 @@ export function segmentThaiWordToSyllables(rawInput: string): string[] {
 
       const piece = token.slice(start, i).trim();
       if (piece) {
-        syllables.push(piece);
+        tokenSyllables.push(piece);
       }
       if (i === start) {
         i += 1;
       }
+    }
+
+    return tokenSyllables;
+  };
+
+  for (const rawToken of wordTokens) {
+    if (rawToken === 'ๆ') {
+      if (lastWordSyllables.length > 0) {
+        syllables.push(...lastWordSyllables);
+      }
+      continue;
+    }
+
+    if (rawToken.includes('ๆ')) {
+      const parts = rawToken.split('ๆ');
+      let localLast: string[] = [];
+      for (let pIdx = 0; pIdx < parts.length; pIdx += 1) {
+        const part = parts[pIdx].trim();
+        if (part) {
+          localLast = segmentSingleToken(part);
+          syllables.push(...localLast);
+        }
+        if (pIdx < parts.length - 1 && localLast.length > 0) {
+          syllables.push(...localLast);
+        }
+      }
+      if (localLast.length > 0) {
+        lastWordSyllables = localLast;
+      }
+      continue;
+    }
+
+    const tokenSyllables = segmentSingleToken(rawToken);
+    if (tokenSyllables.length > 0) {
+      syllables.push(...tokenSyllables);
+      lastWordSyllables = tokenSyllables;
     }
   }
 
@@ -682,12 +719,12 @@ function stripKarunFromSyllable(syl: string): string {
 function normalizeLastSyllable(rawWord: string): string {
   const segs = segmentThaiWordToSyllables(rawWord);
   const candidate = segs.length > 0 ? segs[segs.length - 1] : rawWord.trim();
-  const stripped = stripKarunFromSyllable(candidate).replace(/[\u0E48-\u0E4B]/g, '');
+  const stripped = stripKarunFromSyllable(candidate).replace(/[\u0E48-\u0E4Bๆ]/g, '');
   if (/[\u0E01-\u0E2E]/.test(stripped)) return stripped;
 
   const cleaned = rawWord
     .trim()
-    .replace(/[\u0E48-\u0E4B]/g, '')
+    .replace(/[\u0E48-\u0E4Bๆ]/g, '')
     .replace(/[\u0E01-\u0E2E][\u0E34\u0E38]?\u0E4C/g, '')
     .replace(/\u0E4C/g, '');
   const tokens = cleaned.match(/[\u0E00-\u0E7F]+/g);
@@ -1129,8 +1166,11 @@ export interface ValidateThaiLyricOptions {
   sectionType?: SectionType;
   minSyllables?: number;
   maxSyllables?: number;
+  barBudgets?: Array<{ min: number; max: number }>;
   enforceSyllableBudget?: boolean;
   allowCoupletOrAlternateRhyme?: boolean;
+  ignoredMotifTerms?: string[];
+  allowIntentionalHookMotif?: boolean;
 }
 
 export interface OutOfBudgetBarReport {
@@ -1152,11 +1192,108 @@ export interface ThaiLyricCoupletReport {
   rhymeDensityScore?: number;
   chainContinuityRatio?: number;
   duplicateEndWords?: string[];
+  repeatedContentWords?: string[];
   uniqueRhymeGroups?: string[];
   hasVowelShift?: boolean;
   syllableCounts?: number[];
   outOfBudgetBars?: OutOfBudgetBarReport[];
   linePhonetics?: ThaiSyllablePhonetics[];
+}
+
+/** คำเชื่อม/คำช่วยเสียงเบาที่ไม่นับเป็นสัมผัสรับฟลุคกลางวรรค */
+const UNSTRESSED_MIDLINE_FILLERS = new Set([
+  'ไม่', 'ก็', 'ที่', 'จะ', 'ของ', 'กับ', 'และ', 'หรือ', 'มัน', 'นะ', 'ว่า', 'ได้', 'อยู่', 'ให้',
+]);
+
+/** คำสรรพนาม/คำเชื่อม/คำสามัญในเนื้อเพลงที่ไม่ถือว่าซ้ำผิดปกติข้ามห้อง */
+const COMMON_LYRIC_STOPWORDS = new Set([
+  'ฉัน', 'เธอ', 'เรา', 'เขา', 'คุณ', 'ใคร', 'คน', 'ใจ', 'หัวใจ', 'รัก', 'วัน', 'คืน', 'เวลา',
+  'ความ', 'ไม่', 'ยัง', 'ก็', 'ที่', 'ใน', 'ของ', 'กับ', 'และ', 'แต่', 'หรือ', 'จะ', 'ได้',
+  'อยู่', 'ให้', 'เป็น', 'มี', 'คือ', 'ว่า', 'ไป', 'มา', 'ไว้', 'กัน', 'ตัว', 'เอง', 'นี้', 'นั้น',
+  'เลย', 'แค่', 'เพียง', 'ต้อง', 'เคย', 'ทุก', 'อย่าง', 'มัน', 'อะไร', 'ไหม', 'นะ', 'ดี', 'ลง',
+  'ขึ้น', 'ออก', 'เข้า', 'ถึง', 'กว่า', 'เพราะ', 'แม้', 'ถ้า', 'เมื่อ', 'จน', 'เพื่อ', 'จาก',
+  'ด้วย', 'โดย', 'ตาม', 'ผ่าน', 'ซ้ำ', 'อีก', 'เหมือน', 'คง', 'อาจ', 'อยาก', 'ขอ', 'บอก', 'รู้',
+  'เห็น', 'ฟัง', 'มอง', 'เดิน', 'นั่ง', 'ยืน', 'คิด', 'เก็บ', 'ฝาก', 'ส่ง', 'ทิ้ง', 'ปล่อย',
+  'ลืม', 'จำ', 'ฝัน', 'ดาว', 'ฟ้า', 'ฝน', 'ลม', 'ทาง', 'เงา', 'ภาพ', 'คำ', 'เพลง', 'เสียง',
+  'น้ำ', 'ตา', 'น้ำตา', 'มือ', 'ยิ้ม', 'อุ่น', 'เหงา', 'เศร้า', 'เจ็บ', 'แพ้', 'สู้', 'ไหว',
+  'หาย', 'นาน', 'ไกล', 'ใกล้', 'ใหม่', 'เก่า', 'เดิม', 'เบา', 'ช้า', 'จริง', 'หมด', 'สุด',
+  'กลาง', 'ข้าง', 'หน้า', 'หลัง', 'การ', 'หัว', 'เรื่อง', 'ราว', 'โลก', 'แสง', 'สาย', 'หยด',
+  'ดวง', 'คืนวัน', 'เวลา', 'ยังคอย', 'คอย', 'รอ', 'เพียง', 'แค่', 'สอง', 'หนึ่ง', 'เดียว',
+  'ทั้ง', 'มาก', 'น้อย', 'เท่า', 'ไร', 'เท่าไร', 'ห่าง', 'ลับ', 'กลับ', 'คืน', 'พา', 'นำ',
+  'กุม', 'จับ', 'กอด', 'เคียง', 'สบ', 'ผ่าน', 'พ้น', 'จบ', 'เริ่ม', 'เปิด', 'ปิด', 'เปลี่ยน',
+  'หมุน', 'เวียน', 'อ้าย', 'เจ้า', 'พี่', 'น้อง', 'บ่', 'ฮัก', 'คึด', 'ฮอด', 'เบิด', 'ยาม',
+  'ตอน', 'ใต้', 'บน', 'นอก', 'ริม', 'ฝั่ง', 'ขอบ', 'บ้าน', 'ห้อง', 'เมือง', 'ถนน', 'ทุ่ง',
+]);
+
+function extractLineContentTokensForRepetition(line: string): string[] {
+  const cleaned = line
+    .trim()
+    .replace(/[\s,.;:!?'"()\[\]{}\/\\|~\-–—ๆ]+/g, ' ')
+    .trim();
+  if (!cleaned) return [];
+
+  const tokens = new Set<string>();
+  if (typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function') {
+    const seg = new Intl.Segmenter('th', { granularity: 'word' });
+    for (const part of seg.segment(cleaned)) {
+      const w = part.segment.trim();
+      if (/^[\u0E01-\u0E4F]{3,}$/.test(w) && !COMMON_LYRIC_STOPWORDS.has(w)) {
+        tokens.add(w);
+      }
+    }
+  }
+  for (const syl of segmentThaiWordToSyllables(cleaned)) {
+    const s = syl.trim();
+    if (/^[\u0E01-\u0E4F]{3,}$/.test(s) && !COMMON_LYRIC_STOPWORDS.has(s)) {
+      tokens.add(s);
+    }
+  }
+  return Array.from(tokens);
+}
+
+function detectRepeatedContentWords(
+  cleanedLines: string[],
+  duplicateEndWords: string[],
+  options?: ValidateThaiLyricOptions
+): string[] {
+  if (cleanedLines.length < 2) return [];
+  const dupEndSet = new Set(duplicateEndWords.map((w) => w.trim()).filter(Boolean));
+  const ignoredAnchors = (options?.ignoredMotifTerms ?? [])
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
+  const allowIntentional = options?.allowIntentionalHookMotif === true;
+  const occurrencesByTerm = new Map<string, number[]>();
+
+  cleanedLines.forEach((line, barIdx) => {
+    const uniqueInBar = new Set(extractLineContentTokensForRepetition(line));
+    for (const term of uniqueInBar) {
+      if (dupEndSet.has(term)) continue;
+      if (ignoredAnchors.some((anchor) => anchor.includes(term) || term.includes(anchor))) {
+        continue;
+      }
+      const list = occurrencesByTerm.get(term) ?? [];
+      list.push(barIdx);
+      occurrencesByTerm.set(term, list);
+    }
+  });
+
+  const repeated: string[] = [];
+  const lastIdx = cleanedLines.length - 1;
+  for (const [term, indices] of occurrencesByTerm.entries()) {
+    if (indices.length < 2) continue;
+    // ยกเว้นการตั้งใจย้ำคำฮุค Bar 1 <-> Bar 4 สำหรับ catchy-earworm / asanee-chotikul
+    if (
+      allowIntentional &&
+      cleanedLines.length >= 4 &&
+      indices.length === 2 &&
+      indices[0] === 0 &&
+      indices[1] === lastIdx
+    ) {
+      continue;
+    }
+    repeated.push(term);
+  }
+  return repeated;
 }
 
 /**
@@ -1167,12 +1304,12 @@ export function getRhymeGroupIdForWord(word: string): string {
 }
 
 function extractTrailingWordToken(line: string): string {
-  const cleaned = line.trim().replace(/[\s,.;:!?'"()\[\]{}\/\\|~\-–—]+$/g, '');
+  const cleaned = line.trim().replace(/[\s,.;:!?'"()\[\]{}\/\\|~\-–—ๆ]+$/g, '');
   if (!cleaned) return '';
   if (typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function') {
     const seg = new Intl.Segmenter('th', { granularity: 'word' });
     const words = Array.from(seg.segment(cleaned))
-      .map((s) => s.segment.trim())
+      .map((s) => s.segment.trim().replace(/ๆ+$/g, ''))
       .filter((w) => /[\u0E01-\u0E2E]/.test(w) || /[a-zA-Z0-9]+/.test(w));
     if (words.length > 0) return words[words.length - 1];
   }
@@ -1198,8 +1335,8 @@ function resolveDefaultSyllableBounds(options?: ValidateThaiLyricOptions): {
 }
 
 /**
- * ตรวจสอบความต่อเนื่องของสัมผัสกลอนเพลงไทยทุกวรรค (ส่งท้ายวรรคเข้าต้น/กลางวรรคถัดไป และสลับสระไม่ซ้ำคำเดิม)
- * พร้อมตรวจจำนวนพยางค์ต่อห้องตาม BPM
+ * ตรวจสอบความต่อเนื่องของสัมผัสกลอนเพลงไทยทุกวรรค (ส่งท้ายวรรคเข้าต้น/กลางวรรคถัดไป, AABB, ABAB และสลับสระไม่ซ้ำคำเดิม)
+ * พร้อมตรวจจำนวนพยางค์รายห้องตาม BPM และคำซ้ำเชิงความหมายภายในท่อนเดียวกัน
  */
 export function validateThaiLyricCouplets(
   lines: string[],
@@ -1210,8 +1347,13 @@ export function validateThaiLyricCouplets(
   const syllableCounts = cleaned.map((line) => countThaiEnglishSyllables(line));
   const { expectedMin, expectedMax } = resolveDefaultSyllableBounds(options);
   const outOfBudgetBars: OutOfBudgetBarReport[] = syllableCounts
-    .map((syllables, barIndex) => ({ barIndex, syllables, expectedMin, expectedMax }))
-    .filter((entry) => entry.syllables < expectedMin || entry.syllables > expectedMax);
+    .map((syllables, barIndex) => {
+      const slot = options?.barBudgets?.[barIndex];
+      const barMin = slot ? Math.max(1, Math.min(expectedMin, slot.min)) : expectedMin;
+      const barMax = Math.max(barMin, expectedMax);
+      return { barIndex, syllables, expectedMin: barMin, expectedMax: barMax };
+    })
+    .filter((entry) => entry.syllables < entry.expectedMin || entry.syllables > entry.expectedMax);
 
   const endGroupIds = cleaned.map((line) => classifyRhymeGroupId(line));
   const uniqueRhymeGroups = Array.from(
@@ -1228,6 +1370,7 @@ export function validateThaiLyricCouplets(
   const duplicateEndWords = Array.from(wordCounts.entries())
     .filter(([, count]) => count > 1)
     .map(([word]) => word);
+  const repeatedContentWords = detectRepeatedContentWords(cleaned, duplicateEndWords, options);
 
   if (cleaned.length < 2) {
     const budgetOk = options?.enforceSyllableBudget ? outOfBudgetBars.length === 0 : true;
@@ -1238,6 +1381,7 @@ export function validateThaiLyricCouplets(
       rhymeDensityScore: 100,
       chainContinuityRatio: 1,
       duplicateEndWords,
+      repeatedContentWords,
       uniqueRhymeGroups,
       hasVowelShift,
       syllableCounts,
@@ -1249,7 +1393,10 @@ export function validateThaiLyricCouplets(
   const getInternalGroupIds = (line: string): string[] => {
     const tokens = segmentThaiWordToSyllables(line).filter((seg) => /[\u0E01-\u0E2E]/.test(seg));
     const internalLimit = Math.min(6, Math.max(1, tokens.length - 1));
-    return tokens.slice(0, internalLimit).map((tok) => classifyRhymeGroupId(tok));
+    return tokens
+      .slice(0, internalLimit)
+      .filter((tok, idx) => !(idx >= 2 && UNSTRESSED_MIDLINE_FILLERS.has(tok)))
+      .map((tok) => classifyRhymeGroupId(tok));
   };
 
   const matchedPairs: ThaiLyricCoupletReport['matchedPairs'] = [];
@@ -1287,8 +1434,8 @@ export function validateThaiLyricCouplets(
   let linkedTransitions = 0;
 
   const allowFlexibleCouplets =
-    options?.allowCoupletOrAlternateRhyme === true ||
-    (typeof options?.maxSyllables === 'number' && options.maxSyllables <= 6);
+    options?.allowCoupletOrAlternateRhyme !== false &&
+    (options?.allowCoupletOrAlternateRhyme === true || expectedMax <= 8);
 
   for (let i = 0; i < cleaned.length - 1; i += 1) {
     const directAdjacent = matchedPairs.some((p) => p.fromBar === i && p.toBar === i + 1);
@@ -1323,10 +1470,47 @@ export function validateThaiLyricCouplets(
     rhymeDensityScore,
     chainContinuityRatio,
     duplicateEndWords,
+    repeatedContentWords,
     uniqueRhymeGroups,
     hasVowelShift,
     syllableCounts,
     outOfBudgetBars,
     linePhonetics,
   };
+}
+
+/**
+ * คำนวณคะแนนความบกพร่องรวมของเนื้อร้อง 1 ท่อน (ยิ่งต่ำยิ่งดี สำหรับ Non-Destructive Polish Gate)
+ */
+export function computeLyricQualityPenalty(report: ThaiLyricCoupletReport): number {
+  const overflowPenalty = (report.outOfBudgetBars ?? []).reduce(
+    (sum, b) => sum + Math.max(0, b.syllables - b.expectedMax),
+    0
+  );
+  const underflowPenalty = (report.outOfBudgetBars ?? []).reduce(
+    (sum, b) => sum + (b.syllables < b.expectedMin ? 1 : 0),
+    0
+  );
+  return (
+    (report.duplicateEndWords?.length ?? 0) * 4 +
+    report.weakPairs.length * 3 +
+    (report.repeatedContentWords?.length ?? 0) * 2 +
+    overflowPenalty +
+    underflowPenalty
+  );
+}
+
+/**
+ * ยอมรับผลจากรอบ Polish เฉพาะเมื่อทำให้อาการบกพร่องรวมดีขึ้นจริง (ไม่ยอมให้รอบเกลาพังงานเดิมของโมเดลหลัก)
+ */
+export function shouldAcceptPolishedSection(
+  originalReport: ThaiLyricCoupletReport,
+  candidateReport: ThaiLyricCoupletReport
+): boolean {
+  const origPenalty = computeLyricQualityPenalty(originalReport);
+  const candPenalty = computeLyricQualityPenalty(candidateReport);
+  return (
+    candPenalty < origPenalty ||
+    (candPenalty === origPenalty && candidateReport.passed && !originalReport.passed)
+  );
 }

@@ -1,9 +1,11 @@
 import {
   analyzeThaiSyllablePhonetics,
   countThaiEnglishSyllables,
+  shouldAcceptPolishedSection,
   validateThaiLyricCouplets,
   type ThaiLyricCoupletReport,
   type ThaiSyllablePhonetics,
+  type ValidateThaiLyricOptions,
 } from '@/lib/thaiRhymeHelper';
 import {
   buildLyricsSystemPrompt,
@@ -965,26 +967,49 @@ export async function POST(request: Request): Promise<Response> {
       lyricDensity,
     });
 
+    const lockedAnchors = Array.from(
+      new Set(
+        [
+          ...(sectionAnchorPhrase ? [sectionAnchorPhrase.trim()] : []),
+          ...(storyBlueprint?.openingAnchor ? [storyBlueprint.openingAnchor.trim()] : []),
+          ...(storyBlueprint?.hookAnchor ? [storyBlueprint.hookAnchor.trim()] : []),
+          ...(storyBlueprint?.closingAnchor ? [storyBlueprint.closingAnchor.trim()] : []),
+        ].filter(Boolean)
+      )
+    );
+    const allowIntentionalHookMotif =
+      emotionalResolution === 'catchy-earworm' || songwriterStyle === 'asanee-chotikul';
+    const sectionValidationOpts: ValidateThaiLyricOptions = {
+      bpm,
+      timeSignature,
+      sectionType,
+      minSyllables: sectionBudget.min,
+      maxSyllables: sectionBudget.max,
+      ...(sectionBudget.barBudgets ? { barBudgets: sectionBudget.barBudgets } : {}),
+      enforceSyllableBudget: true,
+      allowCoupletOrAlternateRhyme: true,
+      ignoredMotifTerms: lockedAnchors,
+      allowIntentionalHookMotif,
+    };
+
     let rhymeValidation = validateThaiLyricCouplets(
       lines.map((l) => l.text),
-      {
-        bpm,
-        timeSignature,
-        sectionType,
-        minSyllables: sectionBudget.min,
-        maxSyllables: sectionBudget.max,
-        enforceSyllableBudget: true,
-      }
+      sectionValidationOpts
     );
 
-    // Phase 9D: 1-Pass LITE Auto-Trim เมื่อพบห้องที่พยางค์ล้นเพดาน expectedMax เพื่อไม่ให้ร้องรัว
+    let totalUsage = gemini.usage;
+
+    // Phase 9D + 10: 1-Pass Polish/Trim เมื่อพยางค์ล้น คำซ้ำ หรือสัมผัสขาด พร้อม Non-Destructive Acceptance Gate
     let wasAutoTrimmed = false;
     const overflowBars = (rhymeValidation.outOfBudgetBars ?? []).filter(
       (b) => b.syllables > b.expectedMax
     );
+    const needsPolishPass =
+      overflowBars.length > 0 ||
+      (rhymeValidation.duplicateEndWords?.length ?? 0) > 0 ||
+      (rhymeValidation.repeatedContentWords?.length ?? 0) > 0;
     const remainingBudgetMs = Math.max(0, 48_000 - (Date.now() - routeStartedAt));
-    if (overflowBars.length > 0 && remainingBudgetMs >= 4_500) {
-      const lockedAnchors = sectionAnchorPhrase ? [sectionAnchorPhrase] : [];
+    if (needsPolishPass && remainingBudgetMs >= 4_500) {
       const trimPrompt = buildRhymePolishPrompt(
         [
           {
@@ -994,6 +1019,7 @@ export async function POST(request: Request): Promise<Response> {
             chords: lines.map((l) => l.chord),
             lines: lines.map((l) => l.text),
             duplicateEndWords: rhymeValidation.duplicateEndWords,
+            repeatedContentWords: rhymeValidation.repeatedContentWords,
             weakPairs: rhymeValidation.weakPairs,
             outOfBudgetBars: overflowBars,
             expectedMin: sectionBudget.min,
@@ -1013,18 +1039,29 @@ export async function POST(request: Request): Promise<Response> {
       const trimRes = await callGeminiJson<{
         polishedSections?: Array<{ lines?: string[] }>;
       }>(trimPrompt, {
-        model: GEMINI_MODEL_LITE,
+        model: mode === 'deep' ? GEMINI_MODEL_FLASH : GEMINI_MODEL_LITE,
+        fallbackModels: mode === 'deep' ? [GEMINI_MODEL_LITE] : undefined,
         systemInstruction:
-          'คุณคือบรรณาธิการคำร้องไทย ย่อเฉพาะวรรคที่พยางค์เกินงบให้กระชับร้องมีลมหายใจโดยคงความหมายและสัมผัสเดิม (ห้ามลบคำหมุดหมายของผู้ใช้)',
+          'คุณคือบรรณาธิการคำร้องไทย แก้เฉพาะวรรคที่พยางค์เกินงบ คำซ้ำ หรือสัมผัสไม่ลื่นให้เป็นภาษาพูดไทยธรรมชาติ (ห้ามกลับคำเป็น Yoda, ห้ามประดิษฐ์คำแปลก, ใช้ AABB หรือ ABAB ได้) โดยคงความหมายและคำหมุดหมายของผู้ใช้ไว้ครบ',
         responseSchema: RHYME_POLISH_RESPONSE_SCHEMA,
         maxOutputTokens: 1024,
         thinkingLevel: 'low',
-        timeoutMs: Math.min(8_000, remainingBudgetMs),
+        timeoutMs: Math.min(mode === 'deep' ? 10_000 : 8_000, remainingBudgetMs),
       });
+
+      if (trimRes.ok) {
+        totalUsage = {
+          inputTokens: totalUsage.inputTokens + trimRes.usage.inputTokens,
+          cachedTokens: totalUsage.cachedTokens + trimRes.usage.cachedTokens,
+          outputTokens: totalUsage.outputTokens + trimRes.usage.outputTokens,
+          thoughtTokens: totalUsage.thoughtTokens + trimRes.usage.thoughtTokens,
+          totalTokens: totalUsage.totalTokens + trimRes.usage.totalTokens,
+        };
+      }
 
       const trimmedRawLines = trimRes.ok ? trimRes.data.polishedSections?.[0]?.lines : undefined;
       if (Array.isArray(trimmedRawLines) && trimmedRawLines.length > 0) {
-        lines = lines.map((orig, idx) => {
+        const mergedTexts = lines.map((orig, idx) => {
           const candidate =
             typeof trimmedRawLines[idx] === 'string' && trimmedRawLines[idx].trim()
               ? trimmedRawLines[idx].trim()
@@ -1033,29 +1070,25 @@ export async function POST(request: Request): Promise<Response> {
             sectionAnchorPhrase &&
             orig.text.includes(sectionAnchorPhrase) &&
             !candidate.includes(sectionAnchorPhrase);
-          const nextText = lostAnchor ? orig.text : candidate;
-          if (nextText !== orig.text) {
-            wasAutoTrimmed = true;
-          }
-          return {
-            ...orig,
-            text: nextText,
-            syllables: countThaiEnglishSyllables(nextText),
-            phonetics: analyzeThaiSyllablePhonetics(nextText),
-          };
+          return lostAnchor ? orig.text : candidate;
         });
 
-        rhymeValidation = validateThaiLyricCouplets(
-          lines.map((l) => l.text),
-          {
-            bpm,
-            timeSignature,
-            sectionType,
-            minSyllables: sectionBudget.min,
-            maxSyllables: sectionBudget.max,
-            enforceSyllableBudget: true,
-          }
-        );
+        const candidateValidation = validateThaiLyricCouplets(mergedTexts, sectionValidationOpts);
+        if (shouldAcceptPolishedSection(rhymeValidation, candidateValidation)) {
+          lines = lines.map((orig, idx) => {
+            const nextText = mergedTexts[idx];
+            if (nextText !== orig.text) {
+              wasAutoTrimmed = true;
+            }
+            return {
+              ...orig,
+              text: nextText,
+              syllables: countThaiEnglishSyllables(nextText),
+              phonetics: analyzeThaiSyllablePhonetics(nextText),
+            };
+          });
+          rhymeValidation = candidateValidation;
+        }
       }
     }
 
@@ -1118,7 +1151,7 @@ export async function POST(request: Request): Promise<Response> {
       suggestedChords: suggestedChords.length > 0 ? suggestedChords : lines.map((l) => l.chord),
       rhymeValidation,
       ...(melodyNotesPerBar ? { melodyNotesPerBar } : {}),
-      usage: gemini.usage,
+      usage: totalUsage,
       ...(billing.active ? { wallet: billing.wallet } : {}),
     };
     await recordServerFeatureEvent(
