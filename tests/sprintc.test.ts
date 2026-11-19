@@ -180,7 +180,7 @@ test('Sprint C-3 sanitizeArchitectSongProject converts slow-ballad (<78 BPM) bre
 
   const root = process.cwd();
   const architectSrc = fs.readFileSync(path.join(root, 'src/app/api/advance/architect/route.ts'), 'utf8');
-  assert.match(architectSrc, /selectPrioritySectionsForPolish\(evaluatedSections,\s*3\)/);
+  assert.match(architectSrc, /selectPrioritySectionsForPolish\(\s*evaluatedSections,\s*Math\.min\(5,\s*evaluatedSections\.length\)\s*\)/);
   assert.match(architectSrc, /const recheckFailed[\s\S]*minSyllables:\s*budget\.min,\s*maxSyllables:\s*budget\.max/);
 });
 

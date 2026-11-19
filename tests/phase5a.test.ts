@@ -83,19 +83,20 @@ test('aiPrompts: syllable budget, anti-cliche rules, few-shot context, and schem
   assert.ok(slow.min >= 4 && slow.max <= 8);
 
   const waltzSlow = getSyllableBudgetForBpm(68, '3/4');
-  assert.equal(waltzSlow.max, 7);
+  assert.equal(waltzSlow.min, 4);
+  assert.equal(waltzSlow.max, 5);
 
   const medium = getSyllableBudgetForBpm(95, '4/4');
   assert.equal(medium.tempoFeel, 'medium');
-  assert.equal(medium.min, 7);
-  assert.equal(medium.max, 11);
+  assert.equal(medium.min, 5);
+  assert.equal(medium.max, 7);
 
   const fast = getSyllableBudgetForBpm(136, '4/4');
   assert.equal(fast.tempoFeel, 'fast');
-  assert.ok(fast.max <= 12);
+  assert.ok(fast.max <= 7);
 
   const lyricSys = buildLyricsSystemPrompt({ bpm: 74, timeSignature: '4/4', sectionType: 'chorus' });
-  assert.ok(lyricSys.includes('5-8 พยางค์'));
+  assert.ok(lyricSys.includes('4-6 พยางค์'));
   assert.ok(lyricSys.includes('Hook'));
   for (const banned of ANTI_CLICHE_THAI_PHRASES.slice(0, 3)) {
     assert.ok(lyricSys.includes(banned));

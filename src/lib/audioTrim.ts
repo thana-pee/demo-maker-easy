@@ -1058,7 +1058,7 @@ export function alignAndFitVocalPhrasesToBars(
 
   const outSamples = Math.max(1, Math.floor(targetSpanSec * 0.992 * sampleRate));
   const outChannels: Float32Array[] = channels.map(() => new Float32Array(outSamples));
-  const breathReserveSec = Math.min(0.26, Math.max(0.14, barSec * 0.1));
+  const breathReserveSec = Math.min(0.45, Math.max(0.22, barSec * 0.16));
   const maxPhraseSec = Math.max(0.5, barSec - breathReserveSec);
   const hardMaxSamples = Math.max(1, Math.floor((barSec - 0.04) * sampleRate));
   const fadeInSamples = Math.max(1, Math.floor(0.015 * sampleRate));
@@ -1084,16 +1084,16 @@ export function alignAndFitVocalPhrasesToBars(
     if (phraseDur > maxPhraseSec) {
       const paused = compressChannelsInternalPauses(phraseChannels, sampleRate, maxPhraseSec, {
         minPauseMs: 140,
-        keepPauseMs: 85,
+        keepPauseMs: 120,
       });
       phraseChannels = paused.channels;
       phraseDur = (phraseChannels[0]?.length ?? 0) / sampleRate;
     }
 
     if (phraseDur > maxPhraseSec) {
-      const ratio = Math.min(1.24, Math.max(1.0, phraseDur / maxPhraseSec));
+      const ratio = Math.min(1.18, Math.max(1.0, phraseDur / maxPhraseSec));
       phraseChannels = timeScaleChannelsPitchPreserving(phraseChannels, sampleRate, ratio, {
-        maxSpeedRatio: 1.24,
+        maxSpeedRatio: 1.18,
       });
     }
 

@@ -8,10 +8,12 @@ import {
 import {
   buildLyricsSystemPrompt,
   buildLyricsUserPrompt,
+  buildRhymePolishPrompt,
   buildSingleBarVariationsUserPrompt,
   getSyllableBudgetForBpm,
   LYRICS_DEEP_RESPONSE_SCHEMA,
   LYRICS_RESPONSE_SCHEMA,
+  RHYME_POLISH_RESPONSE_SCHEMA,
   SINGLE_BAR_VARIATIONS_SCHEMA,
 } from '@/lib/aiPrompts';
 import {
@@ -38,10 +40,16 @@ import {
   buildSimulatedSingleBarVariations,
   buildStyledSimulatedSongLyrics,
   clampMelodyNotesForBar,
+  getStepsGridForTimeSignature,
+  getVocalRegisterShift,
+  type GuideMelodyContext,
+  type VocalProfile,
 } from '@/lib/songArchitect';
 import type {
+  LyricDensityMode,
   MelodyNote,
   SectionType,
+  StoryBlueprintInput,
   ThaiEmotionalResolution,
   ThaiLyricDialect,
   ThaiLyricEra,
@@ -74,10 +82,15 @@ export interface AdvanceLyricsRequestBody {
   lyricDialect?: ThaiLyricDialect;
   songwriterStyle?: ThaiSongwriterStyle;
   emotionalResolution?: ThaiEmotionalResolution;
+  lyricDensity?: LyricDensityMode;
+  baseKey?: string;
+  vocalProfile?: VocalProfile;
   songTitle?: string;
   allPriorSections?: Array<{ name: string; type: string; lyrics: string[] }>;
   polishExistingDraft?: boolean;
   singleBarIndex?: number;
+  sectionAnchorPhrase?: string;
+  storyBlueprint?: StoryBlueprintInput;
 }
 
 export interface AdvanceLyricLine {
@@ -157,6 +170,7 @@ function buildSimulatedLyrics(
     lyricDialect: body.lyricDialect,
     songwriterStyle: body.songwriterStyle,
     emotionalResolution: body.emotionalResolution,
+    lyricDensity: body.lyricDensity,
   });
 
   const primaryPool =
@@ -188,6 +202,16 @@ function buildSimulatedLyrics(
     phonetics: analyzeThaiSyllablePhonetics(text),
   }));
 
+  const simMelodyCtx: GuideMelodyContext = {
+    baseKey: body.baseKey || 'C',
+    timeSignature: body.timeSignature || '4/4',
+    bpm: body.bpm || 85,
+    vocalProfile: body.vocalProfile,
+    thaiGenre: body.thaiGenre,
+    songwriterStyle: body.songwriterStyle,
+    lyricDensity: body.lyricDensity,
+  };
+
   const melodyNotesPerBar: MelodyNote[][] | undefined =
     body.mode === 'deep'
       ? lines.map((line, idx) =>
@@ -196,7 +220,8 @@ function buildSimulatedLyrics(
             idx,
             line.text,
             body.bars?.[idx]?.chordsPerBar === 2 ? body.bars[idx].chord2 : undefined,
-            body.sectionType
+            body.sectionType,
+            simMelodyCtx
           )
         )
       : undefined;
@@ -320,7 +345,10 @@ async function handleSingleBarVariations(
       lyricDialect: body.lyricDialect,
       songwriterStyle: body.songwriterStyle,
       emotionalResolution: body.emotionalResolution,
+      lyricDensity: body.lyricDensity,
       polishExistingDraft: Boolean(existingBarText),
+      hasStoryBlueprint: Boolean(body.storyBlueprint),
+      hasSectionAnchor: Boolean(body.sectionAnchorPhrase),
     });
 
     const userPrompt = buildSingleBarVariationsUserPrompt({
@@ -340,8 +368,11 @@ async function handleSingleBarVariations(
       lyricDialect: body.lyricDialect,
       songwriterStyle: body.songwriterStyle,
       emotionalResolution: body.emotionalResolution,
+      lyricDensity: body.lyricDensity,
       songTitle: body.songTitle,
       singleBarIndex,
+      sectionAnchorPhrase: body.sectionAnchorPhrase,
+      storyBlueprint: body.storyBlueprint,
     });
 
     const gemini = await callGeminiJson<GeminiLyricsPayload>(userPrompt, {
@@ -651,6 +682,35 @@ export async function POST(request: Request): Promise<Response> {
     typeof obj.emotionalResolution === 'string'
       ? (obj.emotionalResolution as ThaiEmotionalResolution)
       : undefined;
+  const lyricDensity: LyricDensityMode | undefined =
+    obj.lyricDensity === 'airy' || obj.lyricDensity === 'balanced' || obj.lyricDensity === 'dense'
+      ? obj.lyricDensity
+      : undefined;
+  const baseKey =
+    typeof obj.baseKey === 'string' && /^[A-G][#b]?m?$/.test(obj.baseKey.trim())
+      ? obj.baseKey.trim()
+      : 'C';
+  const vocalProfile: VocalProfile =
+    obj.vocalProfile === 'female' || obj.vocalProfile === 'male' ? obj.vocalProfile : 'neutral';
+  const sectionAnchorPhrase =
+    typeof obj.sectionAnchorPhrase === 'string' && obj.sectionAnchorPhrase.trim()
+      ? obj.sectionAnchorPhrase.trim().slice(0, 140)
+      : undefined;
+  const rawSb =
+    obj.storyBlueprint && typeof obj.storyBlueprint === 'object'
+      ? (obj.storyBlueprint as Record<string, unknown>)
+      : undefined;
+  const storyBlueprint: StoryBlueprintInput | undefined = rawSb
+    ? {
+        ...(typeof rawSb.storyArcPreset === 'string' ? { storyArcPreset: rawSb.storyArcPreset } : {}),
+        ...(typeof rawSb.customEmotionalArc === 'string' ? { customEmotionalArc: rawSb.customEmotionalArc } : {}),
+        ...(typeof rawSb.openingAnchor === 'string' ? { openingAnchor: rawSb.openingAnchor } : {}),
+        ...(typeof rawSb.hookAnchor === 'string'
+          ? { hookAnchor: rawSb.hookAnchor, hookAnchorMode: rawSb.hookAnchorMode === 'exact' ? 'exact' : 'flexible' }
+          : {}),
+        ...(typeof rawSb.closingAnchor === 'string' ? { closingAnchor: rawSb.closingAnchor } : {}),
+      }
+    : undefined;
   const songTitle = typeof obj.songTitle === 'string' ? obj.songTitle.trim() : undefined;
   const polishExistingDraft = Boolean(obj.polishExistingDraft);
   const allPriorSections = Array.isArray(obj.allPriorSections)
@@ -682,15 +742,22 @@ export async function POST(request: Request): Promise<Response> {
     lyricDialect,
     songwriterStyle,
     emotionalResolution,
+    lyricDensity,
+    baseKey,
+    vocalProfile,
     songTitle,
     allPriorSections,
     polishExistingDraft,
+    ...(sectionAnchorPhrase ? { sectionAnchorPhrase } : {}),
+    ...(storyBlueprint ? { storyBlueprint } : {}),
     ...(singleBarIndex !== undefined ? { singleBarIndex } : {}),
   };
 
   if (singleBarIndex !== undefined) {
     return handleSingleBarVariations(request, payload, singleBarIndex);
   }
+
+  const routeStartedAt = Date.now();
 
   const targetModel = mode === 'deep' ? GEMINI_MODEL_MAIN : GEMINI_MODEL_LITE;
   const fallbackModels =
@@ -727,7 +794,10 @@ export async function POST(request: Request): Promise<Response> {
       lyricDialect,
       songwriterStyle,
       emotionalResolution,
+      lyricDensity,
       polishExistingDraft,
+      hasStoryBlueprint: Boolean(storyBlueprint),
+      hasSectionAnchor: Boolean(sectionAnchorPhrase),
     });
     const userPrompt = buildLyricsUserPrompt({
       mood,
@@ -751,9 +821,12 @@ export async function POST(request: Request): Promise<Response> {
       lyricDialect,
       songwriterStyle,
       emotionalResolution,
+      lyricDensity,
       songTitle,
       allPriorSections,
       polishExistingDraft,
+      sectionAnchorPhrase,
+      storyBlueprint,
     });
 
     const gemini = await callGeminiJson<GeminiLyricsPayload>(userPrompt, {
@@ -875,7 +948,7 @@ export async function POST(request: Request): Promise<Response> {
       : [];
 
     const chords = chordProgression.length > 0 ? chordProgression : ['C', 'G', 'Am', 'F'];
-    const lines: AdvanceLyricLine[] = rawLines.slice(0, expectedBars).map((text, idx) => {
+    let lines: AdvanceLyricLine[] = rawLines.slice(0, expectedBars).map((text, idx) => {
       const cleanText = text.trim();
       return {
         chord: bars?.[idx]?.chord || chords[idx % chords.length],
@@ -885,6 +958,107 @@ export async function POST(request: Request): Promise<Response> {
       };
     });
 
+    const sectionBudget = getSyllableBudgetForBpm(bpm, timeSignature, {
+      sectionType,
+      songwriterStyle,
+      thaiGenre,
+      lyricDensity,
+    });
+
+    let rhymeValidation = validateThaiLyricCouplets(
+      lines.map((l) => l.text),
+      {
+        bpm,
+        timeSignature,
+        sectionType,
+        minSyllables: sectionBudget.min,
+        maxSyllables: sectionBudget.max,
+        enforceSyllableBudget: true,
+      }
+    );
+
+    // Phase 9D: 1-Pass LITE Auto-Trim เมื่อพบห้องที่พยางค์ล้นเพดาน expectedMax เพื่อไม่ให้ร้องรัว
+    let wasAutoTrimmed = false;
+    const overflowBars = (rhymeValidation.outOfBudgetBars ?? []).filter(
+      (b) => b.syllables > b.expectedMax
+    );
+    const remainingBudgetMs = Math.max(0, 48_000 - (Date.now() - routeStartedAt));
+    if (overflowBars.length > 0 && remainingBudgetMs >= 4_500) {
+      const lockedAnchors = sectionAnchorPhrase ? [sectionAnchorPhrase] : [];
+      const trimPrompt = buildRhymePolishPrompt(
+        [
+          {
+            sectionId: sectionType,
+            sectionName: sectionType,
+            sectionType,
+            chords: lines.map((l) => l.chord),
+            lines: lines.map((l) => l.text),
+            duplicateEndWords: rhymeValidation.duplicateEndWords,
+            weakPairs: rhymeValidation.weakPairs,
+            outOfBudgetBars: overflowBars,
+            expectedMin: sectionBudget.min,
+            expectedMax: sectionBudget.max,
+          },
+        ],
+        bpm,
+        {
+          timeSignature,
+          songwriterStyle,
+          thaiGenre,
+          lyricDensity,
+          lockedAnchors,
+        }
+      );
+
+      const trimRes = await callGeminiJson<{
+        polishedSections?: Array<{ lines?: string[] }>;
+      }>(trimPrompt, {
+        model: GEMINI_MODEL_LITE,
+        systemInstruction:
+          'คุณคือบรรณาธิการคำร้องไทย ย่อเฉพาะวรรคที่พยางค์เกินงบให้กระชับร้องมีลมหายใจโดยคงความหมายและสัมผัสเดิม (ห้ามลบคำหมุดหมายของผู้ใช้)',
+        responseSchema: RHYME_POLISH_RESPONSE_SCHEMA,
+        maxOutputTokens: 1024,
+        thinkingLevel: 'low',
+        timeoutMs: Math.min(8_000, remainingBudgetMs),
+      });
+
+      const trimmedRawLines = trimRes.ok ? trimRes.data.polishedSections?.[0]?.lines : undefined;
+      if (Array.isArray(trimmedRawLines) && trimmedRawLines.length > 0) {
+        lines = lines.map((orig, idx) => {
+          const candidate =
+            typeof trimmedRawLines[idx] === 'string' && trimmedRawLines[idx].trim()
+              ? trimmedRawLines[idx].trim()
+              : orig.text;
+          const lostAnchor =
+            sectionAnchorPhrase &&
+            orig.text.includes(sectionAnchorPhrase) &&
+            !candidate.includes(sectionAnchorPhrase);
+          const nextText = lostAnchor ? orig.text : candidate;
+          if (nextText !== orig.text) {
+            wasAutoTrimmed = true;
+          }
+          return {
+            ...orig,
+            text: nextText,
+            syllables: countThaiEnglishSyllables(nextText),
+            phonetics: analyzeThaiSyllablePhonetics(nextText),
+          };
+        });
+
+        rhymeValidation = validateThaiLyricCouplets(
+          lines.map((l) => l.text),
+          {
+            bpm,
+            timeSignature,
+            sectionType,
+            minSyllables: sectionBudget.min,
+            maxSyllables: sectionBudget.max,
+            enforceSyllableBudget: true,
+          }
+        );
+      }
+    }
+
     const summaryTip =
       rhymeNotes.length > 0
         ? rhymeNotes.join(' • ')
@@ -892,34 +1066,45 @@ export async function POST(request: Request): Promise<Response> {
           ? gemini.data.tip.trim()
           : `สร้างโดย ${gemini.modelUsed} ให้เข้ากับคอร์ดและจังหวะ ${bpm} BPM แล้ว`;
 
+    const { totalSteps: gridTotalSteps, stepsPerBeat: gridStepsPerBeat } =
+      getStepsGridForTimeSignature(timeSignature);
+    const vocalRegisterShift = getVocalRegisterShift(vocalProfile);
+
     let melodyNotesPerBar: MelodyNote[][] | undefined;
     if (mode === 'deep') {
       const rawGroups = Array.isArray(gemini.data.melodyNotesPerBar)
         ? gemini.data.melodyNotesPerBar
         : [];
+      const isOddMeter = timeSignature === '3/4' || timeSignature === '6/8';
       melodyNotesPerBar = lines.map((line, idx) => {
         const clamped = clampMelodyNotesForBar(rawGroups[idx]);
         const chord2 = bars?.[idx]?.chordsPerBar === 2 ? bars[idx].chord2 : undefined;
-        if (clamped.length > 0) {
+        const rawExceedsOddMeter =
+          isOddMeter &&
+          clamped.some(
+            (n) => n.step >= gridTotalSteps || n.step + n.durationSteps > gridTotalSteps
+          );
+        if (clamped.length > 0 && !wasAutoTrimmed && !rawExceedsOddMeter) {
           return clamped;
         }
         return generateLyricAlignedGuideMelody({
           lyrics: line.text,
           chord1: line.chord,
           chord2,
-          totalSteps: 16,
-          stepsPerBeat: 4,
+          baseKey,
+          totalSteps: gridTotalSteps,
+          stepsPerBeat: gridStepsPerBeat,
+          vocalRegisterShift,
           barIndex: idx,
           sectionType,
+          bpm,
+          timeSignature,
+          thaiGenre,
+          songwriterStyle,
+          lyricDensity,
         });
       });
     }
-
-    const sectionBudget = getSyllableBudgetForBpm(bpm, timeSignature, {
-      sectionType,
-      songwriterStyle,
-      thaiGenre,
-    });
 
     const result: AdvanceLyricsResponseBody = {
       isSimulated: false,
@@ -931,16 +1116,7 @@ export async function POST(request: Request): Promise<Response> {
       tip: summaryTip,
       rhymeNotes,
       suggestedChords: suggestedChords.length > 0 ? suggestedChords : lines.map((l) => l.chord),
-      rhymeValidation: validateThaiLyricCouplets(
-        lines.map((l) => l.text),
-        {
-          bpm,
-          timeSignature,
-          minSyllables: sectionBudget.min,
-          maxSyllables: sectionBudget.max,
-          enforceSyllableBudget: true,
-        }
-      ),
+      rhymeValidation,
       ...(melodyNotesPerBar ? { melodyNotesPerBar } : {}),
       usage: gemini.usage,
       ...(billing.active ? { wallet: billing.wallet } : {}),

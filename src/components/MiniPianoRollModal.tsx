@@ -17,6 +17,7 @@ import {
 import { analyzeThaiSyllablePhonetics } from '@/lib/thaiRhymeHelper';
 import { transposeChord } from '@/lib/chordUtils';
 import { getAudioEngine } from '@/lib/audioEngine';
+import { getVocalRegisterShift } from '@/lib/songArchitect';
 import { useLanguage } from '@/context/LanguageContext';
 import {
   CREDIT_COST_TABLE,
@@ -295,9 +296,15 @@ export const MiniPianoRollModal: React.FC<MiniPianoRollModalProps> = ({
             baseKey: effectiveKey,
             totalSteps: effectiveTotalSteps,
             stepsPerBeat: effectiveStepsPerBeat,
+            vocalRegisterShift: getVocalRegisterShift(song.easyConfig?.vocalProfile),
             pattern: guidePattern,
             barIndex: globalBarIndex,
             sectionType: section.type,
+            bpm: song.bpm,
+            timeSignature: song.timeSignature,
+            thaiGenre: song.thaiGenre,
+            songwriterStyle: song.songwriterStyle,
+            lyricDensity: song.lyricDensity ?? song.easyConfig?.lyricDensity,
           })
         : generateChordGuideMelodyNotes({
             chord1,

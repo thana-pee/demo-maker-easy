@@ -46,6 +46,37 @@ export type ThaiEmotionalResolution =
   | 'catchy-earworm'
   | 'nostalgic-fade';
 
+export type LyricDensityMode = 'airy' | 'balanced' | 'dense';
+
+export type VocalPhrasingProfile =
+  | 'lyrical-sustain'
+  | 'conversational-pop'
+  | 'punchy-hook'
+  | 'rock-anthem'
+  | 'groove-bounce'
+  | 'burst-pocket';
+
+export type StoryAnchorMode = 'exact' | 'flexible';
+
+export interface StoryBlueprintInput {
+  storyArcPreset?: string;
+  customEmotionalArc?: string;
+  openingAnchor?: string;
+  hookAnchor?: string;
+  hookAnchorMode?: StoryAnchorMode;
+  closingAnchor?: string;
+}
+
+export interface StoryBlueprintSummary {
+  coreTheme: string;
+  emotionalArcSummary: string;
+  sectionBeats?: Array<{
+    sectionType: string;
+    beatGoal: string;
+    imageryKeywords?: string[];
+  }>;
+}
+
 export interface SongSnapshot {
   id: string;
   name: string;
@@ -179,10 +210,13 @@ export interface SongProject {
   lyricDialect?: ThaiLyricDialect;     // กลิ่นอายภาษาถิ่น (กลาง/เหนือ/อีสาน/สุพรรณ/ใต้)
   songwriterStyle?: ThaiSongwriterStyle; // แรงบันดาลใจสไตล์นักแต่งเพลง
   emotionalResolution?: ThaiEmotionalResolution; // รูปแบบการปิดอารมณ์ท่อนจบ / พลังท่อนฮุค
+  lyricDensity?: LyricDensityMode;       // ระดับความโปร่ง-แน่นของคำร้อง (Phase 9)
   easyConfig?: {                       // ข้อมูลตั้งต้นจาก Easy Mode AI Architect (Phase 5B)
     stylePreset: string;
     vocalProfile: 'female' | 'male' | 'neutral';
     tempoFeel: 'slow' | 'medium' | 'fast';
+    lyricDensity?: LyricDensityMode;
+    storyBlueprint?: StoryBlueprintInput;
     generatedAt?: string;
   };
 }
@@ -204,6 +238,8 @@ export interface EasyArchitectInput {
   lyricDialect?: ThaiLyricDialect;
   songwriterStyle?: ThaiSongwriterStyle;
   emotionalResolution?: ThaiEmotionalResolution;
+  lyricDensity?: LyricDensityMode;
+  storyBlueprint?: StoryBlueprintInput;
   customStructure?: Array<{ type: SectionType; bars: number; name?: string }>;
   chordProgressionPreset?: string;
   customChords?: string[];

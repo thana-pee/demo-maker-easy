@@ -7,6 +7,7 @@ import {
   SongSection,
   MelodyNote,
   AppViewMode,
+  LyricDensityMode,
   ThaiSongGenre,
   ThaiLyricEra,
   ThaiLyricDialect,
@@ -442,6 +443,7 @@ export default function Home() {
     initialMode?: 'quick' | 'deep';
     initialTab?: 'rhyme' | 'ai-lyrics' | 'ai-director' | 'wallet';
     initialTopic?: string;
+    initialAnchorPhrase?: string;
   }>({
     isOpen: false,
     targetSection: null,
@@ -994,6 +996,7 @@ export default function Home() {
       lyricDialect?: ThaiLyricDialect;
       songwriterStyle?: ThaiSongwriterStyle;
       emotionalResolution?: ThaiEmotionalResolution;
+      lyricDensity?: LyricDensityMode;
     }) => {
       if (meta.songwriterStyle && meta.songwriterStyle !== 'none') {
         trackUsageEvent({
@@ -1092,6 +1095,7 @@ export default function Home() {
           initialMode: 'quick',
           initialTab: 'ai-lyrics',
           initialTopic: combinedTopic,
+          ...(config.anchorPhrase ? { initialAnchorPhrase: config.anchorPhrase } : {}),
           targetSection: {
             sectionId: newSection.id,
             sectionName: newSection.name,
@@ -1553,6 +1557,7 @@ export default function Home() {
           initialMode={advanceModalState.initialMode}
           initialTab={advanceModalState.initialTab}
           initialTopic={advanceModalState.initialTopic}
+          initialAnchorPhrase={advanceModalState.initialAnchorPhrase}
           cloudUser={cloudUser}
           onOpenAccountModal={() => setIsAccountModalOpen(true)}
           onCreditsChange={setCreditBalance}

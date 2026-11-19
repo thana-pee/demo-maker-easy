@@ -11,6 +11,7 @@ import type {
   GuitarStyle,
   LeadGuitarDrive,
   LeadGuitarStyle,
+  LyricDensityMode,
   MelodyNote,
   MelodySound,
   PianoStyle,
@@ -19,6 +20,7 @@ import type {
   SongBar,
   SongProject,
   SongSection,
+  StoryBlueprintInput,
   StringGauge,
   ThaiEmotionalResolution,
   ThaiLyricDialect,
@@ -60,6 +62,8 @@ export interface EasyArchitectInput {
   lyricDialect?: ThaiLyricDialect;
   songwriterStyle?: ThaiSongwriterStyle;
   emotionalResolution?: ThaiEmotionalResolution;
+  lyricDensity?: LyricDensityMode;
+  storyBlueprint?: StoryBlueprintInput;
   customStructure?: Array<{ type: SectionType; bars: number; name?: string }>;
   chordProgressionPreset?: string;
   customChords?: string[];
@@ -314,22 +318,58 @@ export function clampMelodyNotesForBar(rawNotes: unknown): MelodyNote[] {
   return sanitized.sort((a, b) => a.step - b.step);
 }
 
+export interface GuideMelodyContext {
+  baseKey?: string;
+  timeSignature?: TimeSignature;
+  bpm?: number;
+  vocalProfile?: VocalProfile;
+  thaiGenre?: ThaiSongGenre;
+  songwriterStyle?: ThaiSongwriterStyle;
+  lyricDensity?: LyricDensityMode;
+}
+
+export function getVocalRegisterShift(vocalProfile?: VocalProfile): number {
+  if (vocalProfile === 'female') return 3;
+  if (vocalProfile === 'male') return -4;
+  return 0;
+}
+
+export function getStepsGridForTimeSignature(timeSignature?: TimeSignature): {
+  totalSteps: number;
+  stepsPerBeat: number;
+} {
+  if (timeSignature === '6/8') return { totalSteps: 12, stepsPerBeat: 2 };
+  if (timeSignature === '3/4') return { totalSteps: 12, stepsPerBeat: 4 };
+  return { totalSteps: 16, stepsPerBeat: 4 };
+}
+
 export function buildDiatonicGuideNotesForChord(
   chord: string,
   offsetIdx: number,
   lyrics?: string,
   chord2?: string,
-  sectionType?: SectionType
+  sectionType?: SectionType,
+  ctx?: GuideMelodyContext
 ): MelodyNote[] {
+  const { totalSteps, stepsPerBeat } = getStepsGridForTimeSignature(ctx?.timeSignature);
+  const vocalRegisterShift = getVocalRegisterShift(ctx?.vocalProfile);
+
   if (lyrics && lyrics.trim().length > 0) {
     return generateLyricAlignedGuideMelody({
       lyrics,
       chord1: chord,
       chord2,
-      totalSteps: 16,
-      stepsPerBeat: 4,
+      baseKey: ctx?.baseKey || 'C',
+      totalSteps,
+      stepsPerBeat,
+      vocalRegisterShift,
       barIndex: offsetIdx,
       sectionType,
+      bpm: ctx?.bpm,
+      timeSignature: ctx?.timeSignature,
+      thaiGenre: ctx?.thaiGenre,
+      songwriterStyle: ctx?.songwriterStyle,
+      lyricDensity: ctx?.lyricDensity,
     });
   }
 
@@ -340,10 +380,24 @@ export function buildDiatonicGuideNotesForChord(
     E: 64, F: 65, 'F#': 66, Gb: 66, G: 67, 'G#': 68, Ab: 68,
     A: 69, 'A#': 70, Bb: 70, B: 71,
   };
-  const rootMidi = rootMap[rootName] ?? 60;
+  const rootMidi = Math.max(48, Math.min(84, (rootMap[rootName] ?? 60) + vocalRegisterShift));
   const isMinor = /^[A-G][#b]?m(?!aj)/.test(chord);
   const thirdMidi = rootMidi + (isMinor ? 3 : 4);
   const fifthMidi = rootMidi + 7;
+
+  if (totalSteps === 12) {
+    return offsetIdx % 2 === 0
+      ? [
+          { step: 0, midiPitch: rootMidi, durationSteps: 4 },
+          { step: 4, midiPitch: thirdMidi, durationSteps: 4 },
+          { step: 8, midiPitch: fifthMidi, durationSteps: 4 },
+        ]
+      : [
+          { step: 0, midiPitch: fifthMidi, durationSteps: 4 },
+          { step: 4, midiPitch: thirdMidi, durationSteps: 4 },
+          { step: 8, midiPitch: rootMidi, durationSteps: 4 },
+        ];
+  }
 
   return offsetIdx % 2 === 0
     ? [
@@ -363,7 +417,8 @@ function sanitizeBar(
   rawBar: unknown,
   fallbackChord: string,
   barIdx: number,
-  sectionType?: SectionType
+  sectionType?: SectionType,
+  ctx?: GuideMelodyContext
 ): SongBar {
   const obj = rawBar && typeof rawBar === 'object' ? (rawBar as Record<string, unknown>) : {};
   const rawChords = Array.isArray(obj.chords)
@@ -379,15 +434,23 @@ function sanitizeBar(
   const playStyle = pickEnum(obj.playStyle, VALID_BAR_PLAY_STYLES, 'normal');
   const lyrics = typeof obj.lyrics === 'string' ? obj.lyrics.trim() : '';
   const clampedNotes = clampMelodyNotesForBar(obj.melodyNotes);
+  const { totalSteps } = getStepsGridForTimeSignature(ctx?.timeSignature);
+  const isOddMeter = ctx?.timeSignature === '3/4' || ctx?.timeSignature === '6/8';
+  const notesExceedMeter =
+    isOddMeter &&
+    clampedNotes.some(
+      (n) => n.step >= totalSteps || n.step + n.durationSteps > totalSteps
+    );
 
   // ล้าง melodyNotes บนท่อน intro เสมอ เพื่อกันเสียงขลุ่ย/เมโลดี้ไกด์ร้องนำโผล่ในอินโทร
+  // และหากเป็น 3/4 หรือ 6/8 แล้วโน้ตเกิน 12 steps ให้สังเคราะห์ใหม่ทั้งหมดแทนการ clamp ไปกองที่ step 11
   const resolvedMelodyNotes =
     sectionType === 'intro'
       ? []
-      : clampedNotes.length > 0
+      : clampedNotes.length > 0 && !notesExceedMeter
         ? clampedNotes
         : lyrics
-          ? buildDiatonicGuideNotesForChord(chords[0], barIdx, lyrics, chords[1], sectionType)
+          ? buildDiatonicGuideNotesForChord(chords[0], barIdx, lyrics, chords[1], sectionType, ctx)
           : [];
 
   return {
@@ -417,7 +480,8 @@ function sanitizeSection(
   rawSection: unknown,
   preset: EasyStylePresetConfig,
   lang: 'th' | 'en',
-  secIdx: number
+  secIdx: number,
+  ctx?: GuideMelodyContext
 ): SongSection {
   const obj =
     rawSection && typeof rawSection === 'object' ? (rawSection as Record<string, unknown>) : {};
@@ -448,7 +512,7 @@ function sanitizeSection(
   const bars: SongBar[] = [];
   for (let i = 0; i < barCount; i += 1) {
     bars.push(
-      sanitizeBar(rawBars[i], preset.defaultChords[i % preset.defaultChords.length], i, type)
+      sanitizeBar(rawBars[i], preset.defaultChords[i % preset.defaultChords.length], i, type, ctx)
     );
   }
 
@@ -539,11 +603,26 @@ export function sanitizeArchitectSongProject(
     typeof obj.title === 'string' && obj.title.trim()
       ? obj.title.trim().slice(0, 80)
       : input.topic.trim().slice(0, 50) || preset.nameTh;
+  const resolvedGenre: ThaiSongGenre = input.thaiGenre ?? preset.thaiGenre ?? 'thai-pop';
+  const resolvedWriter = pickEnum(
+    obj.songwriterStyle,
+    VALID_SONGWRITER_STYLES,
+    pickEnum(input.songwriterStyle, VALID_SONGWRITER_STYLES, 'none')
+  );
+  const melodyCtx: GuideMelodyContext = {
+    baseKey,
+    timeSignature,
+    bpm,
+    vocalProfile: input.vocalProfile,
+    thaiGenre: resolvedGenre,
+    songwriterStyle: resolvedWriter,
+    lyricDensity: input.lyricDensity,
+  };
 
   const rawSections = Array.isArray(obj.sections) ? obj.sections.slice(0, 9) : [];
   const baseSections =
     rawSections.length >= 2
-      ? rawSections.map((sec, idx) => sanitizeSection(sec, preset, input.language, idx))
+      ? rawSections.map((sec, idx) => sanitizeSection(sec, preset, input.language, idx, melodyCtx))
       : buildSimulatedArchitectSong(input).sections;
 
   const totalBarSteps = timeSignature === '3/4' || timeSignature === '6/8' ? 12 : 16;
@@ -620,10 +699,13 @@ export function sanitizeArchitectSongProject(
       pickEnum(input.songwriterStyle, VALID_SONGWRITER_STYLES, 'none')
     ),
     emotionalResolution: input.emotionalResolution ?? 'auto',
+    ...(input.lyricDensity ? { lyricDensity: input.lyricDensity } : {}),
     easyConfig: {
       stylePreset: preset.id,
       vocalProfile: input.vocalProfile,
       tempoFeel: input.tempoFeel,
+      ...(input.lyricDensity ? { lyricDensity: input.lyricDensity } : {}),
+      ...(input.storyBlueprint ? { storyBlueprint: input.storyBlueprint } : {}),
       generatedAt: new Date().toISOString(),
     },
     mixer: {
@@ -686,6 +768,7 @@ export interface SimulatedLyricsInputOptions {
   lyricDialect?: ThaiLyricDialect;
   songwriterStyle?: ThaiSongwriterStyle;
   emotionalResolution?: ThaiEmotionalResolution;
+  lyricDensity?: LyricDensityMode;
 }
 
 function resolveSimulatedOutroLines(
@@ -696,161 +779,169 @@ function resolveSimulatedOutroLines(
 ): string[] {
   if (isEn) {
     if (resolution === 'piercing-sting') {
-      return ['In the end I stand alone tonight', 'Holding love you never wanted in your life'];
+      return ['Alone in this night', 'Let go of the light'];
     }
     if (resolution === 'empowering-anthem') {
-      return ['Rising higher through the open sky', 'No more fear can dim the fire inside'];
+      return ['Rising through the sky', 'Watch our fire fly'];
     }
     if (resolution === 'fulfilling-warm') {
-      return ['Nothing else is missing when you stay', 'Holding hands into the light of day'];
+      return ['Warm inside your stay', 'Light along the way'];
     }
-    return ['Let the final chord ring soft and true', 'Every quiet note belongs to you'];
+    if (resolution === 'catchy-earworm') {
+      return ['Keep this line inside', 'Love will be our guide'];
+    }
+    if (resolution === 'nostalgic-fade') {
+      return ['Softly fades the rain', 'Echoes still remain'];
+    }
+    return ['Soft the chord will stay', 'Till the break of day'];
   }
 
   if (resolution === 'piercing-sting') {
     return [
-      'สุดท้ายก็เหลือแค่ฉันลำพัง',
-      'หวังแค่ลืมเรื่องเธอได้สักวัน',
+      'เหลือเพียงฉัน  ลำพัง',
+      'ยังยอมถอย  เงียบงัน',
     ];
   }
   if (resolution === 'fulfilling-warm') {
     return [
-      'ไม่ต้องขออะไรจากฟ้าไกล',
-      'แค่มีเธอก็เพียงพอแล้วในใจ',
+      'ไม่ขอใด  จากฟ้า',
+      'แค่เธอมา  ก็พอ',
     ];
   }
   if (resolution === 'empowering-anthem') {
     return [
-      'ก้าวข้ามคืนวันอันหวั่นไหว',
-      'ใจดวงนี้ชนะแล้วทุกเส้นทาง',
+      'ก้าวข้ามกลัว  วันวาน',
+      'ผ่านพ้นทุก  เส้นทาง',
     ];
   }
   if (resolution === 'catchy-earworm') {
     return [
-      'จำคำนี้เอาไว้ในหัวใจ',
-      'ในวันที่คิดถึงกันอย่าลืมโทรมา',
+      'จำคำนี้  ในใจ',
+      'ไม่ลืมรัก  วันนี้',
     ];
   }
   if (resolution === 'nostalgic-fade') {
     return [
-      'ลมเย็นยังพัดกลิ่นวันวานกลับมา',
-      'พาภาพเธอค้างไว้ในความทรงจำ',
+      'ลมพัดกลิ่น  วันวาน',
+      'ภาพยังหวาน  ในใจ',
     ];
   }
 
   if (writer === 'dee-nitipong' || writer === 'seefa') {
     return [
-      'จบลงตรงความจริงที่ไม่อาจฝืน',
-      'คืนหัวใจให้เธอก้าวเดินต่อไป',
+      'จบตรงนี้  เข้าใจ',
+      'เดินต่อไป  คนเดียว',
     ];
   }
   if (genre === 'luk-thung' || writer === 'phaiboon-butkhan' || writer === 'sala-khunawut') {
     return [
-      'ฝากสายลมอ้อนฟ้าถึงคนไกล',
-      'ใจดวงนี้ยังคอยเจ้าคืนบ้านนา',
+      'ฝากลมอ้อน  ฟ้าไกล',
+      'ใจยังรอ  บ้านนา',
     ];
   }
   if (genre === 'luk-krung' || writer === 'chali-intrawichit') {
     return [
-      'ตราบแสงจันทร์ยังส่องฟ้าไม่เลือนลาง',
-      'นางในฝันยังเคียงข้างห้วงฤทัย',
+      'จันทร์ผ่อง  ไม่จาง',
+      'เคียงข้าง  ฤทัย',
     ];
   }
   if (writer === 'aed-carabao') {
     return [
-      'เก็บหยาดเหงื่อและศรัทธาไว้บนแผ่นดิน',
-      'ได้ยินเสียงเพลงชีวิตขับขานต่อไป',
+      'เก็บศรัทธา  แผ่นดิน',
+      'พิณปลอบใจ  ก้าวต่อ',
     ];
   }
   if (writer === 'asanee-chotikul') {
     return [
-      'ได้ก็ดีแค่ไหนหัวใจก็ยอมรับมัน',
-      'จำไว้ทุกวันว่าฉันไม่เคยเปลี่ยนใจ',
+      'ได้ก็ดี  ยอมรับ',
+      'ใจไม่กลับ  คำเดิม',
     ];
   }
   if (writer === 'nga-caravan') {
     return [
-      'แสงดาวยังคงส่องทางกลางราตรี',
-      'ขอเพียงมีศรัทธาไม่ยอมแพ้พ่าย',
+      'แสงดาวส่อง  ราตรี',
+      'ยังมีหวัง  ในใจ',
     ];
   }
   if (writer === 'kob-bigass') {
     return [
-      'เก็บแผลเป็นเอาไว้เป็นแรงก้าวต่อ',
-      'ไม่เคยท้อตราบที่หัวใจยังเต้นอยู่',
+      'เก็บแผลไว้  เป็นแรง',
+      'แสงสว่าง  ก้าวต่อ',
     ];
   }
   if (writer === 'fongbeer-rock') {
     return [
-      'ปากบอกไหวทั้งที่ข้างในยังรักเธอ',
-      'เจอความจริงกี่ครั้งใจก็ไม่เคยจำ',
+      'ปากบอกไหว  รักเธอ',
+      'เจอเธอที  ยังจำ',
     ];
   }
   if (writer === 'fongbeer-pop') {
     return [
-      'ทุกนาทีที่ผ่านยังคงมีแค่เธอ',
-      'เจอกับรักแสนดีนี้ก็คุ้มค่าแล้ว',
+      'ทุกนาที  มีเธอ',
+      'เจอรักแท้  คุ้มพอ',
     ];
   }
   if (genre === 'thai-rock' || writer === 'sek-loso' || writer === 'suea-thanapol') {
     return [
-      'ไม่ว่าจะล้มสักกี่ครา',
-      'พาสองเท้าก้าวไปให้ถึงปลายทาง',
+      'ล้มกี่ครา  ไม่กลัว',
+      'ตัวคนเดียว  ก้าวต่อ',
     ];
   }
   if (writer === 'joey-boy' || writer === 'the-toys') {
     return [
-      'คืนนี้ปล่อยทำนองลอยตามลมไป',
-      'ใจยังยิ้มได้ทุกทีที่นึกถึงเธอ',
+      'คืนนี้ปล่อย  ตามลม',
+      'ชมแสงดาว  ด้วยกัน',
     ];
   }
   return [
-    'เก็บความทรงจำนี้ไว้ไม่เลือนราง',
-    'ทางข้างหน้ายังมีเพลงคอยปลอบใจ',
+    'เก็บความจำ  ไม่จาง',
+    'ทางข้างหน้า  อุ่นใจ',
   ];
 }
 
 /**
  * สร้างชุดเนื้อเพลงจำลองที่เปลี่ยนตามแนวเพลง สไตล์นักแต่งเพลง โหมดจบเพลง และภาษาถิ่น
- * โดยบังคับสัมผัสส่งท้ายวรรคเข้าต้น/กลางวรรคถัดไป และมีเนื้อท่อน Outro เสมอ
+ * โดยคุมจำนวนพยางค์ตามมาตรฐาน Singable Pacing 6 กลุ่มสไตล์ พร้อมช่องหายใจกลางห้อง "  "
+ * และบังคับสัมผัสส่งท้ายวรรคเข้าต้น/กลาง/ท้ายวรรคถัดไป
  */
 export function buildStyledSimulatedSongLyrics(
   options: SimulatedLyricsInputOptions
 ): SimulatedSongLyricsBundle {
   const isEn = options.language === 'en';
-  const rawTopic = (options.topic ?? '').trim();
-  const topicShort = rawTopic.slice(0, 18);
   const genre: ThaiSongGenre = options.thaiGenre ?? 'thai-pop';
   const writer = options.songwriterStyle;
   const resolution = options.emotionalResolution;
   const moodLower = (options.mood ?? '').toLowerCase();
 
   if (isEn) {
-    const topicEn = rawTopic || 'our story';
     const outro = resolveSimulatedOutroLines(resolution, genre, writer, true);
     return {
       verse: [
-        `Midnight shadows frame the thought of ${topicEn}`,
-        `Quiet streetlights trace the miles we used to ride`,
-        `Side by side we spoke without a single fear`,
-        `Clearer now I feel your echo waiting here`,
+        'Midnight shadows fall',
+        'Calling down the hall',
+        'Quiet streets still glow',
+        'Slow the night will go',
+        'Footsteps in the rain',
+        'Pain begins to fade',
+        'Shade beneath the pine',
+        'Sign of yours and mine',
       ],
       'pre-chorus': [
-        `Every breath rises as the skyline glows`,
-        `Knowing well the truth that only silence knows`,
+        'Every breath climbs high',
+        'Underneath the sky',
       ],
       chorus: [
-        `Hold on tight before the night slips out of view`,
-        `Through the storm my honest heart still turns to you`,
-        `Every melody remembers how we fell`,
-        `Tell me this song can break the quiet spell`,
+        'Hold on through the night',
+        'Light will find the way',
+        'Stay inside this song',
+        'Strong until the day',
       ],
       bridge: [
-        `Maybe time will bend the road back to your door`,
-        `More than words could ever promise once before`,
+        'Time may bend the road',
+        'Unload all the weight',
       ],
       outro,
-      rhymeNote: 'Simulated English acoustic-pop phrasing with couplet rhymes and outro resolution.',
+      rhymeNote: 'Simulated English acoustic-pop phrasing with singable 4-5 syllable lines.',
     };
   }
 
@@ -862,268 +953,268 @@ export function buildStyledSimulatedSongLyrics(
 
   if (writer === 'aed-carabao') {
     verse = [
-      `${topicShort ? `เล่าเรื่อง${topicShort}` : 'ออกเดินทาง'}บนแผ่นดินกว้าง`,
-      'ก้าวไปตามทางไม่เคยหวั่นไหว',
-      'สู้ด้วยหัวใจแม้เหนื่อยทุกวัน',
-      'จุดไฟแห่งฝันให้คนเดินทาง',
-      'แบกหยาดเหงื่อสร้างชีวิตบนผืนนา',
-      'เวลาผันผ่านศรัทธาไม่จาง',
-      'ยืนเคียงข้างพี่น้องร่วมแผ่นดิน',
-      'ได้ยินเสียงพิณปลุกใจให้ก้าวเดิน',
+      'ออกเดินทาง  กลางแดด',
+      'แผดเผาใจ  ไม่หวั่น',
+      'ฝันยังมี  ในตา',
+      'ฟ้าไม่เคย  ปิดทาง',
+      'สร้างชีวิต  ด้วยมือ',
+      'ถือความจริง  นำใจ',
+      'ไทยทั้งผอง  ก้าวเดิน',
+      'เชิญร่วมทาง  เสรี',
     ];
     preChorus = [
-      'แม้คลื่นลมโหมกระหน่ำกลางหนทาง',
-      'ยังไม่วางศักดิ์ศรีที่เคยตั้งไว้',
+      'แม้ลมฝน  โหมแรง',
+      'แกร่งกว่าหิน  แผ่นดิน',
     ];
     chorus = [
-      'ข้ามทะเลใจไปให้ถึงฝั่งฝัน',
-      'จับมือกันฟันฝ่าไม่ยอมถอดใจ',
-      'ปลุกพลังคนไทยสู้ไม่เคยถอย',
-      'ร้อยเรื่องราวชีวิตสร้างวันใหม่',
+      'ข้ามทะเล  ฝ่าฟัน',
+      'จับมือกัน  ไม่ท้อ',
+      'รอวันฟ้า  เปลี่ยนสี',
+      'มีพลัง  ก้าวต่อ',
     ];
     bridge = [
-      'สัจธรรมชีวิตสอนเราให้แกร่ง',
-      'เติมเรี่ยวแรงด้วยใจที่ไม่ยอมแพ้',
+      'บทเรียนสอน  ให้แกร่ง',
+      'แรงศรัทธา  ไม่คลาย',
     ];
-    rhymeNote = 'สไตล์แอ๊ด คาราบาว (เพื่อชีวิต/สามช่า): ภาษาชาวบ้านคมคาย สโลแกนจำแม่น ส่งสัมผัสทุกวรรค';
+    rhymeNote = 'สไตล์แอ๊ด คาราบาว (เพื่อชีวิต/สามช่า): คำคมกระชับ 4-6 พยางค์ พร้อมจุดหายใจกลางห้อง';
   } else if (writer === 'asanee-chotikul') {
     verse = [
-      `${topicShort ? `เรื่อง${topicShort}` : 'บอกใคร'}บอกใจว่าไม่เป็นไร`,
-      'ในใจลึกๆ ยังจำคำของเธอ',
-      'ได้แต่มองเงาเธอในคืนเหงา',
-      'เก็บเรื่องของเราไว้ในหัวใจ',
-      'ปากบอกไม่แคร์แต่ยังห่วงใย',
-      'ทั้งหัวใจยังรอเธอเสมอ',
-      'แค่ได้เจอหน้ากันก็ดีใจ',
-      'ไม่มีอะไรเสียดายเลยสักวัน',
+      'บอกกับใจ  ไม่แคร์',
+      'แพ้แค่เพียง  น้ำตา',
+      'มาวันนี้  เข้าใจ',
+      'ใครคนเดิม  เปลี่ยนไป',
+      'ไม่เสียดาย  วันวาน',
+      'ผ่านไปแล้ว  ช่างมัน',
+      'ฉันก็ยัง  เหมือนเดิม',
+      'เริ่มชีวิต  ใหม่ได้',
     ];
     preChorus = [
-      'ได้ก็ดี ได้ก็ดี บอกใจอย่างนี้',
-      'ทั้งที่ใจดวงนี้ยังลืมไม่ลง',
+      'ได้ก็ดี  บอกใจ',
+      'ไปเถิดเธอ  ไม่รั้ง',
     ];
     chorus = [
-      'ก็เคยสัญญา สัญญาไม่ลืมกัน',
-      'แต่วันนั้นเธอกลับเป็นคนเปลี่ยนใจ',
-      'อยากได้ยินว่ารักกันอีกสักที',
-      'ได้ก็ดี ได้ก็ดี แค่ไม่ลืมกัน',
+      'เคยสัญญา  ไม่ลืม',
+      'ลืมกันไป  ง่ายดาย',
+      'ปลายทางเหลือ  แค่ฉัน',
+      'ได้ก็ดี  เท่านี้',
     ];
     bridge = [
-      'ยินดีไม่มีปัญหาถ้าเธอจะไป',
-      'เจ็บแค่ไหนหัวใจก็ยอมรับมัน',
+      'ยินดีเธอ  เจอทาง',
+      'วางหัวใจ  ลงพื้น',
     ];
-    rhymeNote = 'สไตล์อัสนี โชติกุล (ร็อกคำซ้ำ/จิ๊กโก๋อกหัก): ซ้ำวลีสั้นตอกย้ำใน Bar 1 & Bar 4 ส่งสัมผัสต่อเนื่อง';
+    rhymeNote = 'สไตล์อัสนี โชติกุล (ร็อกคำซ้ำ/จิ๊กโก๋อกหัก): ซ้ำวลีคม 4-6 พยางค์ ลงบีตหนักแน่น';
   } else if (writer === 'nga-caravan') {
     verse = [
-      `${topicShort ? `มองเรื่อง${topicShort}ใต้ฟ้ากว้างไกล` : 'แสงดาวยังทอประกายบนฟ้าไกล'}`,
-      'ในความมืดหม่นยังมีคนก้าวเดิน',
-      'เพลินมองทุ่งรวงทองยามลมโชย',
-      'โปรยปรายสายฝนพรมผืนดินงดงาม',
-      'ถามใจตัวเองในยามค่ำคืน',
-      'ยืนเคียงข้างทางที่ใจใฝ่ฝัน',
-      'วันเวลาไม่เคยลบเลือนความหวัง',
-      'ฟังเสียงพิณแผ่วพริ้วปลอบใจคน',
+      'แสงดาวพราว  ฟ้าไกล',
+      'ในคืนมืด  ยังเดิน',
+      'เพลินมองทุ่ง  รวงทอง',
+      'มองสายน้ำ  ไหลริน',
+      'ดินอุดม  สมบูรณ์',
+      'พูนความหวัง  ในใจ',
+      'ไฟความดี  ไม่ดับ',
+      'ขับขานเพลง  เสรี',
     ];
     preChorus = [
-      'แม้หนทางชีวิตจะยาวแสนไกล',
-      'หัวใจยังศรัทธาในแสงตะวัน',
+      'แม้หนทาง  แสนไกล',
+      'ใจยังมั่น  ตะวัน',
     ];
     chorus = [
-      'ฝากดอกไม้ให้คนเหนื่อยในคืนหนาว',
-      'ดาวส่องทางให้ใจยังมีความฝัน',
-      'วันพรุ่งนี้ยังมีแสงแห่งศรัทธา',
-      'พาหัวใจกลับคืนสู่ผืนแผ่นดิน',
+      'ฝากดอกไม้  คืนหนาว',
+      'ดาวส่องทาง  แห่งฝัน',
+      'วันพรุ่งนี้  มีหวัง',
+      'ดังแสงทอง  ส่องดิน',
     ];
     bridge = [
-      'ลมพัดผ่านทุ่งนาพาความทรงจำ',
-      'คำกวีปลอบใจไม่เคยจางหาย',
+      'ลมพัดทุ่ง  นากลางคืน',
+      'ยืนหยัดด้วย  ศรัทธา',
     ];
-    rhymeNote = 'สไตล์หงา คาราวาน (เพื่อชีวิต-โฟล์กกวี): ภาษาสุภาพงดงาม ใช้ภาพธรรมชาติสื่อศรัทธา ส่งสัมผัสต่อเนื่องละเมียดละไม';
+    rhymeNote = 'สไตล์หงา คาราวาน (เพื่อชีวิต-โฟล์กกวี): กวีธรรมชาติ 4-6 พยางค์ ส่งสัมผัสต่อเนื่องละมุน';
   } else if (writer === 'kob-bigass') {
     verse = [
-      `${topicShort ? `แบกเรื่อง${topicShort}` : 'แบกความจริง'}เดินคนเดียวในคืนมืดมน`,
-      'คนอย่างฉันมันก็แค่คนธรรมดา',
-      'ฟ้าไม่เคยเห็นใจคนอ่อนแอเลย',
-      'เคยทุ่มเทให้ไปหมดทั้งหัวใจ',
-      'ไม่เคยเสียดายแม้ต้องเจ็บร้าว',
-      'ก้าวต่อไปทั้งที่น้ำตายังริน',
-      'ดินจะกลบหน้าก็ยังไม่ยอมถอย',
-      'คอยพิสูจน์ด้วยลมหายใจที่มี',
+      'แบกความจริง  เดินลุย',
+      'คุยกับเงา  ลำพัง',
+      'หวังพังลง  ตรงหน้า',
+      'ฟ้าไม่เห็น  ใจคน',
+      'ทนบาดแผล  เรื่อยมา',
+      'พาตัวเอง  ลุกยืน',
+      'คืนที่มืด  ที่สุด',
+      'หยุดไม่ได้  ต้องไป',
     ];
     preChorus = [
-      'ล้มลงไปกี่ครั้งก็ยังลุกยืน',
-      'ฝืนทนเจ็บเพื่อวันที่ฟ้าเปิดทาง',
+      'ล้มกี่ครั้ง  ลุกยืน',
+      'ฝืนเจ็บปวด  เพื่อฝัน',
     ];
     chorus = [
-      'ต่อให้โลกทั้งใบไม่เหลือใครสักคน',
-      'อดทนไว้หัวใจอย่าเพิ่งยอมแพ้',
-      'แค่บาดแผลจะสอนให้เราเข้มแข็ง',
-      'แสงปลายทางยังรอคนไม่ถอดใจ',
+      'โลกไม่เหลือ  ใครเลย',
+      'เงยหน้ามอง  ขอบฟ้า',
+      'ท้าพายุ  พัดแรง',
+      'แสงปลายทาง  รออยู่',
     ];
     bridge = [
-      'หากพรุ่งนี้ยังมีลมหายใจอยู่',
-      'สู้จนกว่าความฝันจะเป็นความจริง',
+      'ยังมีลม  หายใจ',
+      'ไฟในอก  ยังลุก',
     ];
-    rhymeNote = 'สไตล์กบ บิ๊กแอส (Big Ass / Bodyslam / Labanoon): ภาษาตรงไปตรงมา กระแทกบีตสู้ชีวิต ฮุคติดหูร้องตามได้ทั้งฮอลล์';
+    rhymeNote = 'สไตล์กบ บิ๊กแอส: คำกระแทกบีต 4-6 พยางค์ เปิดช่องหายใจท้ายห้อง';
   } else if (writer === 'fongbeer-rock') {
     verse = [
-      `${topicShort ? `เก็บเรื่อง${topicShort}` : 'เก็บคำลา'}เอาไว้ข้างในไม่พูดออก`,
-      'บอกตัวเองให้ทนทั้งที่ยังปวดใจ',
-      'ไม่เคยลืมภาพเดิมที่เธอเคยเคียงข้าง',
-      'อ้างว่าไม่เป็นไรทั้งที่ยังรักเธอ',
-      'เจอหน้ากันทีไรใจก็ยังสั่นไหว',
-      'ให้ฉันทำอย่างไรเมื่อใจลืมไม่ลง',
-      'คงเป็นฉันคนเดียวที่ยังรอตรงนี้',
-      'มีคำถามมากมายที่อยากให้เธอฟัง',
+      'เก็บคำลา  ข้างใน',
+      'ไม่พูดไป  สักคำ',
+      'จำภาพเดิม  ฝังใจ',
+      'ในวันนี้  ไม่มี',
+      'ดีแค่ไหน  ไม่พอ',
+      'รอตรงนี้  คนเดียว',
+      'เปลี่ยวหัวใจ  เหลือเกิน',
+      'เดินต่อไป  คนเดียว',
     ];
     preChorus = [
-      'ปากบอกใครต่อใครว่าลืมเธอได้แล้ว',
-      'แววตาก็ยังฟ้องว่าใจไม่เคยเปลี่ยน',
+      'ปากบอกลืม  ได้แล้ว',
+      'แววตายัง  สั่นไหว',
     ];
     chorus = [
-      'เธอยังรักกันอยู่บ้างไหมในวันนี้',
-      'ที่ทุ่มเทให้เธอหมดใจไม่เคยพอ',
-      'รอเธออยู่ตรงนี้แม้จะเจ็บเจียนตาย',
-      'หายไปโดยไม่ลาฉันควรต้องทำไง',
+      'ยังรักกัน  อยู่ไหม',
+      'ให้เธอไป  หมดใจ',
+      'ไกลแค่ไหน  ยังรอ',
+      'ขอแค่คำ  ว่าลา',
     ];
     bridge = [
-      'ถ้าไม่รักกันเลยก็พูดมาตรงตรง',
-      'คงดีกว่าปล่อยให้ฉันหลอกตัวเอง',
+      'ถ้าไม่รัก  บอกมา',
+      'ดีกว่าปล่อย  หลอกใจ',
     ];
-    rhymeNote = 'สไตล์ฟองเบียร์ ร็อกพูดตรง 2000s (Potato / Zeal / Clash): ไม่ประดิษฐ์คำสวยหรู พูดความจริงที่เจ็บลึกและย้ำคำถามแทงใจลงบีตร็อก';
+    rhymeNote = 'สไตล์ฟองเบียร์ ร็อกพูดตรง 2000s: คำตรงจุดเจ็บ 4-6 พยางค์ กระชับเข้าบีตร็อก';
   } else if (writer === 'fongbeer-pop') {
     verse = [
-      `${topicShort ? `นึกถึง${topicShort}` : 'นั่งมองเข็มนาฬิกา'}เดินผ่านไปช้าช้า`,
-      'ถ้าเธออยู่ตรงนี้คงได้คุยกันนาน',
-      'ผ่านเรื่องราวมากมายตั้งแต่วันแรกเจอ',
-      'เธอคือคนธรรมดาที่สำคัญที่สุด',
-      'หยุดเวลาเอาไว้แค่เพียงเท่านี้ได้ไหม',
-      'ในทุกทุกวันฉันยังเก็บเรื่องดีไว้',
-      'ไม่เคยลืมรอยยิ้มที่เธอส่งให้กัน',
-      'วันเวลาหมุนไปใจก็ยังเหมือนเดิม',
+      'มองเข็มเดิน  ช้าช้า',
+      'พาใจคิด  ถึงเธอ',
+      'เจอวันดี  มากมาย',
+      'คลายความเหงา  ในใจ',
+      'ใครสักคน  ข้างกาย',
+      'คล้ายรอยยิ้ม  คุ้นตา',
+      'พาให้ใจ  อุ่นดี',
+      'มีแค่เธอ  คนเดียว',
     ];
     preChorus = [
-      'แค่คำธรรมดาที่เธอเคยเอ่ยมา',
-      'ค่าของมันยังอยู่เต็มหัวใจฉันเลย',
+      'แค่คำพูด  ธรรมดา',
+      'ค่าของมัน  เต็มใจ',
     ];
     chorus = [
-      'แสนล้านวันเวลาไม่เคยเปลี่ยนใจฉัน',
-      'มันยังรอแค่เธออยู่ที่เดิมไม่หาย',
-      'ปลายทางจะแสนไกลหรือไม่มีตรงกลาง',
-      'ข้างข้างกันวันไหนใจก็ยังรักเธอ',
+      'แสนล้านวัน  ไม่เปลี่ยน',
+      'เวียนมาเจอ  ที่เดิม',
+      'เติมหัวใจ  ให้อุ่น',
+      'หนุนรักเรา  มั่นคง',
     ];
     bridge = [
-      'เก็บกุญแจความทรงจำเอาไว้ข้างใจ',
-      'ไม่ว่านานเท่าไรก็จะไม่ลืมเธอ',
+      'เก็บความจำ  ข้างใจ',
+      'ไม่ว่านาน  ไม่ลืม',
     ];
-    rhymeNote = 'สไตล์ฟองเบียร์ ป๊อปซึ้งภาษาพูด (แสนล้านนาที / ไม่มีตรงกลาง): เล่าเรื่องจริงในชีวิตประจำวันด้วยภาษาเรียบง่าย พร้อมวลีซ้ำกินใจ';
+    rhymeNote = 'สไตล์ฟองเบียร์ ป๊อปซึ้งภาษาพูด: วลีเล่าเรื่องธรรมชาติ 5-6 พยางค์ ร้องสบาย';
   } else if (writer === 'joey-boy') {
     verse = [
-      `คิดถึงจัดเลยหยิบโทรศัพท์มากดทัก${topicShort ? `เรื่อง${topicShort}` : ''}`,
-      'รักก็บอกรักอย่ามัวกั๊กเดี๋ยวไม่ทัน',
-      'ปั่นจักรยานฝ่าไฟแดงมาหาทุกวัน',
-      'มันจะฟินแค่ไหนถ้าคืนนี้ได้กอดกัน',
-      'หันมองนาฬิกาเวลาเดินไวเหลือเกิน',
-      'เดินยิ้มคนเดียวกลางถนนไม่เขินใคร',
-      'ใจมันเต้นตึกตักตั้งแต่เธอตอบข้อความ',
-      'ถามจริงคืนนี้ว่างไหมอยากชวนคุยยาว',
+      'หยิบมือถือขึ้นทัก  ส่งใจไป',
+      'ไม่ต้องมัวอายเขิน  บอกมาเลย',
+      'เคยแอบมองทุกเช้า  ที่หน้าซอย',
+      'คอยรอยยิ้มคู่นั้น  มานานปี',
+      'นาฬิกาหมุนไว  ใจเต้นรัว',
+      'กลัวจะพลาดนาที  ที่แสนดี',
+      'มีคำพูดมากมาย  ในคืนนี้',
+      'ชี้ชัดไปเลยว่า  ใจตรงกัน',
     ];
     preChorus = [
-      'จังหวะหัวใจมันเร่งบีตขึ้นทุกที',
-      'มีคำพูดในใจอยากส่งให้เธอฟัง',
+      'จังหวะใจเร่งบีต  ขึ้นทุกที',
+      'มีเรื่องราวอยากบอก  ให้เธอฟัง',
     ];
     chorus = [
-      'บอกมาเลยไม่ต้องเขินกันอีกต่อไป',
-      'ใจตรงกันแล้วจะรอเวลาไปทำไม',
-      'ใครจะมองยังไงก็ปล่อยให้เขามองไป',
-      'ในคืนนี้ขอแค่มีเธอข้างกันก็พอ',
+      'บอกมาเลย  อย่ามัวรอช้า',
+      'กล้าพูดรัก  สักคำได้ไหม',
+      'ในคืนนี้  มีเธอข้างกาย',
+      'สายตาฟ้อง  ว่าใจตรงกัน',
     ];
     bridge = [
-      'ไม่ต้องคิดเยอะให้ปวดหัวไปทั้งคืน',
-      'ยื่นมือมาจับไว้แล้วเต้นไปด้วยกัน',
+      'ไม่ต้องคิดมากมาย  ปล่อยตามใจ',
+      'จับมือกันเต้นไป  ให้สุดคืน',
     ];
-    rhymeNote = 'สไตล์โจอี้ บอย: สัมผัสในรัวกระชั้น คำตายลงจังหวะเด้งสนุก';
+    rhymeNote = 'สไตล์โจอี้ บอย: โฟลว์ 6-8 พยางค์ สัมผัสในกระชั้น สลับช่องหายใจชัดเจน';
   } else if (writer === 'the-toys' || genre === 'thai-rnb') {
     verse = [
-      `ไฟนีออนสะท้อนบนกระจกยามค่ำคืน${topicShort ? `นึกถึง${topicShort}` : ''}`,
-      'ตื่นจากฝันเดิมแต่เสียงเธอยังวนเวียน',
-      'เขียนข้อความค้างไว้ไม่กล้ากดส่งไป',
-      'ในหัวใจยังติดอยู่ในท่วงทำนองเดิม',
-      'เพิ่มเสียงเพลงเบาๆ กลางห้องที่เงียบงัน',
-      'วันเวลาผ่านไปใจยังสั่นเมื่อพบเธอ',
-      'เผลอหลับตาลงก็เห็นเพียงภาพคนเดิม',
-      'เริ่มใหม่ไม่ได้เลยเพราะใจยังผูกพัน',
+      'แสงนีออน  กระจกใส',
+      'ในคืนเดิม  มีเสียงฝน',
+      'วนทำนอง  ที่คุ้นตา',
+      'พาใจลอย  ในความฝัน',
+      'ฉันยังจำ  ได้ทุกคำ',
+      'ฟังเสียงเพลง  ในห้องนอน',
+      'ก่อนหลับตา  ยังคิดถึง',
+      'ซึ้งในใจ  ไม่เคยลืม',
     ];
     preChorus = [
-      'ยิ่งดึกเท่าไรภาพเธอยิ่งลอยเข้ามา',
-      'พาใจดวงนี้หลุดลอยไปในคืนเหงา',
+      'ยิ่งดึกนัก  ยิ่งคิดถึง',
+      'ดึงใจลอย  ไปหาเธอ',
     ];
     chorus = [
-      'แค่ได้เห็นเธอเดินผ่านคืนนี้ใจก็สั่นไหว',
-      'ไม่รู้ทำไมต้องคอยแอบมองอยู่ตรงนี้ทุกที',
-      'มีภาพเธอยังวนในใจจนแทบละลาย',
-      'สายลมเอยช่วยพาใจลอยไปหาเธอ',
+      'แค่เธอผ่าน  ใจก็สั่น',
+      'วันเหงาละลาย  ในสายตา',
+      'พาใจลอย  ตามเสียงเพลง',
+      'เกรงคืนนี้  หลงรักเธอ',
     ];
     bridge = [
-      'ปล่อยให้คืนนี้พัดผ่านไปอย่างช้าๆ',
-      'ถ้าเธอยังจำเสียงนี้ได้ก็หันมองมา',
+      'ปล่อยราตรี  ไปช้าช้า',
+      'ถ้ายังยิน  หันมองมา',
     ];
-    rhymeNote = 'สไตล์ Melodic R&B / The TOYS: คำรัวพยางค์ชิดช่วงต้นสลับสระเปิดเอื้อนท้ายห้อง';
+    rhymeNote = 'สไตล์ Melodic R&B / The TOYS: วลีต้นกระชับสลับสระเปิด 6-7 พยางค์';
   } else if (writer === 'dee-nitipong' || writer === 'seefa') {
     verse = [
-      `นั่งมองหน้าต่างในคืนที่ไม่มีคำลา${topicShort ? `กับ${topicShort}` : ''}`,
-      'นาฬิกายังเดินต่อโดยไม่รอหัวใจ',
-      'ใครคนหนึ่งเก็บกระเป๋าเดินออกจากชีวิต',
-      'คิดทบทวนเท่าไรก็ยังหาเหตุผลไม่เจอ',
-      'เสมอมาฉันทุ่มเทให้เธอจนหมดหน้าตัก',
-      'รักมากเพียงใดสุดท้ายก็ต้องยอมปล่อยไป',
-      'ในความจริงที่แสนเงียบงันคืนนี้',
-      'มีเพียงเงาตัวเองคอยนั่งปลอบใจ',
+      'มองหน้าต่าง  คืนเหงา',
+      'เงาเวลา  พัดผ่าน',
+      'กาลไม่รอ  หัวใจ',
+      'ใครคนหนึ่ง  เดินไป',
+      'ไม่เหลือคำ  อำลา',
+      'พาความจริง  เงียบงัน',
+      'ฉันทบทวน  กี่ครั้ง',
+      'ยังหาเหตุ  ไม่เจอ',
     ];
     preChorus = [
-      'เพิ่งเข้าใจวันนี้ว่าความดีไม่พอ',
-      'รอให้ตายเธอก็คงไม่หันกลับมอง',
+      'เพิ่งเข้าใจ  วันนี้',
+      'ดีแค่ไหน  ไม่พอ',
     ];
     chorus = [
-      'รักเท่าไรก็แพ้',
-      'แม้ทุ่มเทให้เธอหมดใจ',
-      'ยิ่งรั้งไว้ยิ่งเห็นเธอไป',
-      'คนไม่รักทำดีแค่ไหนก็สูญเปล่า',
+      'รักเท่าไร  ก็แพ้',
+      'แม้ทุ่มเท  ทั้งใจ',
+      'ใกล้แค่ไหน  ยังไกล',
+      'ไม่เคยรัก  กันเลย',
     ];
     bridge = [
-      'เก็บเศษใจที่ร้าวเอาไว้เงียบๆ',
-      'เปรียบเทียบตัวเองแล้วก็ยอมรับความจริง',
+      'เก็บเศษใจ  ที่ร้าว',
+      'ก้าวเดินต่อ  ลำพัง',
     ];
-    rhymeNote = 'สไตล์ดี้ นิติพงษ์ / สีฟ้า: Bar 1 หมัดฮุคสั้นคมแทงใจ ส่งสัมผัสต่อทุกวรรค';
+    rhymeNote = 'สไตล์ดี้ นิติพงษ์ / สีฟ้า: Bar 1 หมัดฮุค 4-5 พยางค์ คมลึก ส่งสัมผัสต่อเนื่อง';
   } else if (
     writer === 'phaiboon-butkhan' ||
     writer === 'chali-intrawichit' ||
     genre === 'luk-krung'
   ) {
     verse = [
-      `จันทร์แรมลอยเด่นกลางห้วงนภา${topicShort ? `ฝาก${topicShort}` : ''}`,
-      'พาดวงฤทัยถวิลหาไม่คลาย',
-      'สายลมอ่อนพัดผ่านทุ่งรวงทอง',
-      'มองฟ้าไกลใจยังรอคนดี',
-      'ราตรีนี้มืดมิดไร้แสงดารา',
-      'น้ำตาพร่างพรมบนกลีบดอกไม้',
-      'ในห้วงคำนึงยังตราตรึงมิเลือน',
-      'เตือนใจให้มั่นรักตราบชั่วนิรันดร์',
+      'จันทร์แรมลอย  นภา',
+      'พาดวงใจ  ถวิล',
+      'กลิ่นลมโชย  รวยริน',
+      'ถวิลคอย  คนดี',
+      'ราตรีไร้  ดารา',
+      'น้ำตาพรม  ดอกไม้',
+      'ในคำนึง  ตราตรึง',
+      'ซึ้งรักชั่ว  นิรันดร์',
     ];
     preChorus = [
-      'ยามสายลมโชยพรมหัวใจหวั่นไหว',
-      'ไกลเพียงใดไม่อาจพรากรักจากทรวง',
+      'ลมรำเพย  พรมใจ',
+      'ไกลเพียงใด  ห่วงหา',
     ];
     chorus = [
-      'ดุจหยาดเพชรพราวพร่างกลางนภา',
-      'พาหัวใจละมุนอุ่นในไมตรี',
-      'กี่ราตรีผันผ่านมิเคยเปลี่ยนผัน',
-      'มั่นในคำสัญญาที่เคยเอื้อนเอ่ย',
+      'ดุจหยาดเพชร  พร่างฟ้า',
+      'พาดวงใจ  ละมุน',
+      'อุ่นไอรัก  ไม่คลาย',
+      'หมายปองเพียง  เคียงเธอ',
     ];
     bridge = [
-      'แม้นกาลเวลาจะพาล่วงเลยลับตา',
-      'ฝากบทกวีนี้กล่อมนิทราให้ชื่นบาน',
+      'กาลเวลา  ลับตา',
+      'พาบทกลอน  กล่อมใจ',
     ];
-    rhymeNote = 'สไตล์กวีลูกกรุง-ลูกทุ่งชั้นครู: สัมผัสต่อเนื่องและคำเป็นสระเสียงยาวเอื้อนละมุน';
+    rhymeNote = 'สไตล์กวีลูกกรุง-ลูกทุ่งชั้นครู: สัมผัสต่อเนื่อง 4-5 พยางค์ เอื้อนสระยาวละมุน';
   } else if (
     writer === 'sala-khunawut' ||
     writer === 'chonlathi-thanthong' ||
@@ -1134,48 +1225,48 @@ export function buildStyledSimulatedSongLyrics(
     const isIsan = options.lyricDialect === 'isan' || writer === 'sala-khunawut';
     verse = isIsan
       ? [
-          `หอบความฝันจากบ้านนามาสู้เมืองไกล${topicShort ? `เพื่อ${topicShort}` : ''}`,
-          'ใจคิดฮอดอีแม่ยามลมหนาวมา',
-          'ท้อกี่ครายังกอดคำสอนไม่จาง',
-          'ทางยังยาวบ่ยอมถอดใจคืนถิ่น',
-          'ยินเสียงแคนแว่วมาพาใจสะท้อน',
-          'นอนนับดาวริมห้องเช่าเหงาใจ',
-          'ในกระเป๋าเหลือเพียงรูปถ่ายเก่าๆ',
-          'เอาแรงใจจากบ้านเป็นไฟสู้ต่อ',
+          'หอบความฝัน  บ้านนา',
+          'มาสู้เมือง  ห่างไกล',
+          'ใจคิดฮอด  อีแม่',
+          'แคร์คำสอน  ไม่จาง',
+          'ทางยังยาว  ไม่ท้อ',
+          'รอเสียงแคน  ปลอบใจ',
+          'ในคืนเหงา  นับดาว',
+          'หนาวเพียงใด  สู้ต่อ',
         ]
       : [
-          `ลมหนาวพัดผ่านท้องนาพาใจคนึง${topicShort ? `ถึง${topicShort}` : ''}`,
-          'คิดถึงคนดีที่เคยร่วมเรียงเคียงหมอน',
-          'อ้อนวอนฟ้าช่วยส่งข่าวข้ามขอบฟ้า',
-          'หากวันใดฝนซาจะรีบคืนบ้านนา',
-          'มาเช็ดน้ำตาให้คนรออยู่ริมคันนา',
-          'สัญญาใจที่ให้ไว้ไม่เคยเสื่อมคลาย',
-          'สายลมหนาวพัดมาเตือนให้รีบกลับ',
-          'รับขวัญเจ้าในวันที่ข้าวสุกเต็มทุ่ง',
+          'ลมหนาวพัด  ท้องนา',
+          'พาใจคิด  ถึงเธอ',
+          'เจอความเหงา  เดียวดาย',
+          'หมายอ้อนวอน  ขอบฟ้า',
+          'ฟ้าจางฝน  ซาลง',
+          'คงรีบคืน  บ้านนา',
+          'มาเช็ดน้ำ  ตาใจ',
+          'ในวันข้าว  สุกทอง',
         ];
     preChorus = isIsan
-      ? ['เหนื่อยปานใดบ่เคยเอ่ยคำท้อถอย', 'คอยวันได้หวนคืนไปกอดคนรอ']
-      : ['กี่คืนเหงาเฝ้ารอแสงเดือนส่องทาง', 'กลางทุ่งนากว้างยังคิดถึงคำสัญญา'];
+      ? ['เหนื่อยปานใด  บ่ท้อ', 'รอคืนฮัง  บ้านนา']
+      : ['กี่คืนเหงา  เฝ้ารอ', 'ขอแสงเดือน  ส่องใจ'];
     chorus = isIsan
       ? [
-          'ฮักเจ้าหลายจนเบิดใจอ้ายบ่ลืม',
-          'ปลื้มคำสัญญาที่เคยให้กันไว้',
-          'ไกลบ้านนานับปีบ่เคยเปลี่ยนใจ',
-          'ในมื้อหน้าสิคืนเมือซบอ้อมกอดเดิม',
+          'ฮักเจ้าหลาย  เบิดใจ',
+          'ไกลบ้านนา  บ่ลืม',
+          'ปลื้มคำมั่น  สัญญา',
+          'พาคืนฮัง  บ้านเฮา',
         ]
       : [
-          'ฝากเสียงแคนก้องทุ่งส่งถึงคนไกล',
-          'ใจดวงนี้ยังคอยเจ้าคืนบ้านเรา',
-          'เงาจันทร์นวลส่องทางให้หายเหน็บหนาว',
-          'คราวใดท้อขอให้จำรักแท้บ้านนา',
+          'ฝากเสียงแคน  ก้องทุ่ง',
+          'มุ่งถึงใจ  คนไกล',
+          'ในคืนหนาว  แสงจันทร์',
+          'ฝันคืนสู่  บ้านนา',
         ];
     bridge = [
-      'เก็บความหวังใส่เป้เดินสู้ต่อไป',
-      'ใจยังมั่นสักวันคงได้สมหวัง',
+      'เก็บความหวัง  ใส่ใจ',
+      'ในสักวัน  สมหวัง',
     ];
     rhymeNote = isIsan
-      ? 'สไตล์ลูกทุ่งอีสานสู้ชีวิต: คำเป็นสระเสียงยาวเอื้อนลูกคอ ผสมคำอีสานกินใจ'
-      : 'สไตล์ลูกทุ่งไทยคำหวาน: ท้ายวรรคคำเป็นเปิดช่องเอื้อนลูกคอไพเราะ';
+      ? 'สไตล์ลูกทุ่งอีสานสู้ชีวิต: 4-5 พยางค์ สระเสียงยาวเอื้อนลูกคอไพเราะ'
+      : 'สไตล์ลูกทุ่งไทยคำหวาน: 4-5 พยางค์ เปิดช่องหายใจให้เอื้อนลูกคอชัดเจน';
   } else if (
     writer === 'sek-loso' ||
     writer === 'suea-thanapol' ||
@@ -1183,30 +1274,30 @@ export function buildStyledSimulatedSongLyrics(
     genre === 'phuea-chiwit'
   ) {
     verse = [
-      `แบกความฝันเดินฝ่าลมฝนบนถนนยาว${topicShort ? `เพื่อ${topicShort}` : ''}`,
-      'ก้าวผ่านคืนหนาวที่ไม่มีใครหันมอง',
-      'สองมือเปล่าแต่หัวใจยังสู้ไม่ถอย',
-      'คอยบอกตัวเองว่าสักวันต้องเป็นวันของเรา',
-      'เงาแสงไฟข้างทางส่องให้เห็นรอยเท้า',
-      'เก่าแค่ไหนเสื้อตัวนี้ยังมีศักดิ์ศรี',
-      'กี่บาดแผลที่เจอไม่เคยทำให้กลัว',
-      'ตัวคนเดียวก็พร้อมยืนหยัดต่อไป',
+      'แบกความฝัน  ลุยฝน',
+      'คนเดียวบน  ทางยาว',
+      'ก้าวข้ามคืน  เหน็บหนาว',
+      'ร้าวในใจ  ไม่ถอย',
+      'คอยบอกใจ  เสมอ',
+      'เจอพายุ  ไม่กลัว',
+      'ตัวคนเดียว  ยืนหยัด',
+      'ซัดความกลัว  ทิ้งไป',
     ];
     preChorus = [
-      'ล้มลงกี่ทีก็ลุกขึ้นยืนใหม่',
-      'ไฟในอกดวงนี้ไม่เคยมอดดับ',
+      'ล้มกี่ที  ลุกยืน',
+      'ฝืนเจ็บปวด  เพื่อฝัน',
     ];
     chorus = [
-      'ใจมันรักไปแล้วจะให้ทำยังไง',
-      'เจ็บแค่ไหนก็ยังจะยอมเดินต่อ',
-      'รอไม่ไหวถ้าเธอไม่เคยหันมอง',
-      'ร้องตะโกนให้รู้ว่ารักเธอสุดใจ',
+      'ใจมันรัก  ไปแล้ว',
+      'แน่วแน่เดิน  ต่อไป',
+      'ไกลแค่ไหน  ไม่กลัว',
+      'ตัวคนเดียว  ใจสู้',
     ];
     bridge = [
-      'ไม่มีอะไรจะเสียอีกแล้ววันนี้',
-      'มีเพียงชีวิตนี้ที่ทุ่มให้เธอ',
+      'ไม่มีใด  จะเสีย',
+      'เคลียร์หัวใจ  ทุ่มเท',
     ];
-    rhymeNote = 'สไตล์ร็อกสามัญชน / เพื่อชีวิต: คำหนักแน่นลงบีตคม ส่งสัมผัสต่อเนื่อง';
+    rhymeNote = 'สไตล์ร็อกสามัญชน / เพื่อชีวิต: คำหนักแน่น 4-6 พยางค์ เปิดช่องหายใจท้ายห้อง';
   } else if (
     moodLower.includes('sad') ||
     moodLower.includes('เศร้า') ||
@@ -1215,94 +1306,94 @@ export function buildStyledSimulatedSongLyrics(
     resolution === 'piercing-sting'
   ) {
     verse = [
-      `แสงไฟข้างถนนจางลงในคืนฝนซา${topicShort ? `นึกถึง${topicShort}` : ''}`,
-      'นาฬิกาบนผนังเดินช้ากว่าที่เคย',
-      'เลยผ่านมุมเดิมที่เคยเดินจับมือกัน',
-      'วันเวลาไม่ช่วยลบภาพจำในใจ',
-      'ในห้องว่างเปล่ามีเพียงเสียงลมหายใจ',
-      'ไกลเกินเอื้อมถึงแม้ยังรักหมดหัวใจ',
-      'ไม่เหลือร่องรอยของคำสัญญาวันนั้น',
-      'ฝันที่วาดไว้พังลงต่อหน้าต่อตา',
+      'แสงไฟถนน  จางลง',
+      'ตรงผนัง  เข็มเดิน',
+      'เกินเวลา  คุ้นเคย',
+      'เลยผ่านมุม  ถนน',
+      'วนความจำ  ในใจ',
+      'ไกลเกินเอื้อม  ถึงเธอ',
+      'เบลอเลือนลาง  สัญญา',
+      'พาความฝัน  พังลง',
     ];
     preChorus = [
-      'ยิ่งพยายามลืมกลับยิ่งจำฝังใจ',
-      'ไม่เข้าใจทำไมยังรอคนที่ไม่กลับมา',
+      'ยิ่งอยากลืม  ยิ่งจำ',
+      'ซ้ำยังรอ  คนไกล',
     ];
     chorus = [
-      'เธอเดินจากไปโดยไม่หันมอง',
-      'ปล่อยน้ำตานองบนทางเดิมลำพัง',
-      'พังลงหมดแล้วความหวังที่เคยสร้าง',
-      'ว่างเปล่าไปทั้งใจเมื่อไม่มีเธอ',
+      'เธอจากไป  ไม่มอง',
+      'นองน้ำตา  ลำพัง',
+      'พังความหวัง  หมดใจ',
+      'ไม่มีเธอ  อีกแล้ว',
     ];
     bridge = [
-      'ขอแค่ได้ร้องไห้ให้พอคืนนี้',
-      'พรุ่งนี้ค่อยลืมว่าเคยรักเธอมากเพียงใด',
+      'ขอร้องไห้  คืนนี้',
+      'พรุ่งนี้คง  ทำใจ',
     ];
-    rhymeNote = 'โหมดอารมณ์เศร้าบาดลึก: ส่งสัมผัสข้ามสระ (-า -> -ไอ -> -อง -> -าง) ไม่ซ้ำคำ';
+    rhymeNote = 'โหมดอารมณ์เศร้าบาดลึก: 4-5 พยางค์ ส่งสัมผัสสระต่อเนื่อง ไม่รัวคำ';
   } else {
     // Thai Pop / Boy Kosiyabong / Stamp / Tan Lipta / Acoustic Indie
     verse = [
-      `แสงแดดยามเย็นทอดเงาผ่านชานชาลา${topicShort ? `เรื่อง${topicShort}` : ''}`,
-      'เวลาหมุนไปพาเรื่องราวของเราเดินต่อ',
-      'รอข้อความสั้นๆ ที่เธอส่งมาทักทาย',
-      'คลายความเหนื่อยล้าที่แบกไว้มาทั้งวัน',
-      'ฉันแอบยิ้มทุกครั้งที่ได้ยินเสียงเธอ',
-      'เจอเรื่องหนักแค่ไหนก็พร้อมจะผ่านไป',
-      'ในโลกที่หมุนเร็วและวุ่นวายเหลือเกิน',
-      'เดินเคียงข้างกันแบบนี้ก็อุ่นใจพอ',
+      'แดดยามเย็น  พัดผ่าน',
+      'กาลเวลา  เดินต่อ',
+      'รอข้อความ  ทักทาย',
+      'คลายเหนื่อยล้า  ทั้งวัน',
+      'ฉันแอบยิ้ม  เบาเบา',
+      'เอาความเศร้า  ทิ้งไป',
+      'ในโลกหมุน  รวดเร็ว',
+      'เพียงข้างเธอ  อุ่นใจ',
     ];
     preChorus = [
-      'แค่ได้สบตากันในวินาทีนี้',
-      'ดีใจเหลือเกินที่ยังมีเธออยู่ข้างกาย',
+      'แค่สบตา  วันนี้',
+      'ดีเหลือเกิน  มีเธอ',
     ];
     chorus = [
-      'ต่อให้นาฬิกาทั้งโลกหยุดเดินพร้อมกัน',
-      'ฉันก็ยังหาวิธีเดินไปรักเธออยู่ดี',
-      'มีเหตุผลร้อยข้อที่ดูไม่เข้าที',
-      'ที่ใจเลือกแล้วก็คือเธอคนนี้คนเดียว',
+      'โลกหยุดเดิน  พร้อมกัน',
+      'ฉันยังเดิน  หาเธอ',
+      'เจอเรื่องราว  ร้อยพัน',
+      'มั่นใจมี  เพียงเธอ',
     ];
     bridge = [
-      'ไม่ว่าจะเจอลมพายุพัดแรงแค่ไหน',
-      'ในมือฉันยังจับมือเธอไว้ไม่ปล่อยเลย',
+      'พายุแรง  เพียงใด',
+      'ในมือฉัน  กุมเธอ',
     ];
-    rhymeNote = 'สไตล์ป๊อปร่วมสมัย: สัมผัสส่งท้ายวรรคเข้าต้นวรรคถัดไป และสลับสระ -า/-ไอ/-ัน/-ี ต่อเนื่อง';
+    rhymeNote = 'สไตล์ป๊อปร่วมสมัย: วลี 4-6 พยางค์ เว้นจังหวะหายใจกลางห้อง ร้องสบาย';
   }
 
   // Apply emotionalResolution overrides for chorus when explicit mode is requested
   if (resolution === 'piercing-sting') {
     chorus = [
-      'รักเท่าไรก็แพ้',
-      'แม้ทุ่มเทให้เธอหมดใจ',
-      'ยิ่งรั้งไว้ยิ่งเห็นเธอไป',
-      'คนไม่รักทำดีแค่ไหนก็สูญเปล่า',
+      'รักเท่าไร  ก็แพ้',
+      'แม้ทุ่มเท  ทั้งใจ',
+      'ไปต่อไม่  ได้เลย',
+      'คนไม่รัก  ต้องลา',
     ];
   } else if (resolution === 'fulfilling-warm') {
     chorus = [
-      'แค่มีเธออยู่ตรงนี้ข้างกัน',
-      'วันธรรมดาก็กลายเป็นวันแสนดี',
-      'กี่พายุที่พัดผ่านในชีวิตนี้',
-      'ที่ใจต้องการก็มีแค่เธอคนเดียว',
+      'มีเธออยู่  ข้างกัน',
+      'ทุกทุกวัน  แสนดี',
+      'กี่เรื่องราว  ที่มี',
+      'กุมมือนี้  อุ่นใจ',
     ];
   } else if (resolution === 'empowering-anthem') {
     chorus = [
-      'ลุกขึ้นยืนอีกครั้งแม้ล้มลง',
-      'ส่งเสียงหัวใจให้ก้องฟ้าไกล',
-      'ไม่มีกำแพงไหนขวางทางฝันได้',
-      'ในวันที่ใจยังสู้ไม่ยอมแพ้ใคร',
+      'ลุกขึ้นยืน  อีกครั้ง',
+      'ส่งความหวัง  ก้องฟ้า',
+      'ฝ่าลมฝน  พัดพา',
+      'ใจกล้าสู้  ไม่ถอย',
     ];
   } else if (resolution === 'catchy-earworm') {
     chorus = [
-      'บอกรักกันเลยได้ไหมตอนนี้',
-      'มีใจให้กันอย่ามัวรอรีบพูดมา',
-      'สายตาคู่นี้มันฟ้องอยู่ตลอดเวลา',
-      'ท้าให้ลองเปิดใจรักกันสักที',
+      'บอกรักเลย  ตอนนี้',
+      'อย่ารอรี  สายไป',
+      'ใจตรงกัน  แค่ไหน',
+      'บอกรักเลย  สักที',
     ];
   } else if (resolution === 'nostalgic-fade') {
     chorus = [
-      'ยังคิดถึงเธอเสมอเมื่อฝนโปรย',
-      'โรยราไปตามกาลเวลาที่ผ่านพ้น',
-      'บนทางเดินเดิมที่เคยมีสองคน',
-      'ฝนซาฟ้าสางใจยังค้างเพียงเงาเธอ',
+      'คิดถึงเธอ  ฝนโปรย',
+      'ลมพัดโชย  วันเก่า',
+      'เพลงข้างกาย  สองเรา',
+      'เหลือเพียงเงา  ในใจ',
     ];
   }
 
@@ -1348,12 +1439,23 @@ export function buildSimulatedArchitectSong(input: EasyArchitectInput): SongProj
     lyricDialect: input.lyricDialect,
     songwriterStyle: input.songwriterStyle,
     emotionalResolution: input.emotionalResolution,
+    lyricDensity: input.lyricDensity,
   });
 
   const verseLyrics = bundle.verse.slice(0, 4);
   const preChorusLyrics = bundle['pre-chorus'].slice(0, 2);
   const chorusLyrics = bundle.chorus.slice(0, 4);
   const outroLyrics = bundle.outro.slice(0, 2);
+
+  const simMelodyCtx: GuideMelodyContext = {
+    baseKey,
+    timeSignature: '4/4',
+    bpm,
+    vocalProfile: input.vocalProfile,
+    thaiGenre: effectiveGenre,
+    songwriterStyle: input.songwriterStyle,
+    lyricDensity: input.lyricDensity,
+  };
 
   const mkBars = (
     lines: string[],
@@ -1370,7 +1472,7 @@ export function buildSimulatedArchitectSong(input: EasyArchitectInput): SongProj
         playStyle: ringEnd && idx === lines.length - 1 ? 'let-ring' : 'normal',
         lyrics,
         melodyNotes: lyrics
-          ? buildDiatonicGuideNotesForChord(chord, idx, lyrics, undefined, sectionType)
+          ? buildDiatonicGuideNotesForChord(chord, idx, lyrics, undefined, sectionType, simMelodyCtx)
           : [],
       };
     });

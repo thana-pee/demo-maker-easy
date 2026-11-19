@@ -236,6 +236,22 @@ export function KaraokeTeleprompter({
                 >
                   {item.lyrics?.trim() ? (
                     item.lyrics
+                      .trim()
+                      .split(/\s{2,}/)
+                      .map((phrase, pIdx, arr) => (
+                        <React.Fragment key={pIdx}>
+                          {phrase}
+                          {pIdx < arr.length - 1 && (
+                            <span
+                              className="mx-2 text-amber-400/70 select-none font-normal"
+                              aria-hidden="true"
+                              title={lang === 'th' ? 'จังหวะเว้นหายใจ' : 'Breath pause'}
+                            >
+                              ·
+                            </span>
+                          )}
+                        </React.Fragment>
+                      ))
                   ) : (
                     <span className="inline-flex items-center gap-1.5 text-sm italic text-ink-400 font-normal">
                       <Music className="w-3.5 h-3.5" />

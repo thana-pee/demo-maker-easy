@@ -41,6 +41,7 @@ import {
   THAI_DIALECT_PROFILES,
   THAI_ERA_PROFILES,
   SONGWRITER_STYLE_PROFILES,
+  STORY_ARC_PRESETS,
 } from '@/lib/aiPrompts';
 import {
   transposeChord,
@@ -50,8 +51,12 @@ import {
 import { useLanguage } from '@/context/LanguageContext';
 import { MicRecorder, playAudioDataUrl } from '@/lib/micRecorder';
 import type {
+  LyricDensityMode,
   SectionType,
   SongProject,
+  StoryAnchorMode,
+  StoryBlueprintInput,
+  StoryBlueprintSummary,
   ThaiEmotionalResolution,
   ThaiLyricDialect,
   ThaiLyricEra,
@@ -81,6 +86,7 @@ interface ArchitectApiResult {
   model: string;
   song: SongProject;
   producerNotes: string[];
+  storyBlueprint?: StoryBlueprintSummary;
   rhymeValidation?: { passed: boolean; polished: boolean };
   transcribedLyrics?: string;
   confidenceNote?: string;
@@ -193,7 +199,15 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
   const [lyricEra, setLyricEra] = useState<ThaiLyricEra>('modern-indie');
   const [emotionalResolution, setEmotionalResolution] =
     useState<ThaiEmotionalResolution>('auto');
+  const [lyricDensity, setLyricDensity] = useState<LyricDensityMode>('balanced');
   const [topic, setTopic] = useState<string>('');
+  const [showStoryBlueprint, setShowStoryBlueprint] = useState<boolean>(false);
+  const [storyArcPreset, setStoryArcPreset] = useState<string>('auto');
+  const [customEmotionalArc, setCustomEmotionalArc] = useState<string>('');
+  const [openingAnchor, setOpeningAnchor] = useState<string>('');
+  const [hookAnchor, setHookAnchor] = useState<string>('');
+  const [hookAnchorMode, setHookAnchorMode] = useState<StoryAnchorMode>('flexible');
+  const [closingAnchor, setClosingAnchor] = useState<string>('');
 
   // Feature 1: Song Structure & Chord Progression Selection
   const [structurePreset, setStructurePreset] = useState<'standard-5' | 'full-hit-7' | 'extended-9' | 'custom'>('standard-5');
@@ -432,6 +446,24 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
 
     setIsGenerating(true);
     setErrorMsg(null);
+    const builtStoryBlueprint: StoryBlueprintInput | undefined =
+      storyArcPreset !== 'auto' ||
+      customEmotionalArc.trim() ||
+      openingAnchor.trim() ||
+      hookAnchor.trim() ||
+      closingAnchor.trim()
+        ? {
+            ...(storyArcPreset !== 'auto' ? { storyArcPreset } : {}),
+            ...(storyArcPreset === 'custom' && customEmotionalArc.trim()
+              ? { customEmotionalArc: customEmotionalArc.trim() }
+              : {}),
+            ...(openingAnchor.trim() ? { openingAnchor: openingAnchor.trim() } : {}),
+            ...(hookAnchor.trim()
+              ? { hookAnchor: hookAnchor.trim(), hookAnchorMode }
+              : {}),
+            ...(closingAnchor.trim() ? { closingAnchor: closingAnchor.trim() } : {}),
+          }
+        : undefined;
     try {
       const { res, data } = await postEasyApiJson('/api/advance/architect', {
         stylePreset,
@@ -444,6 +476,8 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
         lyricDialect,
         songwriterStyle,
         emotionalResolution,
+        lyricDensity,
+        ...(builtStoryBlueprint ? { storyBlueprint: builtStoryBlueprint } : {}),
         useProArgon,
         modelTier: useProArgon ? 'pro-argon' : 'standard',
         customStructure: activeSections,
@@ -641,6 +675,9 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
         stylePreset,
         vocalProfile,
         language: songLanguage,
+        thaiGenre: getPresetConfig(stylePreset).thaiGenre,
+        songwriterStyle,
+        lyricDensity,
         includeTranscribePass,
       });
 
@@ -1198,24 +1235,228 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
                     </div>
                   </div>
 
-                  {/* Step 5: 1-Sentence Idea */}
+                  {/* Lyric Density 3-Level Pacing Selector */}
                   <div className="space-y-1.5">
-                    <label htmlFor="easy-song-topic" className="text-xs font-bold text-ink-900 block">
-                      {lang === 'th' ? '5. เล่าไอเดียเพลงสั้นๆ (1 ประโยค):' : '5. Describe your song idea (1 sentence):'}
-                    </label>
+                    <span className="text-xs font-bold text-ink-900 block">
+                      {t.lyricDensityLabel}:
+                    </span>
+                    <div className="grid grid-cols-3 gap-2">
+                      {(
+                        [
+                          { id: 'airy' as const, label: t.lyricDensityAiry, desc: t.lyricDensityAiryDesc },
+                          { id: 'balanced' as const, label: t.lyricDensityBalanced, desc: t.lyricDensityBalancedDesc },
+                          { id: 'dense' as const, label: t.lyricDensityDense, desc: t.lyricDensityDenseDesc },
+                        ]
+                      ).map((opt) => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => setLyricDensity(opt.id)}
+                          aria-pressed={lyricDensity === opt.id}
+                          className={`p-2 rounded-2xl border text-left transition cursor-pointer ${
+                            lyricDensity === opt.id
+                              ? 'bg-accent-50 border-accent-500 ring-2 ring-accent-500/20'
+                              : 'bg-surface-2/60 border-hairline hover:border-accent-200'
+                          }`}
+                        >
+                          <div className="text-[11px] font-bold text-ink-900">{opt.label}</div>
+                          <div className="text-[10px] text-ink-500 mt-0.5 leading-snug">{opt.desc}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Step 5: Story Brief & Optional Blueprint */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <label htmlFor="easy-song-topic" className="text-xs font-bold text-ink-900">
+                        {lang === 'th'
+                          ? '5. เล่าเรื่องราว / ไอเดียเพลงของคุณ (สั้นหรือยาวก็ได้):'
+                          : '5. Describe your song story / brief (short or detailed):'}
+                      </label>
+                      <span className="text-[10px] font-mono-tabular text-ink-400">
+                        {topic.length}/1200
+                      </span>
+                    </div>
                     <textarea
                       id="easy-song-topic"
                       name="songTopic"
-                      rows={2}
+                      rows={4}
+                      maxLength={1200}
                       value={topic}
                       onChange={(e) => setTopic(e.target.value)}
                       placeholder={
                         lang === 'th'
-                          ? 'เช่น นั่งจิบกาแฟริมหน้าต่างตอนฝนตกแล้วคิดถึงคนรักเก่า...'
-                          : 'e.g., Drinking morning coffee by a rainy window thinking of a fresh start...'
+                          ? 'เล่าเหตุการณ์ อารมณ์ ตัวละคร หรือประโยคเด่นที่อยากให้มีในเพลง เช่น นั่งจิบกาแฟริมหน้าต่างตอนฝนตกแล้วคิดถึงคนรักเก่าที่เคยสัญญากันไว้...'
+                          : 'Tell the full story, imagery, or key moments you want across Verse -> Chorus -> Outro...'
                       }
                       className="w-full px-3.5 py-2.5 rounded-2xl border border-hairline bg-surface-2/60 text-sm text-ink-900 focus:outline-none focus:border-accent-500 focus:ring-2 focus:ring-accent-500/20"
                     />
+
+                    {/* Non-blocking Smart Structure Hint for multi-sentence briefs */}
+                    {(topic.trim().length > 180 || topic.includes('\n')) &&
+                      structurePreset === 'standard-5' && (
+                        <div className="px-3 py-2 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-between gap-2 text-[11px] text-amber-950">
+                          <span>
+                            {lang === 'th'
+                              ? '💡 เรื่องราวค่อนข้างละเอียด แนะนำสลับโครงสร้างเป็น "เพลงฮิต 7 ท่อน (มี Verse 1 + Verse 2)" เพื่อกระจายฉากไม่ให้อัดแน่นเกินไป'
+                              : '💡 Detailed story detected — switch to Full Hit (7 Sections with Verse 1 + 2) so scenes breathe naturally.'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setStructurePreset('full-hit-7')}
+                            className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-[10px] shrink-0 cursor-pointer"
+                          >
+                            {lang === 'th' ? 'สลับเป็น 7 ท่อน' : 'Use 7 Sections'}
+                          </button>
+                        </div>
+                      )}
+
+                    {/* Collapsible Story Blueprint & Anchor Lines */}
+                    <div className="rounded-2xl border border-hairline bg-surface-2/50 overflow-hidden">
+                      <button
+                        type="button"
+                        onClick={() => setShowStoryBlueprint((prev) => !prev)}
+                        aria-expanded={showStoryBlueprint}
+                        className="w-full px-3.5 py-2 flex items-center justify-between gap-2 text-left text-xs font-bold text-ink-800 hover:bg-surface-2 transition cursor-pointer"
+                      >
+                        <span>
+                          {lang === 'th'
+                            ? '🎯 กำหนดการไล่ระดับอารมณ์ & ล็อกประโยคสำคัญ (Optional)'
+                            : '🎯 Emotional Arc & Key Anchor Lines (Optional)'}
+                        </span>
+                        <span className="text-[11px] text-ink-500">
+                          {showStoryBlueprint ? '▲' : '▼'}
+                        </span>
+                      </button>
+
+                      {showStoryBlueprint && (
+                        <div className="px-3.5 pb-3.5 pt-2 border-t border-hairline space-y-2.5 text-xs">
+                          <div className="space-y-1">
+                            <label
+                              htmlFor="easy-story-arc-preset"
+                              className="text-[11px] font-semibold text-ink-700 block"
+                            >
+                              {lang === 'th' ? 'เส้นเรื่องและพัฒนาการอารมณ์ (Emotional Arc)' : 'Emotional Arc Progression'}
+                            </label>
+                            <select
+                              id="easy-story-arc-preset"
+                              value={storyArcPreset}
+                              onChange={(e) => setStoryArcPreset(e.target.value)}
+                              className="w-full px-2.5 py-1.5 rounded-xl bg-surface-1 border border-hairline text-xs text-ink-900 focus:outline-none focus:ring-2 focus:ring-accent-500/30"
+                            >
+                              {STORY_ARC_PRESETS.map((presetItem) => (
+                                <option key={presetItem.id} value={presetItem.id}>
+                                  {lang === 'th' ? presetItem.labelTh : presetItem.labelEn}
+                                </option>
+                              ))}
+                            </select>
+                            {storyArcPreset === 'custom' && (
+                              <input
+                                type="text"
+                                value={customEmotionalArc}
+                                onChange={(e) => setCustomEmotionalArc(e.target.value)}
+                                placeholder={
+                                  lang === 'th'
+                                    ? 'เช่น เริ่มจากเย็นชา -> ค่อยๆ รู้สึกผิด -> ขอโทษสุดใจ -> เดินจากอย่างสงบ'
+                                    : 'e.g., Cold distance -> Quiet regret -> Honest apology -> Peaceful parting'
+                                }
+                                className="w-full mt-1 px-2.5 py-1.5 rounded-xl bg-surface-1 border border-hairline text-xs text-ink-900 focus:outline-none focus:ring-2 focus:ring-accent-500/30"
+                              />
+                            )}
+                          </div>
+
+                          <div className="space-y-1">
+                            <label
+                              htmlFor="easy-opening-anchor"
+                              className="text-[11px] font-semibold text-ink-700 block"
+                            >
+                              {lang === 'th' ? 'ประโยค/ภาพเปิดท่อนแรก (Opening Anchor)' : 'Opening Line / Imagery'}
+                            </label>
+                            <input
+                              id="easy-opening-anchor"
+                              type="text"
+                              value={openingAnchor}
+                              onChange={(e) => setOpeningAnchor(e.target.value)}
+                              placeholder={
+                                lang === 'th'
+                                  ? 'เช่น ฝนตกริมหน้าต่าง...'
+                                  : 'e.g., Rain taps softly on the glass...'
+                              }
+                              className="w-full px-2.5 py-1.5 rounded-xl bg-surface-1 border border-hairline text-xs text-ink-900 focus:outline-none focus:ring-2 focus:ring-accent-500/30"
+                            />
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <label
+                                htmlFor="easy-hook-anchor"
+                                className="text-[11px] font-semibold text-ink-700"
+                              >
+                                {lang === 'th' ? 'คำ/ประโยคบังคับในท่อนฮุค (Must-Have Hook)' : 'Must-Have Hook Phrase'}
+                              </label>
+                              <div className="inline-flex rounded-lg border border-hairline bg-surface-1 p-0.5 text-[10px]">
+                                <button
+                                  type="button"
+                                  onClick={() => setHookAnchorMode('exact')}
+                                  className={`px-2 py-0.5 rounded-md font-bold cursor-pointer transition ${
+                                    hookAnchorMode === 'exact'
+                                      ? 'bg-accent-500 text-white'
+                                      : 'text-ink-600'
+                                  }`}
+                                >
+                                  {lang === 'th' ? 'ใช้คำเป๊ะ (Exact)' : 'Exact'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setHookAnchorMode('flexible')}
+                                  className={`px-2 py-0.5 rounded-md font-bold cursor-pointer transition ${
+                                    hookAnchorMode === 'flexible'
+                                      ? 'bg-accent-500 text-white'
+                                      : 'text-ink-600'
+                                  }`}
+                                >
+                                  {lang === 'th' ? 'เกลาเข้าสัมผัส (Flexible)' : 'Flexible'}
+                                </button>
+                              </div>
+                            </div>
+                            <input
+                              id="easy-hook-anchor"
+                              type="text"
+                              value={hookAnchor}
+                              onChange={(e) => setHookAnchor(e.target.value)}
+                              placeholder={
+                                lang === 'th'
+                                  ? 'เช่น รักเธอเท่าเดิม แต่เดินต่อไม่ไหว'
+                                  : 'e.g., Still in love, but walking away'
+                              }
+                              className="w-full px-2.5 py-1.5 rounded-xl bg-surface-1 border border-hairline text-xs text-ink-900 focus:outline-none focus:ring-2 focus:ring-accent-500/30"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label
+                              htmlFor="easy-closing-anchor"
+                              className="text-[11px] font-semibold text-ink-700 block"
+                            >
+                              {lang === 'th' ? 'ประโยคทิ้งท้าย / บทสรุปท่อนจบ (Closing Anchor)' : 'Closing / Outro Anchor'}
+                            </label>
+                            <input
+                              id="easy-closing-anchor"
+                              type="text"
+                              value={closingAnchor}
+                              onChange={(e) => setClosingAnchor(e.target.value)}
+                              placeholder={
+                                lang === 'th'
+                                  ? 'เช่น ปล่อยมือกันตรงนี้...'
+                                  : 'e.g., Let me remember you softly...'
+                              }
+                              className="w-full px-2.5 py-1.5 rounded-xl bg-surface-1 border border-hairline text-xs text-ink-900 focus:outline-none focus:ring-2 focus:ring-accent-500/30"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   {/* Model Tier Selector: Standard vs Pro Argon (10 Cr Paid Only) */}
@@ -1626,6 +1867,46 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
                     {transcribedLyricsPreview && (
                       <div className="text-emerald-800">
                         {lang === 'th' ? 'คำ/ทำนองที่ถอดได้:' : 'Transcribed:'} &ldquo;{transcribedLyricsPreview}&rdquo;
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {(generatedResult.storyBlueprint || generatedResult.producerNotes.length > 0) && (
+                  <div className="p-2.5 rounded-xl bg-surface-1 border border-hairline text-[11px] space-y-1.5">
+                    {generatedResult.storyBlueprint && (
+                      <div className="space-y-1">
+                        <div className="font-bold text-ink-900">
+                          📖 {lang === 'th' ? 'โครงเรื่องที่ AI รวบยอด:' : 'AI Story Blueprint:'}{' '}
+                          <span className="font-medium text-ink-700">
+                            {generatedResult.storyBlueprint.coreTheme}
+                          </span>
+                        </div>
+                        {generatedResult.storyBlueprint.emotionalArcSummary && (
+                          <div className="text-[10px] text-accent-text font-semibold">
+                            ↳ {generatedResult.storyBlueprint.emotionalArcSummary}
+                          </div>
+                        )}
+                        {generatedResult.storyBlueprint.sectionBeats &&
+                          generatedResult.storyBlueprint.sectionBeats.length > 0 && (
+                            <div className="flex flex-wrap gap-1 pt-0.5">
+                              {generatedResult.storyBlueprint.sectionBeats.map((beat, idx) => (
+                                <span
+                                  key={idx}
+                                  className="px-1.5 py-0.5 rounded-md bg-accent-50 border border-accent-200/70 text-[10px] text-ink-800"
+                                >
+                                  <strong>{beat.sectionType}:</strong> {beat.beatGoal}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                      </div>
+                    )}
+                    {generatedResult.producerNotes.length > 0 && (
+                      <div className="text-[10px] text-ink-500 space-y-0.5 pt-0.5 border-t border-hairline/60">
+                        {generatedResult.producerNotes.slice(0, 3).map((note, idx) => (
+                          <div key={idx}>• {note}</div>
+                        ))}
                       </div>
                     )}
                   </div>

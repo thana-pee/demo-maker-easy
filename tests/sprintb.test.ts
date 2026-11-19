@@ -351,13 +351,14 @@ test('Sprint B aiPrompts & architect: slow Thai Pop/R&B budget, Outro rule, and 
   assert.equal(default68.min, 4);
   assert.equal(default68.max, 6);
 
-  // Modern slow Pop/R&B at 68 BPM allows natural 5-8 phrasing
+  // Slow Pop/R&B at 68 BPM uses singable 4-6 phrasing with trailing breath rest
   const dee68 = getSyllableBudgetForBpm(68, '4/4', {
     thaiGenre: 'thai-pop',
     songwriterStyle: 'dee-nitipong',
   });
   assert.equal(dee68.tempoFeel, 'slow');
-  assert.equal(dee68.max, 8);
+  assert.equal(dee68.max, 6);
+  assert.ok(dee68.restSteps >= 2);
 
   // Heritage Luk-Thung / Luk-Krung stays tighter
   const lukThung68 = getSyllableBudgetForBpm(68, '4/4', {
@@ -412,7 +413,7 @@ test('Sprint B sectionUtils & tts-cue: buildSectionTtsTextPlan prevents mid-word
   const shortPlan = buildSectionTtsTextPlan(shortBars, 240);
   assert.equal(shortPlan.wasTruncated, false);
   assert.equal(shortPlan.omittedBarsCount, 0);
-  assert.equal(shortPlan.text, 'รักเธอเสมอ, ไม่เคยเปลี่ยนไป');
+  assert.equal(shortPlan.text, 'รักเธอเสมอ\nไม่เคยเปลี่ยนไป');
 
   const longBars: SongBar[] = [
     makeBar(0, 'C', 'ฉันเดินอยู่บนถนนเส้นเดิมที่แสนยาวไกลใต้แสงดาวในยามค่ำคืนที่เงียบงัน'),

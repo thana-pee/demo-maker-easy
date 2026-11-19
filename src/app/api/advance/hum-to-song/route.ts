@@ -30,7 +30,13 @@ import {
   type EasyArchitectInput,
   type VocalProfile,
 } from '@/lib/songArchitect';
-import type { SongProject, TimeSignature } from '@/types/song';
+import type {
+  LyricDensityMode,
+  SongProject,
+  ThaiSongGenre,
+  ThaiSongwriterStyle,
+  TimeSignature,
+} from '@/types/song';
 
 export const maxDuration = 60;
 
@@ -240,6 +246,19 @@ export async function POST(request: Request): Promise<Response> {
       : 'neutral';
   const language: 'th' | 'en' = obj.language === 'en' ? 'en' : 'th';
   const includeTranscribePass = Boolean(obj.includeTranscribePass);
+  const preset = getPresetConfig(stylePreset);
+  const effectiveThaiGenre: ThaiSongGenre =
+    typeof obj.thaiGenre === 'string'
+      ? (obj.thaiGenre as ThaiSongGenre)
+      : preset.thaiGenre ?? 'thai-pop';
+  const songwriterStyle =
+    typeof obj.songwriterStyle === 'string'
+      ? (obj.songwriterStyle as ThaiSongwriterStyle)
+      : undefined;
+  const lyricDensity: LyricDensityMode | undefined =
+    obj.lyricDensity === 'airy' || obj.lyricDensity === 'balanced' || obj.lyricDensity === 'dense'
+      ? obj.lyricDensity
+      : undefined;
 
   const humCost = CREDIT_COST_TABLE.aiHumToSong;
   let billing: ServerBillingPreDeductResult = { active: false };
@@ -282,6 +301,9 @@ export async function POST(request: Request): Promise<Response> {
           tempoFeel: durationSec >= 24 ? 'slow' : 'medium',
           topic: language === 'en' ? 'Hummed melody starter' : 'ไอเดียจากเสียงฮัมทำนอง',
           language,
+          thaiGenre: effectiveThaiGenre,
+          songwriterStyle,
+          lyricDensity,
         };
         await recordServerFeatureEvent(
           request,
@@ -327,6 +349,9 @@ export async function POST(request: Request): Promise<Response> {
       language,
       durationSec,
       transcribedHint,
+      thaiGenre: effectiveThaiGenre,
+      songwriterStyle,
+      lyricDensity,
     });
 
     const promptParts: GeminiInputPart[] = [
@@ -337,7 +362,11 @@ export async function POST(request: Request): Promise<Response> {
     const gemini = await callGeminiJson<Record<string, unknown>>(promptParts, {
       model: GEMINI_MODEL_MAIN,
       fallbackModels: [GEMINI_MODEL_FLASH, GEMINI_MODEL_LITE],
-      systemInstruction: buildHumToSongSystemPrompt(),
+      systemInstruction: buildHumToSongSystemPrompt({
+        thaiGenre: effectiveThaiGenre,
+        songwriterStyle,
+        lyricDensity,
+      }),
       responseSchema: HUM_TO_SONG_RESPONSE_SCHEMA,
       maxOutputTokens: 8192,
       thinkingLevel: 'low',
@@ -352,6 +381,9 @@ export async function POST(request: Request): Promise<Response> {
         transcribedHint ||
         (language === 'en' ? 'Hummed melody starter' : 'ไอเดียจากเสียงฮัมทำนอง'),
       language,
+      thaiGenre: effectiveThaiGenre,
+      songwriterStyle,
+      lyricDensity,
     };
 
     if (!gemini.ok) {

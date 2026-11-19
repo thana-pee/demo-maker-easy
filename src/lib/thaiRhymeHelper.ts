@@ -10,6 +10,7 @@
  */
 
 import { countThaiEnglishSyllables } from './sectionUtils';
+import type { SectionType } from '../types/song';
 
 export { countThaiEnglishSyllables };
 
@@ -417,11 +418,15 @@ export function segmentThaiWordToSyllables(rawInput: string): string[] {
 
   const syllables: string[] = [];
 
-  for (const token of wordTokens) {
-    if (!/[\u0E01-\u0E2E]/.test(token)) {
-      syllables.push(token);
+  for (const rawToken of wordTokens) {
+    if (!/[\u0E01-\u0E2E]/.test(rawToken)) {
+      syllables.push(rawToken);
       continue;
     }
+
+    const token = rawToken
+      .replace(/(ชา|ญา|ธา|บั|มั|วั|เกียร)ต\u0E34(?=$|[\u0E40-\u0E44])/g, '$1ต')
+      .replace(/(เห|ธา|เก)ต\u0E38(?=$|[\u0E40-\u0E44])/g, '$1ต');
 
     let i = 0;
     const len = token.length;
@@ -452,35 +457,42 @@ export function segmentThaiWordToSyllables(rawInput: string): string[] {
         const afterC3 = i + 3 < len ? token[i + 3] : '';
 
         // รองรับควบกล้ำแท้, ห นำ, อ นำ และอักษรนำ 2 พยางค์ที่มีสระหน้า (เช่น เสมอ, เฉลย, แสดง)
+        const isRorHanAhead = c2 === 'ร' && afterC2 === 'ร';
+        const isTrueCluster =
+          TRUE_CLUSTERS.has(pair) &&
+          !isRorHanAhead &&
+          (FOLLOWING_VOWELS.has(afterC2) ||
+            TONE_MARKS.has(afterC2) ||
+            hasLeadingVowel ||
+            (Boolean(afterC2) &&
+              isThaiConsonant(afterC2) &&
+              !FOLLOWING_VOWELS.has(afterC3) &&
+              !TONE_MARKS.has(afterC3) &&
+              !LEADING_VOWELS.has(afterC3) &&
+              afterC2 !== '\u0E4C'));
+
         const isPseudoClusterWithLeadingVowel =
           hasLeadingVowel &&
           c2 &&
           isThaiConsonant(c2) &&
+          c2 !== 'อ' &&
           !FOLLOWING_VOWELS.has(afterC2) &&
           !TONE_MARKS.has(afterC2) &&
           afterC2 !== '\u0E4C' &&
-          (afterC2 === 'อ' || afterC2 === 'ย' || (isThaiConsonant(afterC2) && !FOLLOWING_VOWELS.has(afterC3) && !LEADING_VOWELS.has(afterC2)));
+          !(afterC2 === 'ร' && !afterC3) &&
+          (afterC2 === 'อ' ||
+            afterC2 === 'ย' ||
+            (isThaiConsonant(afterC2) && !FOLLOWING_VOWELS.has(afterC3) && !LEADING_VOWELS.has(afterC2)));
 
         if (
           c2 &&
           isThaiConsonant(c2) &&
           (HO_NAM_CLUSTERS.has(pair) ||
-            TRUE_CLUSTERS.has(pair) ||
+            isTrueCluster ||
             (pair === 'อย' && (afterC2 === 'า' || afterC2 === 'ู' || afterC2 === '่')) ||
             isPseudoClusterWithLeadingVowel)
         ) {
-          if (
-            HO_NAM_CLUSTERS.has(pair) ||
-            pair === 'อย' ||
-            isPseudoClusterWithLeadingVowel ||
-            FOLLOWING_VOWELS.has(afterC2) ||
-            TONE_MARKS.has(afterC2) ||
-            hasLeadingVowel
-          ) {
-            i += 2;
-          } else {
-            i += 1;
-          }
+          i += 2;
         } else {
           i += 1;
         }
@@ -545,6 +557,23 @@ export function segmentThaiWordToSyllables(rawInput: string): string[] {
       }
 
       // 4. Optional coda consonant (+ silent C์)
+      const prevEndChar = token[i - 1] ?? '';
+      const prev2Char = token[i - 2] ?? '';
+      const endedWithOpenSaraAo =
+        hasLeadingVowel &&
+        leadingVowelChar === 'เ' &&
+        !hasFollowingVowelMark &&
+        (prevEndChar === 'า' || (TONE_MARKS.has(prevEndChar) && prev2Char === 'า'));
+      const endedWithOpenMark =
+        prevEndChar === 'ะ' ||
+        prevEndChar === 'ำ' ||
+        (TONE_MARKS.has(prevEndChar) && (prev2Char === 'ะ' || prev2Char === 'ำ'));
+      const endedWithOpenAi =
+        hasLeadingVowel &&
+        (leadingVowelChar === 'ใ' || leadingVowelChar === 'ไ') &&
+        !hasFollowingVowelMark;
+      const isOpenOnlyNucleus = endedWithOpenSaraAo || endedWithOpenMark || endedWithOpenAi;
+
       if (i < len && isThaiConsonant(token[i])) {
         const nextChar = i + 1 < len ? token[i + 1] : '';
         const next2 = i + 2 < len ? token[i + 2] : '';
@@ -554,40 +583,72 @@ export function segmentThaiWordToSyllables(rawInput: string): string[] {
           i += 2;
         } else if (FOLLOWING_VOWELS.has(nextChar) && next2 === '\u0E4C') {
           i += 3;
+        } else if (endedWithOpenAi && leadingVowelChar === 'ไ' && token[i] === 'ย' && (i + 1 >= len || LEADING_VOWELS.has(nextChar))) {
+          // รองรับคำว่า ไทย, ไชย (ไม่รวม สไบ หรือ ไกล)
+          i += 1;
+        } else if (isOpenOnlyNucleus) {
+          // สระ -ะ, -ำ, เ-า, ไ-, ใ- ไม่รับตัวสะกดปกติ (ไม่กินพยัญชนะต้นของพยางค์ถัดไป เช่น กระจก -> กระ|จก)
         } else if (token[i] === 'ร' && token[i + 1] === 'ร') {
-          // ร หัน (บรร-, สรร-, อัศจรรย์)
+          // ร หัน (บรร-, สรร-, กรรม-, อัศจรรย์)
           i += 2;
           if (i < len && isThaiConsonant(token[i]) && token[i + 1] === '\u0E4C') {
             i += 2;
+          } else if (
+            i < len &&
+            isThaiConsonant(token[i]) &&
+            (i + 1 >= len || LEADING_VOWELS.has(token[i + 1]))
+          ) {
+            i += 1;
           }
         } else if (
-          !LEADING_VOWELS.has(nextChar) &&
           !FOLLOWING_VOWELS.has(nextChar) &&
           !TONE_MARKS.has(nextChar) &&
+          !(nextChar === 'ร' && next2 === 'ร') &&
           !(nextChar === 'อ' && !FOLLOWING_VOWELS.has(next2) && isThaiConsonant(next2))
         ) {
-          // Consume coda consonant as long as it doesn't start another CV syllable
-          const codaCons = token[i];
-          const cAfterCoda = i + 1 < len ? token[i + 1] : '';
-          const c2AfterCoda = i + 2 < len ? token[i + 2] : '';
+          // กรณีพยัญชนะเปลือย 3 ตัวเรียง (เช่น ถนน, ขนม, ตลก, สงบ): พยางค์แรกอ่านอะกึ่งเสียง C1 แล้วให้ C2C3 เป็นพยางค์หลัง
+          const isBareSingleOnset = !hasLeadingVowel && !hasFollowingVowelMark && i - start === 1;
+          const twoBareConsonantsAhead =
+            isBareSingleOnset &&
+            isThaiConsonant(nextChar) &&
+            next2 !== '\u0E4C' &&
+            (!next2 || LEADING_VOWELS.has(next2));
 
-          // เช็กว่าตัวถัดไปเป็น C+V หรือไม่ (ถ้า codaCons ไม่ได้ตามด้วยสระ และ cAfterCoda ตามด้วยสระ -> codaCons ยังเป็นตัวสะกดได้!)
-          const codaIsFollowedByClusterVowel =
-            cAfterCoda &&
-            isThaiConsonant(cAfterCoda) &&
-            HO_NAM_CLUSTERS.has(codaCons + cAfterCoda) &&
-            (FOLLOWING_VOWELS.has(c2AfterCoda) || TONE_MARKS.has(c2AfterCoda));
+          if (!twoBareConsonantsAhead) {
+            // Consume coda consonant as long as it doesn't start another CV syllable
+            const codaCons = token[i];
+            const cAfterCoda = i + 1 < len ? token[i + 1] : '';
+            const c2AfterCoda = i + 2 < len ? token[i + 2] : '';
 
-          if (!codaIsFollowedByClusterVowel) {
-            i += 1;
-            // Absorb trailing silent consonant+karan เช่น จันทร์, ชัวร์, ศิลป์
-            while (i < len && isThaiConsonant(token[i])) {
-              if (token[i + 1] === '\u0E4C') {
-                i += 2;
-              } else if (FOLLOWING_VOWELS.has(token[i + 1] ?? '') && token[i + 2] === '\u0E4C') {
-                i += 3;
-              } else {
-                break;
+            // เช็กว่าตัวถัดไปเป็น C+V หรือไม่ (ถ้า codaCons ไม่ได้ตามด้วยสระ และ cAfterCoda ตามด้วยสระ -> codaCons ยังเป็นตัวสะกดได้!)
+            const codaIsFollowedByClusterVowel =
+              cAfterCoda &&
+              isThaiConsonant(cAfterCoda) &&
+              HO_NAM_CLUSTERS.has(codaCons + cAfterCoda) &&
+              (FOLLOWING_VOWELS.has(c2AfterCoda) || TONE_MARKS.has(c2AfterCoda));
+
+            if (!codaIsFollowedByClusterVowel) {
+              i += 1;
+              // ดูด ร ไม่ออกเสียงหลังตัวสะกดแม่ กก/กด/กบ (เช่น มิตร, บุตร, เพชร, จักร, สมุทร, มิตรภาพ)
+              if (
+                i < len &&
+                token[i] === 'ร' &&
+                'กขคฆจชดตถทธบปพภ'.includes(codaCons) &&
+                (i + 1 >= len ||
+                  LEADING_VOWELS.has(token[i + 1]) ||
+                  (isThaiConsonant(token[i + 1]) && FOLLOWING_VOWELS.has(token[i + 2] ?? '')))
+              ) {
+                i += 1;
+              }
+              // Absorb trailing silent consonant+karan เช่น จันทร์, ชัวร์, ศิลป์
+              while (i < len && isThaiConsonant(token[i])) {
+                if (token[i + 1] === '\u0E4C') {
+                  i += 2;
+                } else if (FOLLOWING_VOWELS.has(token[i + 1] ?? '') && token[i + 2] === '\u0E4C') {
+                  i += 3;
+                } else {
+                  break;
+                }
               }
             }
           }
@@ -1065,9 +1126,11 @@ export function filterThaiRhymes(
 export interface ValidateThaiLyricOptions {
   bpm?: number;
   timeSignature?: '4/4' | '3/4' | '6/8';
+  sectionType?: SectionType;
   minSyllables?: number;
   maxSyllables?: number;
   enforceSyllableBudget?: boolean;
+  allowCoupletOrAlternateRhyme?: boolean;
 }
 
 export interface OutOfBudgetBarReport {
@@ -1122,11 +1185,12 @@ function resolveDefaultSyllableBounds(options?: ValidateThaiLyricOptions): {
   expectedMax: number;
 } {
   const bpm = typeof options?.bpm === 'number' && Number.isFinite(options.bpm) ? options.bpm : 85;
-  const isWaltz = options?.timeSignature === '3/4';
+  const isCompound = options?.timeSignature === '3/4' || options?.timeSignature === '6/8';
+  const isOutro = options?.sectionType === 'outro';
   const defaultMin =
-    options?.minSyllables ?? (bpm < 80 ? (isWaltz ? 4 : 4) : bpm <= 115 ? 5 : 6);
+    options?.minSyllables ?? (isOutro ? 3 : bpm <= 76 ? (isCompound ? 3 : 4) : isCompound ? 4 : 5);
   const defaultMax =
-    options?.maxSyllables ?? (bpm < 80 ? (isWaltz ? 8 : 10) : bpm <= 115 ? 12 : 14);
+    options?.maxSyllables ?? (isOutro ? (isCompound ? 4 : 5) : bpm <= 76 ? (isCompound ? 5 : 6) : isCompound ? 6 : 7);
   return {
     expectedMin: Math.max(1, defaultMin),
     expectedMax: Math.max(defaultMin, defaultMax),
@@ -1222,13 +1286,24 @@ export function validateThaiLyricCouplets(
   const totalTransitions = Math.max(1, cleaned.length - 1);
   let linkedTransitions = 0;
 
+  const allowFlexibleCouplets =
+    options?.allowCoupletOrAlternateRhyme === true ||
+    (typeof options?.maxSyllables === 'number' && options.maxSyllables <= 6);
+
   for (let i = 0; i < cleaned.length - 1; i += 1) {
     const directAdjacent = matchedPairs.some((p) => p.fromBar === i && p.toBar === i + 1);
     const alternatingOpen = matchedPairs.some((p) => p.fromBar === i && p.toBar === i + 2);
     const alternatingClose =
       i > 0 && matchedPairs.some((p) => p.fromBar === i - 1 && p.toBar === i + 1);
+    const coupletBoundaryTransition =
+      allowFlexibleCouplets &&
+      i % 2 === 1 &&
+      i > 0 &&
+      i + 2 < cleaned.length &&
+      matchedPairs.some((p) => p.fromBar === i - 1 && p.toBar === i) &&
+      matchedPairs.some((p) => p.fromBar === i + 1 && p.toBar === i + 2);
 
-    if (directAdjacent || alternatingOpen || alternatingClose) {
+    if (directAdjacent || alternatingOpen || alternatingClose || coupletBoundaryTransition) {
       linkedTransitions += 1;
     } else {
       weakPairs.push([i, i + 1]);

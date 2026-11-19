@@ -22,6 +22,7 @@ export interface ContinueStoryConfig {
   chords: string[];
   storyDirection: string;
   customTopic: string;
+  anchorPhrase?: string;
   actionType: 'ai-lyric' | 'blank';
 }
 
@@ -234,6 +235,7 @@ export const ContinueStoryModal: React.FC<ContinueStoryModalProps> = ({
 
   const [storyDirectionId, setStoryDirectionId] = useState<string>(initialStoryDir);
   const [customTopic, setCustomTopic] = useState<string>('');
+  const [anchorPhrase, setAnchorPhrase] = useState<string>('');
 
   // Extract last lyrics line from previous section for context
   const previousLyricsPreview = useMemo(() => {
@@ -298,6 +300,7 @@ export const ContinueStoryModal: React.FC<ContinueStoryModalProps> = ({
       chords: activeChords,
       storyDirection: dirLabel,
       customTopic: customTopic.trim(),
+      ...(anchorPhrase.trim() ? { anchorPhrase: anchorPhrase.trim() } : {}),
       actionType,
     });
   };
@@ -547,17 +550,29 @@ export const ContinueStoryModal: React.FC<ContinueStoryModalProps> = ({
             </div>
 
             {/* Custom Topic / Cue */}
-            <div className="pt-1">
-              <input
-                type="text"
+            <div className="pt-1 space-y-2">
+              <textarea
+                rows={2}
+                maxLength={600}
                 value={customTopic}
                 onChange={(e) => setCustomTopic(e.target.value)}
                 placeholder={
                   lang === 'th'
-                    ? 'คีย์เวิร์ดเพิ่มเติมสำหรับท่อนนี้ (ไม่บังคับ) เช่น พูดถึงรถไฟ, กลิ่นฝน, สัญญาใจ...'
-                    : 'Additional topic or keywords (optional)...'
+                    ? 'เล่าเหตุการณ์หรือรายละเอียดสำหรับท่อนนี้ (ไม่บังคับ) เช่น เดินกลับถึงชานชาลาตอนฝนซา...'
+                    : 'Describe scene continuity or imagery (optional)...'
                 }
                 className="w-full px-3.5 py-2 rounded-xl bg-surface-2 border border-hairline text-xs text-ink-900 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-accent-500/30"
+              />
+              <input
+                type="text"
+                value={anchorPhrase}
+                onChange={(e) => setAnchorPhrase(e.target.value)}
+                placeholder={
+                  lang === 'th'
+                    ? 'ประโยค/คำที่ต้องมีในท่อนนี้ (Optional) เช่น จำคำสัญญาไว้...'
+                    : 'Must-have phrase / anchor for this section (optional)...'
+                }
+                className="w-full px-3.5 py-1.5 rounded-xl bg-surface-2 border border-hairline text-xs text-ink-900 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-accent-500/30"
               />
             </div>
           </div>

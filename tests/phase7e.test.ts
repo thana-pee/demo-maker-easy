@@ -361,11 +361,11 @@ test('Phase 7E AI Prompts & Schemas: tighter <=72 BPM budget, Phase 7C grooves i
   assert.equal(slow68.min, 4);
   assert.equal(slow68.max, 6);
 
-  // Preserve 74 BPM 5-8 invariant
+  // Singable Phrasing standard: <=76 BPM uses '4-6 พยางค์' with breath rests
   const slow74 = getSyllableBudgetForBpm(74, '4/4');
-  assert.equal(slow74.min, 5);
-  assert.equal(slow74.max, 8);
-  assert.ok(slow74.guidance.includes('5-8 พยางค์'));
+  assert.equal(slow74.min, 4);
+  assert.equal(slow74.max, 6);
+  assert.ok(slow74.guidance.includes('4-6 พยางค์'));
 
   // Key diversity & anti-break guidance in prompts
   const sysPrompt = buildEasyArchitectSystemPrompt({ bpm: 68, thaiGenre: 'thai-pop' });

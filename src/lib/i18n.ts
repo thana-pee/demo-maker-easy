@@ -156,6 +156,30 @@ export interface Translations {
   stopRecBooth: string;
   fxPresetLabel: string;
   autoDuckingLabel: string;
+
+  // Phase 9: Singable Phrasing, Lyric Density & Story Blueprint
+  lyricDensityLabel: string;
+  lyricDensityAiry: string;
+  lyricDensityAiryDesc: string;
+  lyricDensityBalanced: string;
+  lyricDensityBalancedDesc: string;
+  lyricDensityDense: string;
+  lyricDensityDenseDesc: string;
+  pacingComfortable: string;
+  pacingFastWarning: string;
+  pacingSyllablesPerSec: string;
+  storyBriefLabel: string;
+  storyBriefPlaceholder: string;
+  storyStructureHintTitle: string;
+  storyStructureHintBtn: string;
+  storyBlueprintToggle: string;
+  storyArcLabel: string;
+  storyOpeningAnchor: string;
+  storyHookAnchor: string;
+  storyHookExact: string;
+  storyHookFlexible: string;
+  storyClosingAnchor: string;
+  sectionAnchorLabel: string;
 }
 
 export const translations: Record<Language, Translations> = {
@@ -273,7 +297,7 @@ export const translations: Record<Language, Translations> = {
 
     easyModeBtn: '✨ เริ่มเร็ว Easy Mode (4 เหรียญ)',
     easyModeTitle: 'Easy Mode — เสกโครงเพลงทั้งเพลงใน 1 คลิก',
-    easyModeSubtitle: 'เลือกแนวเพลง โทนเสียงร้อง และเล่าไอเดีย 1 ประโยค AI จะจัดคอร์ด เนื้อร้อง เมโลดี้ และวงดนตรีให้ครบพร้อมฟังทันที',
+    easyModeSubtitle: 'เลือกแนวเพลง โทนเสียงร้อง และเล่าเรื่องราวของคุณ (สั้นหรือยาวก็ได้) AI จะจัดคอร์ด เนื้อร้องที่มีช่องหายใจ เมโลดี้ และวงดนตรีให้พร้อมฟังทันที',
     stageDraft: '1. ร่างเนื้อ & คอร์ด',
     stageArranged: '2. เรียบเรียงวง',
     stageVocal: '3. อัดเสียงร้อง',
@@ -281,7 +305,7 @@ export const translations: Record<Language, Translations> = {
     inlineAiQuick: 'แต่งเนื้อท่อนนี้ (1 เหรียญ)',
     inlineAiDeep: 'แต่งเนื้อ + เมโลดี้ไกด์ (2 เหรียญ)',
     inlineSplitLyrics: 'วางเนื้อร้องยาวๆ แบ่งลงห้องอัตโนมัติ (ฟรี 0 เหรียญ)',
-    easyTabIdea: '✨ เล่าไอเดีย 1 ประโยค (4 เหรียญ)',
+    easyTabIdea: '✨ เล่าเรื่อง / ไอเดียเพลง (4+ เหรียญ)',
     easyTabHum: '🎙️ ฮัมทำนอง 10–45 วิ (3 เหรียญ)',
     humRecordBtn: '🎙️ กดอัดเสียงฮัมทำนอง',
     humStopBtn: '⏹ หยุดอัดเสียง',
@@ -300,6 +324,29 @@ export const translations: Record<Language, Translations> = {
     stopRecBooth: '⏹ หยุดและบันทึกเทค',
     fxPresetLabel: 'โทนเอฟเฟกต์เสียงร้อง (Vocal FX)',
     autoDuckingLabel: 'Auto-Ducking (ลดเสียงดนตรี -2dB ตอนร้อง)',
+
+    lyricDensityLabel: 'ความโปร่งและจังหวะหายใจของคำร้อง (Lyric Density)',
+    lyricDensityAiry: '🌬️ โปร่ง สบาย',
+    lyricDensityAiryDesc: 'คำน้อย หายใจกว้าง ร้องเอื้อนเต็มอารมณ์',
+    lyricDensityBalanced: '🎵 พอดีสไตล์ (แนะนำ)',
+    lyricDensityBalancedDesc: 'สมดุลตามตารางสไตล์ 6 กลุ่ม ร้องเข้าปาก',
+    lyricDensityDense: '⚡ คำแน่น มีจังหวะ',
+    lyricDensityDenseDesc: 'ใส่คำเล่า/ฮิปฮอปมากขึ้น โดยยังกันช่องหายใจ',
+    pacingComfortable: 'ร้องสบาย',
+    pacingFastWarning: 'พยางค์ค่อนข้างเร็ว ควรลดคำหรือเกลาให้โปร่ง',
+    pacingSyllablesPerSec: 'พยางค์/วิ',
+    storyBriefLabel: 'เล่าเรื่องราว / ไอเดียเพลงของคุณ (สั้นหรือยาวก็ได้):',
+    storyBriefPlaceholder: 'เล่าเหตุการณ์ อารมณ์ ตัวละคร หรือประโยคเด่นที่อยากให้มีในเพลง...',
+    storyStructureHintTitle: '💡 เรื่องราวละเอียด แนะนำสลับเป็นเพลงฮิต 7 ท่อนเพื่อกระจายฉากไม่ให้อัดแน่น',
+    storyStructureHintBtn: 'สลับเป็น 7 ท่อน',
+    storyBlueprintToggle: '🎯 กำหนดการไล่ระดับอารมณ์ & ล็อกประโยคสำคัญ (Optional)',
+    storyArcLabel: 'เส้นเรื่องและพัฒนาการอารมณ์ (Emotional Arc)',
+    storyOpeningAnchor: 'ประโยค/ภาพเปิดท่อนแรก (Opening Anchor)',
+    storyHookAnchor: 'คำ/ประโยคบังคับในท่อนฮุค (Must-Have Hook)',
+    storyHookExact: 'ใช้คำเป๊ะ (Exact)',
+    storyHookFlexible: 'เกลาเข้าสัมผัส (Flexible)',
+    storyClosingAnchor: 'ประโยคทิ้งท้าย / บทสรุปท่อนจบ (Closing Anchor)',
+    sectionAnchorLabel: '🎯 ประโยค/คำที่ต้องมีในท่อนนี้ (Optional):',
   },
   en: {
     appName: 'Demo Maker Easy — Acoustic Songwriting Studio & Karaoke',
@@ -415,7 +462,7 @@ export const translations: Record<Language, Translations> = {
 
     easyModeBtn: '✨ Quick Start: Easy Mode (4 Cr)',
     easyModeTitle: 'Easy Mode — Generate a Full Song in 1 Click',
-    easyModeSubtitle: 'Pick a vibe, vocal range, and a 1-sentence story. AI composes chords, coupled lyrics, guide melody, and studio mix ready to preview.',
+    easyModeSubtitle: 'Pick a vibe, vocal range, and share a short or detailed story brief. AI composes chords, breathable lyrics, guide melody, and studio mix.',
     stageDraft: '1. Draft',
     stageArranged: '2. Arranged',
     stageVocal: '3. Vocal',
@@ -423,7 +470,7 @@ export const translations: Record<Language, Translations> = {
     inlineAiQuick: 'Polish Lyrics (1 Credit)',
     inlineAiDeep: 'Lyrics + Guide Melody (2 Credits)',
     inlineSplitLyrics: 'Auto-Split Pasted Lyrics into Bars (0 Credits)',
-    easyTabIdea: '✨ 1-Sentence Idea (4 Credits)',
+    easyTabIdea: '✨ Story / Song Brief (4+ Credits)',
     easyTabHum: '🎙️ Hum / Sing 10–45s (3 Credits)',
     humRecordBtn: '🎙️ Start Recording Hum',
     humStopBtn: '⏹ Stop Recording',
@@ -442,6 +489,29 @@ export const translations: Record<Language, Translations> = {
     stopRecBooth: '⏹ Stop & Save Take',
     fxPresetLabel: 'Vocal Studio FX Preset',
     autoDuckingLabel: 'Auto-Ducking (-2dB Backing Dip)',
+
+    lyricDensityLabel: 'Vocal Breath & Lyric Density',
+    lyricDensityAiry: '🌬️ Airy',
+    lyricDensityAiryDesc: 'Fewer words, wider breath pockets',
+    lyricDensityBalanced: '🎵 Balanced (Recommended)',
+    lyricDensityBalancedDesc: 'Calibrated to style & BPM phrasing',
+    lyricDensityDense: '⚡ Dense Groove',
+    lyricDensityDenseDesc: 'More narrative / rhythmic words with breath reserve',
+    pacingComfortable: 'Comfortable',
+    pacingFastWarning: 'Fast vocal rate — consider trimming syllables',
+    pacingSyllablesPerSec: 'syl/sec',
+    storyBriefLabel: 'Describe your song story / brief (short or detailed):',
+    storyBriefPlaceholder: 'Tell the full story, imagery, or key moments across Verse -> Chorus -> Outro...',
+    storyStructureHintTitle: '💡 Detailed story detected — switch to Full Hit (7 Sections) so scenes breathe naturally.',
+    storyStructureHintBtn: 'Use 7 Sections',
+    storyBlueprintToggle: '🎯 Emotional Arc & Key Anchor Lines (Optional)',
+    storyArcLabel: 'Emotional Arc Progression',
+    storyOpeningAnchor: 'Opening Line / Imagery',
+    storyHookAnchor: 'Must-Have Hook Phrase',
+    storyHookExact: 'Exact',
+    storyHookFlexible: 'Flexible',
+    storyClosingAnchor: 'Closing / Outro Anchor',
+    sectionAnchorLabel: '🎯 Must-Have Phrase / Anchor in This Section (Optional):',
   },
 };
 

@@ -57,15 +57,10 @@ const VALID_THAI_CLUSTERS = new Set([
   'อย',
 ]);
 
-const THAI_LEADING_VOWELS = new Set(['เ', 'แ', 'โ', 'ใ', 'ไ']);
 const THAI_VOWEL_MARKS = new Set([
   'ะ', 'ั', 'า', 'ำ', 'ิ', 'ี', 'ึ', 'ื', 'ุ', 'ู', '็', 'ๅ', 'ฤ', 'ฦ',
 ]);
 const THAI_TONES = new Set(['่', '้', '๊', '๋']);
-
-function isThaiConsonant(ch: string): boolean {
-  return ch >= '\u0E01' && ch <= '\u0E2E';
-}
 
 function countThaiWordSyllables(rawWord: string): number {
   // Strip silent consonants marked with thanthakhat (การันต์), including optional short vowel above/below
@@ -74,68 +69,29 @@ function countThaiWordSyllables(rawWord: string): number {
     .replace(/\u0E4C/g, '');
   if (!w) return 0;
 
-  let vowelClusters = 0;
-  let i = 0;
+  const segments = segmentThaiWordToSyllables(w);
+  if (segments.length === 0) return 0;
 
-  while (i < w.length) {
-    const ch = w[i];
-    if (THAI_LEADING_VOWELS.has(ch)) {
-      vowelClusters += 1;
-      i += 1;
-      while (i < w.length && isThaiConsonant(w[i])) {
-        if (w[i] === 'อ' && i > 1) break;
-        i += 1;
-        if (i < w.length && (THAI_VOWEL_MARKS.has(w[i]) || THAI_TONES.has(w[i]))) break;
-        if (
-          i < w.length &&
-          isThaiConsonant(w[i]) &&
-          VALID_THAI_CLUSTERS.has(w[i - 1] + w[i])
-        ) {
-          i += 1;
-        }
-        break;
+  let count = 0;
+  for (const seg of segments) {
+    count += 1;
+    // อักษรนำที่มีสระหน้าควบ (เช่น เสมอ, เฉลย, แสดง, แสวง) ถูกเก็บไว้เป็น 1 ชิ้นเพื่อคงสระสำหรับวิเคราะห์สัมผัส
+    const pseudoMatch = seg.match(/^[เแโใไ]([\u0E01-\u0E2E])([\u0E01-\u0E2E])(.+)/);
+    if (pseudoMatch) {
+      const pair = pseudoMatch[1] + pseudoMatch[2];
+      const tail = pseudoMatch[3];
+      const firstTail = tail[0] ?? '';
+      if (
+        !VALID_THAI_CLUSTERS.has(pair) &&
+        tail !== 'ร' &&
+        !THAI_VOWEL_MARKS.has(firstTail) &&
+        !THAI_TONES.has(firstTail)
+      ) {
+        count += 1;
       }
-      while (i < w.length && (THAI_VOWEL_MARKS.has(w[i]) || THAI_TONES.has(w[i]))) {
-        i += 1;
-      }
-    } else if (THAI_VOWEL_MARKS.has(ch)) {
-      vowelClusters += 1;
-      i += 1;
-      while (i < w.length && (THAI_VOWEL_MARKS.has(w[i]) || THAI_TONES.has(w[i]))) {
-        i += 1;
-      }
-    } else {
-      i += 1;
     }
   }
-
-  const leadingConsonants: string[] = [];
-  for (let k = 0; k < w.length; k += 1) {
-    const ch = w[k];
-    if (THAI_LEADING_VOWELS.has(ch) || THAI_VOWEL_MARKS.has(ch)) break;
-    if (isThaiConsonant(ch)) leadingConsonants.push(ch);
-  }
-
-  if (vowelClusters === 0) {
-    if (
-      leadingConsonants.length >= 3 &&
-      leadingConsonants[1] !== 'อ' &&
-      !(leadingConsonants.length === 3 && leadingConsonants[1] === 'ว') &&
-      !(leadingConsonants[1] === 'ร' && leadingConsonants[2] === 'ร') &&
-      !VALID_THAI_CLUSTERS.has(leadingConsonants[0] + leadingConsonants[1])
-    ) {
-      return 2;
-    }
-    return 1;
-  }
-
-  const implicitPrefix =
-    leadingConsonants.length >= 2 &&
-    !VALID_THAI_CLUSTERS.has(leadingConsonants[0] + leadingConsonants[1])
-      ? 1
-      : 0;
-
-  return Math.max(1, vowelClusters + implicitPrefix);
+  return Math.max(1, count);
 }
 
 function countEnglishWordSyllables(rawWord: string): number {
@@ -355,7 +311,8 @@ export interface SectionTtsTextPlan {
  */
 export function buildSectionTtsTextPlan(
   bars: SongBar[],
-  maxChars = 240
+  maxChars = 240,
+  separator = '\n'
 ): SectionTtsTextPlan {
   const cap = Math.max(20, Math.floor(maxChars));
   const lines = bars.map((b) => (b.lyrics ?? '').trim()).filter(Boolean);
@@ -369,7 +326,7 @@ export function buildSectionTtsTextPlan(
     };
   }
 
-  const fullText = lines.join(', ');
+  const fullText = lines.join(separator);
   if (fullText.length <= cap) {
     return {
       text: fullText,
@@ -384,7 +341,7 @@ export function buildSectionTtsTextPlan(
   let runningLength = 0;
 
   for (const line of lines) {
-    const sepLen = chosenLines.length > 0 ? 2 : 0; // ', '
+    const sepLen = chosenLines.length > 0 ? separator.length : 0;
     if (runningLength + sepLen + line.length <= cap) {
       chosenLines.push(line);
       runningLength += sepLen + line.length;
@@ -395,7 +352,7 @@ export function buildSectionTtsTextPlan(
 
   if (chosenLines.length > 0) {
     return {
-      text: chosenLines.join(', '),
+      text: chosenLines.join(separator),
       wasTruncated: true,
       includedBarsCount: chosenLines.length,
       omittedBarsCount: lines.length - chosenLines.length,

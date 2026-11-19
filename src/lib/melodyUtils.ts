@@ -2,7 +2,14 @@
  * melodyUtils.ts — ฟังก์ชันช่วยเหลือสำหรับ Mini Piano Roll และ Melody Guide
  */
 
-import type { MelodyNote, SectionType, TimeSignature } from '../types/song';
+import type {
+  LyricDensityMode,
+  MelodyNote,
+  SectionType,
+  ThaiSongGenre,
+  ThaiSongwriterStyle,
+  TimeSignature,
+} from '../types/song';
 import { parseChord } from './chordUtils';
 import { chordIntervals, classifyQuality } from './guitarVoicings';
 import {
@@ -223,21 +230,158 @@ export function generateSectionGuideMelody(
 }
 
 /**
- * แยก 1 วรรคเนื้อร้องเป็นพยางค์ร้องจริง (1–12 พยางค์) เพื่อใช้ผูกโน้ตเมโลดี้กับคำร้องและวรรณยุกต์
+ * แยก 1 วรรคเนื้อร้องเป็นกลุ่มวลีตามช่องเว้นวรรคธรรมชาติ (เช่น "  ") ก่อนแล้วตัดแต่ละกลุ่มเป็นพยางค์
  */
-export function splitThaiLyricSyllables(line: string): string[] {
+export function splitThaiLyricPhraseGroups(line: string): string[][] {
   const cleaned = line
     .replace(/\([^)]*\)/g, ' ')
     .replace(/\[[^\]]*\]/g, ' ')
     .trim();
   if (!cleaned) return [];
 
-  const tokens = segmentThaiWordToSyllables(cleaned).filter((t) => t.trim().length > 0);
-  if (tokens.length <= 12) return tokens;
+  const chunks = cleaned.split(/\s+/).filter(Boolean);
+  return chunks
+    .map((chunk) =>
+      segmentThaiWordToSyllables(chunk).filter((t) => t.trim().length > 0)
+    )
+    .filter((group) => group.length > 0);
+}
 
-  // หากมีมากกว่า 12 พยางค์ ให้รวมคู่พยางค์ช่วงกลางเพื่อให้ลงใน 1 ห้องเพลงได้โดยไม่เกิน maxItems=12
+function resolveNaturalPhraseSplitIndex(
+  cleanedLine: string,
+  syllables: string[],
+  phraseGroups: string[][]
+): number | undefined {
+  const count = syllables.length;
+  if (count < 2) return undefined;
+
+  if (phraseGroups.length >= 2) {
+    const boundaries: number[] = [];
+    let acc = 0;
+    for (let g = 0; g < phraseGroups.length - 1; g += 1) {
+      acc += phraseGroups[g].length;
+      if (acc >= 1 && acc < count) {
+        boundaries.push(acc);
+      }
+    }
+    if (boundaries.length > 0) {
+      const targetMid = count / 2;
+      return boundaries.reduce((best, curr) =>
+        Math.abs(curr - targetMid) < Math.abs(best - targetMid) ? curr : best
+      );
+    }
+  }
+
+  // Fallback for unbroken line without spaces: try Intl.Segmenter word boundaries near midpoint
+  if (typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function') {
+    try {
+      const segmenter = new Intl.Segmenter('th', { granularity: 'word' });
+      const wordBoundaries: number[] = [];
+      let sylIdx = 0;
+      for (const seg of segmenter.segment(cleanedLine)) {
+        const w = seg.segment.trim();
+        if (!w) continue;
+        const wSyls = segmentThaiWordToSyllables(w).filter((t) => t.trim().length > 0);
+        sylIdx += wSyls.length;
+        if (sylIdx >= 1 && sylIdx < count) {
+          wordBoundaries.push(sylIdx);
+        }
+      }
+      if (wordBoundaries.length > 0 && sylIdx === count) {
+        const targetMid = count / 2;
+        return wordBoundaries.reduce((best, curr) =>
+          Math.abs(curr - targetMid) < Math.abs(best - targetMid) ? curr : best
+        );
+      }
+    } catch {
+      // Fallback gracefully
+    }
+  }
+
+  return Math.ceil(count / 2);
+}
+
+function resolveMelodyBreathRestSteps(options?: {
+  totalSteps?: number;
+  bpm?: number;
+  timeSignature?: TimeSignature;
+  thaiGenre?: ThaiSongGenre;
+  songwriterStyle?: ThaiSongwriterStyle;
+  lyricDensity?: LyricDensityMode;
+  restSteps?: number;
+  midBarRestSteps?: number;
+}): { restSteps: number; midBarRestSteps: number } {
+  const total = options?.totalSteps ?? (options?.timeSignature === '3/4' || options?.timeSignature === '6/8' ? 12 : 16);
+  const is12 = total <= 12;
+  const bpm = options?.bpm ?? 85;
+  const genre = options?.thaiGenre;
+  const writer = options?.songwriterStyle;
+
+  const isLyricalSustain =
+    genre === 'luk-krung' ||
+    writer === 'chali-intrawichit' ||
+    writer === 'phaiboon-butkhan' ||
+    writer === 'chonlathi-thanthong' ||
+    writer === 'sala-khunawut' ||
+    (genre === 'luk-thung' && bpm <= 102 && writer !== 'suraphon-sombatcharoen');
+
+  const isRockAnthem =
+    genre === 'thai-rock' ||
+    writer === 'asanee-chotikul' ||
+    writer === 'sek-loso' ||
+    writer === 'kob-bigass' ||
+    writer === 'fongbeer-rock' ||
+    writer === 'suea-thanapol';
+
+  const isBurstPocket =
+    genre === 'thai-rnb' || writer === 'the-toys' || writer === 'joey-boy';
+
+  let defaultRest = is12 ? 2 : bpm > 102 ? 2 : 3;
+  let defaultMid = is12 ? 1 : 2;
+
+  if (isLyricalSustain) {
+    defaultRest = is12 ? 3 : bpm > 102 ? 3 : 4;
+    defaultMid = is12 ? 1 : 2;
+  } else if (isRockAnthem) {
+    defaultRest = is12 ? 3 : bpm >= 98 ? 4 : 3;
+    defaultMid = 1;
+  } else if (isBurstPocket) {
+    defaultRest = 2;
+    defaultMid = 1;
+  }
+
+  if (options?.lyricDensity === 'airy') {
+    defaultRest = Math.min(is12 ? 3 : 5, defaultRest + 1);
+  } else if (options?.lyricDensity === 'dense') {
+    defaultRest = Math.max(2, defaultRest - 1);
+  }
+
+  const restSteps =
+    typeof options?.restSteps === 'number' && Number.isFinite(options.restSteps)
+      ? Math.max(2, Math.min(is12 ? 5 : 6, Math.round(options.restSteps)))
+      : Math.max(2, defaultRest);
+
+  const midBarRestSteps =
+    typeof options?.midBarRestSteps === 'number' && Number.isFinite(options.midBarRestSteps)
+      ? Math.max(0, Math.min(3, Math.round(options.midBarRestSteps)))
+      : defaultMid;
+
+  return { restSteps, midBarRestSteps };
+}
+
+/**
+ * แยก 1 วรรคเนื้อร้องเป็นพยางค์ร้องจริง (1–12 พยางค์) เพื่อใช้ผูกโน้ตเมโลดี้กับคำร้องและวรรณยุกต์
+ */
+export function splitThaiLyricSyllables(line: string, maxItems = 12): string[] {
+  const phraseGroups = splitThaiLyricPhraseGroups(line);
+  if (phraseGroups.length === 0) return [];
+
+  const tokens = phraseGroups.flat();
+  const ceiling = Math.max(4, Math.min(12, maxItems));
+  if (tokens.length <= ceiling) return tokens;
+
   const compact: string[] = [...tokens];
-  while (compact.length > 12) {
+  while (compact.length > ceiling) {
     const mid = Math.floor(compact.length / 2);
     compact.splice(mid, 2, `${compact[mid]}${compact[mid + 1]}`);
   }
@@ -258,18 +402,34 @@ export interface GenerateLyricAlignedMelodyOptions {
   vocalRegisterShift?: number;
   barIndex?: number;
   sectionType?: SectionType;
+  bpm?: number;
+  timeSignature?: TimeSignature;
+  thaiGenre?: ThaiSongGenre;
+  songwriterStyle?: ThaiSongwriterStyle;
+  lyricDensity?: LyricDensityMode;
+  restSteps?: number;
+  midBarRestSteps?: number;
+  phraseSplitIndex?: number;
 }
 
 export interface ConversationalStepPlanOptions {
   hasSecondChord?: boolean;
   sectionType?: SectionType;
   barIndex?: number;
+  bpm?: number;
+  timeSignature?: TimeSignature;
+  thaiGenre?: ThaiSongGenre;
+  songwriterStyle?: ThaiSongwriterStyle;
+  lyricDensity?: LyricDensityMode;
+  restSteps?: number;
+  midBarRestSteps?: number;
+  phraseSplitIndex?: number;
 }
 
 /**
  * วางตำแหน่งจังหวะพยางค์แบบกลุ่มคำพูดธรรมชาติ (Conversational Phrasing):
- * แบ่งคำร้องเป็น 2 วลีพูดพร้อมช่องพักหายใจกลางห้อง (Beats 1-2 และ Beats 3-4)
- * แทนการหารเฉลี่ยเท่ากันทุกพยางค์แบบหุ่นยนต์
+ * แบ่งคำร้องเป็น 2 วลีตามช่องเว้นวรรคจริงพร้อม Mid-Bar Breath Gap
+ * และบังคับหยุดก่อน Trailing Breath Rest ท้ายห้องทุกห้อง (step < totalSteps - restSteps)
  */
 export function buildConversationalStepPlan(
   syllables: string[],
@@ -278,31 +438,76 @@ export function buildConversationalStepPlan(
   options?: ConversationalStepPlanOptions
 ): number[] {
   const safeTotal = Math.max(8, Math.min(16, Math.round(totalSteps)));
+  const { restSteps, midBarRestSteps } = resolveMelodyBreathRestSteps({
+    totalSteps: safeTotal,
+    bpm: options?.bpm,
+    timeSignature: options?.timeSignature,
+    thaiGenre: options?.thaiGenre,
+    songwriterStyle: options?.songwriterStyle,
+    lyricDensity: options?.lyricDensity,
+    restSteps: options?.restSteps,
+    midBarRestSteps: options?.midBarRestSteps,
+  });
+  const singingCeiling = Math.max(2, safeTotal - restSteps);
   const count = syllables.length;
   if (count <= 0) return [];
   if (count === 1) return [0];
 
   const splitPoint = Math.floor(safeTotal / 2);
+  const lastPhon = phonetics[count - 1];
+  const isOutro = options?.sectionType === 'outro';
+
+  // Ensure outro preserves >=3 sustain steps strictly before singingCeiling when possible
+  const outroDesiredLastStep = Math.max(count - 1, singingCeiling - 3);
+  const normalDesiredLastStep =
+    lastPhon?.isLiveSyllable && singingCeiling - count >= 2
+      ? singingCeiling - 2
+      : singingCeiling - 1;
+  const lastAllowedStep = Math.max(
+    count - 1,
+    Math.min(singingCeiling - 1, isOutro ? outroDesiredLastStep : normalDesiredLastStep)
+  );
+
   if (count === 2) {
-    if (options?.hasSecondChord) return [0, splitPoint];
-    return options?.sectionType === 'outro' ? [0, Math.min(splitPoint - 2, 6)] : [0, 4];
+    if (options?.hasSecondChord) {
+      return [0, Math.min(splitPoint, lastAllowedStep)];
+    }
+    if (isOutro) {
+      return [0, Math.min(splitPoint - 2, lastAllowedStep)];
+    }
+    return [0, Math.min(4, lastAllowedStep)];
   }
 
-  const firstCount = Math.ceil(count / 2);
+  const rawFirstCount =
+    typeof options?.phraseSplitIndex === 'number' &&
+    options.phraseSplitIndex >= 1 &&
+    options.phraseSplitIndex < count
+      ? Math.round(options.phraseSplitIndex)
+      : Math.ceil(count / 2);
+  const firstCount = Math.max(1, Math.min(count - 1, rawFirstCount));
   const secondCount = count - firstCount;
 
-  // Group 1 (Beats 1-2): วางวลีแรกให้จบก่อน Beat 3 เพื่อเหลือช่องหายใจกลางห้อง
+  const slack = Math.max(0, lastAllowedStep + 1 - count);
+  const effectiveMidGap = Math.min(midBarRestSteps, slack);
+  const maxGroup2Start = Math.max(firstCount, lastAllowedStep - (secondCount - 1));
+
+  // Group 1 (Beats 1-2): เว้น pickup เฉพาะเมื่อมีพื้นที่เหลือเฟือ ไม่เบียดช่องพัก
   const group1Pickup =
     !options?.hasSecondChord &&
     options?.sectionType === 'verse' &&
     typeof options.barIndex === 'number' &&
     options.barIndex % 2 === 1 &&
-    count <= 7 &&
+    count <= 6 &&
+    slack >= 3 &&
     splitPoint >= 8
       ? 1
       : 0;
 
-  const group1MaxEnd = Math.max(firstCount - 1, splitPoint - (count <= 8 ? 3 : 2));
+  const group1MaxEndLimit = Math.min(splitPoint - 1, maxGroup2Start - 1 - effectiveMidGap);
+  const group1MaxEnd = Math.max(
+    group1Pickup + firstCount - 1,
+    group1MaxEndLimit
+  );
   const group1Steps: number[] = [group1Pickup];
 
   for (let i = 1; i < firstCount; i += 1) {
@@ -312,33 +517,25 @@ export function buildConversationalStepPlan(
     const availableRoom = group1MaxEnd - prevStep;
     const isQuickShort = !prevPhon?.isLiveSyllable && prevPhon?.vowelLength === 'short';
     const wantAdvance =
-      firstCount >= 5 || isQuickShort || availableRoom <= remainingSlots ? 1 : 2;
-    const nextStep = Math.min(group1MaxEnd - (remainingSlots - 1), prevStep + wantAdvance);
-    group1Steps.push(Math.max(prevStep + 1, Math.min(splitPoint - 1, nextStep)));
+      firstCount >= 4 || isQuickShort || availableRoom <= remainingSlots + 1 ? 1 : 2;
+    const maxHere = group1MaxEnd - (remainingSlots - 1);
+    const nextStep = Math.min(maxHere, prevStep + wantAdvance);
+    group1Steps.push(Math.max(prevStep + 1, nextStep));
   }
 
   const lastGroup1 = group1Steps[group1Steps.length - 1];
 
-  // Group 2 (Beats 3-4): เข้าจังหวะ 3 (หรือ pickup ก่อน Beat 3 เล็กน้อยเมื่อคำหนาแน่นมาก)
-  const rawGroup2Start =
+  // Group 2 (Beats 3-4): เริ่มหลัง Group 1 + midBarRestSteps และจบไม่เกิน lastAllowedStep (< singingCeiling)
+  const targetGroup2Beat =
     !options?.hasSecondChord && secondCount >= 5 && splitPoint >= 8
-      ? Math.max(lastGroup1 + 2, splitPoint - 1)
-      : Math.max(lastGroup1 + (count <= 10 ? 2 : 1), splitPoint);
+      ? splitPoint - 1
+      : isOutro
+        ? Math.min(splitPoint, Math.max(lastGroup1 + 1 + effectiveMidGap, maxGroup2Start))
+        : splitPoint;
 
-  const lastPhon = phonetics[count - 1];
-  const trailingReserve =
-    options?.sectionType === 'outro'
-      ? 3
-      : lastPhon?.isLiveSyllable
-        ? 2
-        : 1;
-  const group2MaxEnd = Math.max(
-    rawGroup2Start + Math.max(0, secondCount - 1),
-    safeTotal - trailingReserve
-  );
-  const clampedGroup2Start = Math.min(
-    safeTotal - secondCount,
-    Math.max(lastGroup1 + 1, rawGroup2Start)
+  const clampedGroup2Start = Math.max(
+    lastGroup1 + 1 + Math.min(effectiveMidGap, Math.max(0, maxGroup2Start - (lastGroup1 + 1))),
+    Math.min(maxGroup2Start, targetGroup2Beat)
   );
 
   const group2Steps: number[] = [clampedGroup2Start];
@@ -347,13 +544,13 @@ export function buildConversationalStepPlan(
     const prevStep = group2Steps[j - 1];
     const prevPhon = phonetics[globalIdx - 1];
     const remainingSlots = secondCount - j;
-    const effectiveCeiling = Math.min(safeTotal - 1, group2MaxEnd);
-    const availableRoom = effectiveCeiling - prevStep;
+    const availableRoom = lastAllowedStep - prevStep;
     const isQuickShort = !prevPhon?.isLiveSyllable && prevPhon?.vowelLength === 'short';
     const wantAdvance =
-      secondCount >= 5 || isQuickShort || availableRoom <= remainingSlots ? 1 : 2;
-    const candidate = Math.min(effectiveCeiling - (remainingSlots - 1), prevStep + wantAdvance);
-    group2Steps.push(Math.max(prevStep + 1, Math.min(safeTotal - 1, candidate)));
+      secondCount >= 4 || isQuickShort || availableRoom <= remainingSlots + 1 ? 1 : 2;
+    const maxHere = lastAllowedStep - (remainingSlots - 1);
+    const candidate = Math.min(maxHere, prevStep + wantAdvance);
+    group2Steps.push(Math.max(prevStep + 1, Math.min(lastAllowedStep, candidate)));
   }
 
   return [...group1Steps, ...group2Steps];
@@ -361,7 +558,7 @@ export function buildConversationalStepPlan(
 
 /**
  * สร้างโน้ตเมโลดี้ไกด์ 1 ห้องให้สอดคล้องทั้งคอร์ด (รองรับ 2 คอร์ด/ห้อง),
- * จำนวนพยางค์เนื้อร้องจริง และระดับเสียงวรรณยุกต์+คำเป็นคำตายของภาษาไทยแบบวลีพูดธรรมชาติ
+ * จำนวนพยางค์เนื้อร้องจริง วลีพูด และช่องพักหายใจกลางห้อง+ท้ายห้อง
  */
 export function generateLyricAlignedGuideMelody(
   options: GenerateLyricAlignedMelodyOptions
@@ -388,13 +585,43 @@ export function generateLyricAlignedGuideMelody(
           chord1: chord1Arg ?? 'C',
         }
       : optionsOrLyrics;
-  const totalSteps = Math.max(8, Math.min(16, Math.round(options.totalSteps ?? 16)));
-  const stepsPerBeat = Math.max(1, Math.min(4, Math.round(options.stepsPerBeat ?? 4)));
+  const inferredTotalSteps =
+    options.timeSignature === '3/4' || options.timeSignature === '6/8' ? 12 : 16;
+  const totalSteps = Math.max(
+    8,
+    Math.min(16, Math.round(options.totalSteps ?? inferredTotalSteps))
+  );
+  const stepsPerBeat = Math.max(
+    1,
+    Math.min(4, Math.round(options.stepsPerBeat ?? (options.timeSignature === '6/8' ? 2 : 4)))
+  );
   const minMidi = Math.max(48, Math.min(72, options.pitchMin ?? 55));
   const maxMidi = Math.max(minMidi + 7, Math.min(84, options.pitchMax ?? 76));
   const shift = options.vocalRegisterShift ?? 0;
 
-  const syllables = splitThaiLyricSyllables(options.lyrics);
+  const { restSteps, midBarRestSteps } = resolveMelodyBreathRestSteps({
+    totalSteps,
+    bpm: options.bpm,
+    timeSignature: options.timeSignature,
+    thaiGenre: options.thaiGenre,
+    songwriterStyle: options.songwriterStyle,
+    lyricDensity: options.lyricDensity,
+    restSteps: options.restSteps,
+    midBarRestSteps: options.midBarRestSteps,
+  });
+  const singingCeiling = Math.max(2, totalSteps - restSteps);
+
+  const cleanedLine = options.lyrics
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\[[^\]]*\]/g, ' ')
+    .trim();
+  const phraseGroups = splitThaiLyricPhraseGroups(cleanedLine);
+  const rawTokens = phraseGroups.flat();
+  const syllables =
+    rawTokens.length > singingCeiling
+      ? splitThaiLyricSyllables(cleanedLine, singingCeiling)
+      : rawTokens;
+
   if (syllables.length === 0) {
     return generateChordGuideMelodyNotes({
       chord1: options.chord1,
@@ -416,12 +643,32 @@ export function generateLyricAlignedGuideMelody(
   const chord2Pcs = options.chord2 ? getChordPitchClasses(options.chord2) : chord1Pcs;
   const splitPoint = Math.floor(totalSteps / 2);
 
+  const naturalSplit =
+    options.phraseSplitIndex ??
+    (rawTokens.length === syllables.length
+      ? resolveNaturalPhraseSplitIndex(cleanedLine, syllables, phraseGroups)
+      : Math.ceil(syllables.length / 2));
+
   const syllablePhonetics = syllables.map((syl) => analyzeThaiSyllablePhonetics(syl));
   const stepPlan = buildConversationalStepPlan(syllables, syllablePhonetics, totalSteps, {
     hasSecondChord: Boolean(options.chord2),
     sectionType: options.sectionType,
     barIndex: options.barIndex,
+    bpm: options.bpm,
+    timeSignature: options.timeSignature,
+    thaiGenre: options.thaiGenre,
+    songwriterStyle: options.songwriterStyle,
+    lyricDensity: options.lyricDensity,
+    restSteps,
+    midBarRestSteps,
+    phraseSplitIndex: naturalSplit,
   });
+
+  const firstGroupCount =
+    typeof naturalSplit === 'number' && naturalSplit >= 1 && naturalSplit < syllables.length
+      ? naturalSplit
+      : Math.ceil(syllables.length / 2);
+  const hasGroup2 = firstGroupCount < syllables.length;
 
   const sectionShift =
     options.sectionType === 'chorus'
@@ -438,9 +685,9 @@ export function generateLyricAlignedGuideMelody(
   const usedSteps = new Set<number>();
 
   for (let i = 0; i < syllables.length; i += 1) {
-    let step = stepPlan[i] ?? Math.min(totalSteps - 1, i);
-    step = Math.max(0, Math.min(totalSteps - 1, step));
-    while (usedSteps.has(step) && step < totalSteps - 1) {
+    let step = stepPlan[i] ?? Math.min(singingCeiling - 1, i);
+    step = Math.max(0, Math.min(singingCeiling - 1, step));
+    while (usedSteps.has(step) && step < singingCeiling - 1) {
       step += 1;
     }
     if (usedSteps.has(step)) continue;
@@ -473,12 +720,12 @@ export function generateLyricAlignedGuideMelody(
     } else if (phon.tone === 'โท') {
       targetOffset = isLastSyllable ? -1 : 2;
     } else {
-      // สามัญ: เคลื่อนตามรูปทรงเมโลดี้ (gentle arch ตามตำแหน่งวรรค)
       const phrasePos = i / Math.max(1, syllables.length - 1);
-      targetOffset = Math.round(Math.sin(phrasePos * Math.PI) * 3) + (options.barIndex && options.barIndex % 2 === 1 ? -1 : 1);
+      targetOffset =
+        Math.round(Math.sin(phrasePos * Math.PI) * 3) +
+        (options.barIndex && options.barIndex % 2 === 1 ? -1 : 1);
     }
 
-    // Section Energy Contour adjustments: Pre-Chorus lifts up, Chorus emphasizes Bar 1 / climax, Outro resolves gently down
     if (options.sectionType === 'pre-chorus' && isLastSyllable) {
       targetOffset = Math.max(targetOffset, 4);
     } else if (options.sectionType === 'chorus' && (i === 0 || isLastSyllable)) {
@@ -493,25 +740,38 @@ export function generateLyricAlignedGuideMelody(
 
     const nextPlannedStep =
       i + 1 < syllables.length
-        ? Math.max(step + 1, Math.min(totalSteps, stepPlan[i + 1] ?? step + 1))
-        : totalSteps;
+        ? Math.max(step + 1, Math.min(singingCeiling, stepPlan[i + 1] ?? step + 1))
+        : singingCeiling;
     const gapToNext = Math.max(1, nextPlannedStep - step);
+    const maxUntilCeiling = Math.max(1, singingCeiling - step);
+    const isGroup1Final = hasGroup2 && i === firstGroupCount - 1;
 
-    // คำเป็นท้ายวลีหรือท้ายวรรคลากเสียงตามจังหวะหายใจธรรมชาติ คำตายสั้นคมชัด
-    const durationSteps = isLastSyllable
-      ? options.sectionType === 'outro'
-        ? Math.max(3, totalSteps - step)
-        : phon.isLiveSyllable
-          ? Math.max(2, totalSteps - step)
-          : Math.min(2, Math.max(1, totalSteps - step))
-      : phon.isLiveSyllable
-        ? Math.max(1, gapToNext)
-        : 1;
+    let durationSteps: number;
+    if (isLastSyllable) {
+      durationSteps =
+        options.sectionType === 'outro'
+          ? Math.min(maxUntilCeiling, Math.max(3, maxUntilCeiling))
+          : phon.isLiveSyllable
+            ? Math.min(maxUntilCeiling, Math.max(2, Math.min(4, maxUntilCeiling)))
+            : 1;
+    } else if (isGroup1Final) {
+      // ป้องกัน Group 1 ลากเสียงทับช่องพักกลางห้อง (Mid-Bar Breath Gap)
+      const reservedMidRest =
+        midBarRestSteps > 0 && gapToNext > midBarRestSteps
+          ? midBarRestSteps
+          : gapToNext >= 2
+            ? 1
+            : 0;
+      const maxBeforeGroup2 = Math.max(1, gapToNext - reservedMidRest);
+      durationSteps = phon.isLiveSyllable ? Math.min(3, maxBeforeGroup2) : 1;
+    } else {
+      durationSteps = phon.isLiveSyllable ? Math.min(gapToNext, 3) : 1;
+    }
 
     notes.push({
       step,
       midiPitch,
-      durationSteps: Math.max(1, Math.min(totalSteps - step, durationSteps)),
+      durationSteps: Math.max(1, Math.min(maxUntilCeiling, durationSteps)),
     });
   }
 

@@ -24,17 +24,22 @@ import {
 } from '@/lib/serverWallet';
 import { recordServerFeatureEvent } from '@/lib/serverAnalytics';
 import {
+  buildDiatonicGuideNotesForChord,
   buildSimulatedArchitectSong,
   getPresetConfig,
   sanitizeArchitectSongProject,
   type EasyArchitectInput,
+  type GuideMelodyContext,
   type TempoFeel,
   type VocalProfile,
 } from '@/lib/songArchitect';
 import { validateThaiLyricCouplets } from '@/lib/thaiRhymeHelper';
 import type {
+  LyricDensityMode,
   SectionType,
   SongProject,
+  StoryBlueprintInput,
+  StoryBlueprintSummary,
   ThaiEmotionalResolution,
   ThaiLyricDialect,
   ThaiLyricEra,
@@ -49,6 +54,7 @@ export interface AdvanceArchitectResponseBody {
   model: string;
   song: SongProject;
   producerNotes: string[];
+  storyBlueprint?: StoryBlueprintSummary;
   rhymeValidation: {
     passed: boolean;
     polished: boolean;
@@ -122,8 +128,40 @@ export async function POST(request: Request): Promise<Response> {
     typeof obj.emotionalResolution === 'string'
       ? (obj.emotionalResolution as ThaiEmotionalResolution)
       : undefined;
+  const lyricDensity: LyricDensityMode | undefined =
+    obj.lyricDensity === 'airy' || obj.lyricDensity === 'balanced' || obj.lyricDensity === 'dense'
+      ? obj.lyricDensity
+      : undefined;
+  const rawSb =
+    obj.storyBlueprint && typeof obj.storyBlueprint === 'object'
+      ? (obj.storyBlueprint as Record<string, unknown>)
+      : undefined;
+  const storyBlueprint: StoryBlueprintInput | undefined = rawSb
+    ? {
+        ...(typeof rawSb.storyArcPreset === 'string' && rawSb.storyArcPreset.trim()
+          ? { storyArcPreset: rawSb.storyArcPreset.trim() }
+          : {}),
+        ...(typeof rawSb.customEmotionalArc === 'string' && rawSb.customEmotionalArc.trim()
+          ? { customEmotionalArc: rawSb.customEmotionalArc.trim().slice(0, 240) }
+          : {}),
+        ...(typeof rawSb.openingAnchor === 'string' && rawSb.openingAnchor.trim()
+          ? { openingAnchor: rawSb.openingAnchor.trim().slice(0, 120) }
+          : {}),
+        ...(typeof rawSb.hookAnchor === 'string' && rawSb.hookAnchor.trim()
+          ? {
+              hookAnchor: rawSb.hookAnchor.trim().slice(0, 120),
+              hookAnchorMode: rawSb.hookAnchorMode === 'exact' ? 'exact' : 'flexible',
+            }
+          : {}),
+        ...(typeof rawSb.closingAnchor === 'string' && rawSb.closingAnchor.trim()
+          ? { closingAnchor: rawSb.closingAnchor.trim().slice(0, 120) }
+          : {}),
+      }
+    : undefined;
 
   const preset = getPresetConfig(stylePreset);
+  const recommendedBpm = preset.bpmByTempo[tempoFeel];
+  const hasExplicitBpm = typeof obj.bpm === 'number' && Number.isFinite(obj.bpm);
   const effectiveThaiGenre = thaiGenre ?? preset.thaiGenre;
 
   const customStructure = Array.isArray(obj.customStructure)
@@ -148,6 +186,8 @@ export async function POST(request: Request): Promise<Response> {
     lyricDialect,
     songwriterStyle,
     emotionalResolution,
+    lyricDensity,
+    storyBlueprint,
     customStructure,
     chordProgressionPreset,
     customChords,
@@ -188,12 +228,13 @@ export async function POST(request: Request): Promise<Response> {
       lyricDialect,
       songwriterStyle,
       emotionalResolution,
-      bpm: preset.bpmByTempo[tempoFeel],
+      bpm: recommendedBpm,
       timeSignature: '4/4',
+      lyricDensity,
     });
     const userPrompt = buildEasyArchitectUserPrompt({
       ...input,
-      recommendedBpm: preset.bpmByTempo[tempoFeel],
+      recommendedBpm,
       recommendedGuitarModel: preset.guitarModel,
       recommendedAmbience: preset.ambience3D,
     });
@@ -246,6 +287,19 @@ export async function POST(request: Request): Promise<Response> {
         { userId: billing.active && 'userId' in billing ? billing.userId : undefined, skipAuthLookup: billing.active }
       );
 
+      const simBlueprint: StoryBlueprintSummary = {
+        coreTheme: topic.slice(0, 120),
+        emotionalArcSummary:
+          storyBlueprint?.customEmotionalArc ||
+          `Intro -> Verse -> Pre-Chorus -> Chorus -> Outro (${tempoFeel})`,
+        sectionBeats: simulatedSong.sections
+          .filter((s) => s.type !== 'intro')
+          .map((s) => ({
+            sectionType: s.type,
+            beatGoal: s.bars.find((b) => b.lyrics)?.lyrics || s.name,
+          })),
+      };
+
       return Response.json(
         {
           isSimulated: true,
@@ -255,6 +309,7 @@ export async function POST(request: Request): Promise<Response> {
             `จัดสไตล์ ${preset.nameTh} (${simulatedSong.bpm} BPM, คีย์ ${simulatedSong.baseKey}, Capo ${simulatedSong.capoFret})`,
             'แยกย่านเสียงให้ท่อน Verse โปร่งชัดและดันวงเต็มในท่อน Chorus พร้อมโน้ตเมโลดี้ไกด์',
           ],
+          storyBlueprint: simBlueprint,
           rhymeValidation: { passed: true, polished: false },
           tip,
           ...(refundedWallet ? { wallet: refundedWallet } : {}),
@@ -265,6 +320,39 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     let song = sanitizeArchitectSongProject(gemini.data, input);
+    if (!hasExplicitBpm) {
+      const clampedBpm = Math.max(
+        55,
+        Math.min(160, Math.max(recommendedBpm - 8, Math.min(recommendedBpm + 8, song.bpm)))
+      );
+      if (clampedBpm !== song.bpm) {
+        song = { ...song, bpm: clampedBpm };
+      }
+    }
+    const melodyCtx: GuideMelodyContext = {
+      baseKey: song.baseKey,
+      timeSignature: song.timeSignature,
+      bpm: song.bpm,
+      vocalProfile,
+      thaiGenre: effectiveThaiGenre,
+      songwriterStyle,
+      lyricDensity,
+    };
+    const exactProtectedAnchors = [
+      ...(storyBlueprint?.openingAnchor ? [storyBlueprint.openingAnchor.trim()] : []),
+      ...(storyBlueprint?.hookAnchor && storyBlueprint.hookAnchorMode === 'exact'
+        ? [storyBlueprint.hookAnchor.trim()]
+        : []),
+      ...(storyBlueprint?.closingAnchor ? [storyBlueprint.closingAnchor.trim()] : []),
+    ].filter(Boolean);
+    const allPromptAnchors = Array.from(
+      new Set(
+        [
+          ...exactProtectedAnchors,
+          ...(storyBlueprint?.hookAnchor ? [storyBlueprint.hookAnchor.trim()] : []),
+        ].filter(Boolean)
+      )
+    );
     let totalUsage = gemini.usage;
     let rhymePassed = true;
     let wasPolished = false;
@@ -279,6 +367,7 @@ export async function POST(request: Request): Promise<Response> {
             sectionType: sec.type,
             songwriterStyle,
             thaiGenre: effectiveThaiGenre,
+            lyricDensity,
           });
           const validation = validateThaiLyricCouplets(
             sec.bars.map((b) => b.lyrics),
@@ -294,7 +383,7 @@ export async function POST(request: Request): Promise<Response> {
             (b) => b.syllables > b.expectedMax
           );
           return {
-            item: { sec, validation, overflowBars },
+            item: { sec, validation, overflowBars, budget },
             sectionType: sec.type,
             passed: validation.passed,
             hasDuplicates: (validation.duplicateEndWords?.length ?? 0) > 0,
@@ -302,7 +391,10 @@ export async function POST(request: Request): Promise<Response> {
           };
         });
 
-      const selectedForPolish = selectPrioritySectionsForPolish(evaluatedSections, 3);
+      const selectedForPolish = selectPrioritySectionsForPolish(
+        evaluatedSections,
+        Math.min(5, evaluatedSections.length)
+      );
       const remainingPolishBudgetMs = Math.max(0, 50_000 - (Date.now() - routeStartedAt));
 
       if (selectedForPolish.length > 0 && remainingPolishBudgetMs >= 4_000) {
@@ -310,23 +402,33 @@ export async function POST(request: Request): Promise<Response> {
           .filter((e) => e.sectionType !== 'outro')
           .every((e) => e.passed);
         const polishPrompt = buildRhymePolishPrompt(
-          selectedForPolish.map(({ item: { sec, validation, overflowBars } }) => ({
+          selectedForPolish.map(({ item: { sec, validation, overflowBars, budget } }) => ({
             sectionId: sec.id,
             sectionName: sec.name,
+            sectionType: sec.type,
             chords: sec.bars.map((b) => b.chords[0] ?? 'C'),
             lines: sec.bars.map((b) => b.lyrics),
             duplicateEndWords: validation.duplicateEndWords,
             weakPairs: validation.weakPairs,
             outOfBudgetBars: overflowBars,
+            expectedMin: budget.min,
+            expectedMax: budget.max,
           })),
-          song.bpm
+          song.bpm,
+          {
+            timeSignature: song.timeSignature,
+            songwriterStyle,
+            thaiGenre: effectiveThaiGenre,
+            lyricDensity,
+            lockedAnchors: allPromptAnchors,
+          }
         );
 
         const polishRes = await callGeminiJson<{
           polishedSections?: Array<{ sectionId?: string; sectionName?: string; lines?: string[] }>;
         }>(polishPrompt, {
           model: GEMINI_MODEL_LITE,
-          systemInstruction: 'คุณคือบรรณาธิการคำร้องไทย แก้เฉพาะคำลงท้าย/ส่งสัมผัสและความกระชับของพยางค์ให้ลื่นไหลโดยคงความหมายและจำนวนวรรคเดิม',
+          systemInstruction: 'คุณคือบรรณาธิการคำร้องไทย แก้เฉพาะคำลงท้าย/ส่งสัมผัสและความกระชับของพยางค์ให้ลื่นไหลโดยคงความหมาย จำนวนวรรค และคำหมุดหมายของผู้ใช้ไว้ครบถ้วน',
           responseSchema: RHYME_POLISH_RESPONSE_SCHEMA,
           maxOutputTokens: 2048,
           thinkingLevel: 'low',
@@ -381,11 +483,35 @@ export async function POST(request: Request): Promise<Response> {
               if (!nextLines || nextLines.length === 0) return sec;
               return {
                 ...sec,
-                bars: sec.bars.map((bar, idx) =>
-                  typeof nextLines[idx] === 'string' && nextLines[idx].trim()
-                    ? { ...bar, lyrics: nextLines[idx].trim() }
-                    : bar
-                ),
+                bars: sec.bars.map((bar, idx) => {
+                  const candidate =
+                    typeof nextLines[idx] === 'string' && nextLines[idx].trim()
+                      ? nextLines[idx].trim()
+                      : bar.lyrics;
+                  // ป้องกันการลบหมุดหมาย Exact Anchor ของผู้ใช้ออกระหว่างรอบ Polish
+                  const lostExactAnchor = exactProtectedAnchors.some(
+                    (anchor) => bar.lyrics.includes(anchor) && !candidate.includes(anchor)
+                  );
+                  const nextLyric = lostExactAnchor ? bar.lyrics : candidate;
+                  if (nextLyric === bar.lyrics) {
+                    return bar;
+                  }
+                  return {
+                    ...bar,
+                    lyrics: nextLyric,
+                    melodyNotes:
+                      sec.type === 'intro'
+                        ? []
+                        : buildDiatonicGuideNotesForChord(
+                            bar.chords[0] || song.baseKey || 'C',
+                            idx,
+                            nextLyric,
+                            bar.chords[1],
+                            sec.type,
+                            melodyCtx
+                          ),
+                  };
+                }),
               };
             }),
           };
@@ -400,6 +526,7 @@ export async function POST(request: Request): Promise<Response> {
                 sectionType: sec.type,
                 songwriterStyle,
                 thaiGenre: effectiveThaiGenre,
+                lyricDensity,
               });
               return !validateThaiLyricCouplets(sec.bars.map((b) => b.lyrics), {
                 bpm: song.bpm,
@@ -418,6 +545,35 @@ export async function POST(request: Request): Promise<Response> {
     const producerNotes = Array.isArray(rawNotes)
       ? rawNotes.filter((n): n is string => typeof n === 'string' && n.trim().length > 0).slice(0, 4)
       : [`จัดโครงสร้าง ${song.sections.length} ท่อนในสไตล์ ${preset.nameTh} ด้วย ${gemini.modelUsed}`];
+
+    const rawAiSb =
+      gemini.data.storyBlueprint && typeof gemini.data.storyBlueprint === 'object'
+        ? (gemini.data.storyBlueprint as Record<string, unknown>)
+        : undefined;
+    const responseStoryBlueprint: StoryBlueprintSummary | undefined = rawAiSb
+      ? {
+          coreTheme:
+            typeof rawAiSb.coreTheme === 'string' && rawAiSb.coreTheme.trim()
+              ? rawAiSb.coreTheme.trim()
+              : topic.slice(0, 120),
+          emotionalArcSummary:
+            typeof rawAiSb.emotionalArcSummary === 'string' && rawAiSb.emotionalArcSummary.trim()
+              ? rawAiSb.emotionalArcSummary.trim()
+              : storyBlueprint?.customEmotionalArc || '',
+          ...(Array.isArray(rawAiSb.sectionBeats)
+            ? {
+                sectionBeats: rawAiSb.sectionBeats
+                  .filter(
+                    (b): b is { sectionType: string; beatGoal: string; imageryKeywords?: string[] } =>
+                      Boolean(b && typeof b === 'object') &&
+                      typeof (b as Record<string, unknown>).sectionType === 'string' &&
+                      typeof (b as Record<string, unknown>).beatGoal === 'string'
+                  )
+                  .slice(0, 9),
+              }
+            : {}),
+        }
+      : undefined;
 
     await recordServerFeatureEvent(
       request,
@@ -442,6 +598,7 @@ export async function POST(request: Request): Promise<Response> {
         model: gemini.modelUsed,
         song,
         producerNotes,
+        ...(responseStoryBlueprint ? { storyBlueprint: responseStoryBlueprint } : {}),
         rhymeValidation: { passed: rhymePassed, polished: wasPolished },
         tip: `สร้างเพลงเต็ม "${song.title}" (${song.sections.length} ท่อน · ${song.bpm} BPM) ด้วย ${gemini.modelUsed} เรียบร้อยแล้ว`,
         usage: totalUsage,

@@ -34,26 +34,26 @@ test('Phase 7A: aed-carabao and asanee-chotikul profiles, few-shot exemplars & s
   assert.match(aedProfile.label, /แอ๊ด คาราบาว/);
   assert.match(asaneeProfile.label, /อัสนี โชติกุล/);
 
-  // Invariant: 74 BPM default must still keep '5-8 พยางค์'
+  // Singable Phrasing standard: 74 BPM default uses '4-6 พยางค์' with trailing breath rest
   const baselineBudget = getSyllableBudgetForBpm(74, '4/4');
-  assert.ok(baselineBudget.guidance.includes('5-8 พยางค์'));
+  assert.ok(baselineBudget.guidance.includes('4-6 พยางค์'));
   const baselinePrompt = buildLyricsSystemPrompt({
     bpm: 74,
     timeSignature: '4/4',
     sectionType: 'chorus',
   });
-  assert.ok(baselinePrompt.includes('5-8 พยางค์'));
+  assert.ok(baselinePrompt.includes('4-6 พยางค์'));
 
-  // Style-specific budgets
+  // Style-specific budgets (6-group Singable Pacing table)
   const aedBudget = getSyllableBudgetForBpm(92, '4/4', { songwriterStyle: 'aed-carabao' });
-  assert.equal(aedBudget.min, 6);
-  assert.equal(aedBudget.max, 11);
+  assert.equal(aedBudget.min, 5);
+  assert.equal(aedBudget.max, 7);
 
   const asaneeBudget = getSyllableBudgetForBpm(100, '4/4', {
     songwriterStyle: 'asanee-chotikul',
   });
-  assert.equal(asaneeBudget.min, 5);
-  assert.equal(asaneeBudget.max, 9);
+  assert.equal(asaneeBudget.min, 4);
+  assert.equal(asaneeBudget.max, 6);
 
   const aedPrompt = buildLyricsSystemPrompt({
     bpm: 92,
@@ -298,8 +298,8 @@ test('fongbeer-rock and fongbeer-pop songwriter guides, few-shots, budgets, simu
     thaiGenre: 'thai-pop',
   });
   assert.ok(slowPopBudget.guidance.includes('ฟองเบียร์'));
-  assert.equal(slowPopBudget.min, 5);
-  assert.equal(slowPopBudget.max, 8);
+  assert.equal(slowPopBudget.min, 4);
+  assert.equal(slowPopBudget.max, 6);
 
   assert.match(buildDynamicLyricFewShots({ songwriterStyle: 'fongbeer-rock' }), /ฟองเบียร์/);
   assert.match(buildDynamicLyricFewShots({ songwriterStyle: 'fongbeer-pop' }), /ฟองเบียร์/);

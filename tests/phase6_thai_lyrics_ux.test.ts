@@ -545,13 +545,13 @@ test('Phase 6C Chain-Rhyme Continuity, Duplicate Word & Syllable Budget Validati
   assert.ok((partialBroken.chainContinuityRatio ?? 1) < 0.66);
   assert.ok(partialBroken.weakPairs.length >= 2);
 
-  // Authentic chain-rhymed stanza with vowel shifts MUST pass with 100% continuity
+  // Authentic chain-rhymed stanza with vowel shifts MUST pass with 100% continuity within singable 84 BPM budget
   const chainRhymed = validateThaiLyricCouplets(
     [
-      'ยังจำวันที่เราเดินสวนกันที่ชานชาลา',
-      'เวลาไม่เคยพาภาพเธอเลือนไปไหน',
-      'ในมุมเดิมที่ผู้คนเดินผ่านไปไว',
-      'ใจดวงนี้ยังรอคอยเธอคนเดิม',
+      'ยังจำวันที่  ชานชาลา',
+      'เวลาไม่พา  จางหาย',
+      'มองสายฝนโปรย  แสนไกล',
+      'ใจยังคงรอ  คนเดิม',
     ],
     { bpm: 84, enforceSyllableBudget: true }
   );

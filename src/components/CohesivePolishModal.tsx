@@ -17,7 +17,11 @@ import {
 } from '@/lib/creditManager';
 import { getAuthAccessToken, refreshAuthSession } from '@/lib/cloudSync';
 import { trackUsageEvent } from '@/lib/analytics';
-import { applyGenreBandArrangement } from '@/lib/songArchitect';
+import {
+  applyGenreBandArrangement,
+  getStepsGridForTimeSignature,
+  getVocalRegisterShift,
+} from '@/lib/songArchitect';
 import { generateLyricAlignedGuideMelody } from '@/lib/melodyUtils';
 import { stripVocalsFromSong } from '@/lib/storage';
 import { useLanguage } from '@/context/LanguageContext';
@@ -116,6 +120,8 @@ export const CohesivePolishModal: React.FC<CohesivePolishModalProps> = ({
     // 0 Credit Local Execution: immediately apply genre arrangement + resync melody
     if (isZeroCredit) {
       const originalSecById = new Map(song.sections.map((s) => [s.id, s]));
+      const { totalSteps, stepsPerBeat } = getStepsGridForTimeSignature(song.timeSignature);
+      const vocalRegisterShift = getVocalRegisterShift(song.easyConfig?.vocalProfile);
       let resultSong = song;
       if (rebalanceBand) {
         resultSong = applyGenreBandArrangement(resultSong);
@@ -136,10 +142,17 @@ export const CohesivePolishModal: React.FC<CohesivePolishModalProps> = ({
                       lyrics: bar.lyrics,
                       chord1: bar.chords[0] || 'C',
                       chord2: bar.chordsPerBar === 2 ? bar.chords[1] : undefined,
-                      totalSteps: 16,
-                      stepsPerBeat: 4,
+                      baseKey: song.baseKey || 'C',
+                      totalSteps,
+                      stepsPerBeat,
+                      vocalRegisterShift,
                       barIndex: bIdx,
                       sectionType: sec.type,
+                      bpm: song.bpm,
+                      timeSignature: song.timeSignature,
+                      thaiGenre: song.thaiGenre,
+                      songwriterStyle: song.songwriterStyle,
+                      lyricDensity: song.lyricDensity ?? song.easyConfig?.lyricDensity,
                     }),
             })),
           };

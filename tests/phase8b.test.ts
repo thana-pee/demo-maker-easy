@@ -165,7 +165,7 @@ test('Phase 8B.2: sanitizeArchitectSongProject clamps melodyNotes cleanly across
   assert.equal(v44Notes[1].step, 14);
   assert.equal(v44Notes[1].durationSteps, 2); // 16 - 14 = 2 max duration
 
-  // 3/4 and 6/8 clamp step to 0..11 and duration to 12 - step
+  // 3/4 and 6/8 re-synthesize cleanly into 0..11 with breath rest when AI notes exceed 12 steps (no step-11 pileup!)
   for (const ts of ['3/4', '6/8'] as const) {
     const songCompound = sanitizeArchitectSongProject(
       {
@@ -204,11 +204,10 @@ test('Phase 8B.2: sanitizeArchitectSongProject clamps melodyNotes cleanly across
       input
     );
     const notes = songCompound.sections[0].bars[0].melodyNotes;
+    assert.ok(notes.length >= 2);
     assert.ok(notes.every((n) => n.step >= 0 && n.step <= 11));
-    assert.equal(notes[0].step, 10);
-    assert.equal(notes[0].durationSteps, 2);
-    assert.equal(notes[1].step, 11);
-    assert.equal(notes[1].durationSteps, 1);
+    assert.ok(notes.every((n) => n.step + n.durationSteps <= 10));
+    assert.equal(notes.filter((n) => n.step === 11).length, 0);
   }
 });
 
@@ -216,7 +215,7 @@ test('Phase 8B.2: sanitizeArchitectSongProject clamps melodyNotes cleanly across
 
 test('Phase 8B.3: Architect/Cohesive prompts use dynamic syllable budgets, drop conflicting melodyNotes instruction & Director lists Phase 7C styles', () => {
   const budgetSlow74 = getSyllableBudgetForBpm(74, '4/4');
-  assert.ok(budgetSlow74.guidance.includes('5-8 พยางค์'));
+  assert.ok(budgetSlow74.guidance.includes('4-6 พยางค์'));
 
   const archSysRock = buildEasyArchitectSystemPrompt({
     bpm: 120,
@@ -226,7 +225,7 @@ test('Phase 8B.3: Architect/Cohesive prompts use dynamic syllable budgets, drop 
   });
   assert.doesNotMatch(archSysRock, /ห้ามแต่งประโยคยาว 8-12 พยางค์เด็ดขาด/);
   assert.match(archSysRock, /ไม่ต้องสร้าง array melodyNotes รายโน้ต/);
-  assert.match(archSysRock, /6-12 พยางค์/);
+  assert.match(archSysRock, /5-7 พยางค์/);
 
   const archUserRock = buildEasyArchitectUserPrompt({
     stylePreset: 'phuea-chiwit-road',
@@ -242,7 +241,7 @@ test('Phase 8B.3: Architect/Cohesive prompts use dynamic syllable budgets, drop 
   });
   assert.doesNotMatch(archUserRock, /เพียง 4-6 พยางค์ต่อห้องเท่านั้น/);
   assert.doesNotMatch(archUserRock, /และ melodyNotes ไกด์ \(step 0\.\.15\) ที่ร้องได้จริง/);
-  assert.match(archUserRock, /6-12 พยางค์/);
+  assert.match(archUserRock, /5-7 พยางค์/);
 
   const cohesiveSys = buildCohesivePolishSystemPrompt({
     bpm: 100,
@@ -251,7 +250,7 @@ test('Phase 8B.3: Architect/Cohesive prompts use dynamic syllable budgets, drop 
     thaiGenre: 'phuea-chiwit',
   });
   assert.doesNotMatch(cohesiveSys, /รักษาจำนวนพยางค์ 4-6 พยางค์ต่อห้อง/);
-  assert.match(cohesiveSys, /6-11 พยางค์/);
+  assert.match(cohesiveSys, /5-7 พยางค์/);
 
   const directorSys = buildDirectorSystemPrompt();
   for (const styleToken of [

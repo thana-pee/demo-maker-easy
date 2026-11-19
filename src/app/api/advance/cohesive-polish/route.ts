@@ -19,10 +19,14 @@ import {
   type WalletBalanceSummary,
 } from '@/lib/serverWallet';
 import { recordServerFeatureEvent } from '@/lib/serverAnalytics';
-import { applyGenreBandArrangement } from '@/lib/songArchitect';
+import {
+  applyGenreBandArrangement,
+  getStepsGridForTimeSignature,
+  getVocalRegisterShift,
+} from '@/lib/songArchitect';
 import { generateLyricAlignedGuideMelody } from '@/lib/melodyUtils';
 import { parseChord } from '@/lib/chordUtils';
-import type { BarPlayStyle, SongBar, SongProject, SongSection } from '@/types/song';
+import type { BarPlayStyle, SectionType, SongBar, SongProject, SongSection } from '@/types/song';
 
 export const maxDuration = 60;
 
@@ -101,6 +105,31 @@ export async function POST(request: Request): Promise<Response> {
   const unlockedSections = song.sections.filter(
     (s) => s && typeof s.id === 'string' && !lockedSet.has(s.id)
   );
+  const { totalSteps, stepsPerBeat } = getStepsGridForTimeSignature(song.timeSignature);
+  const vocalRegisterShift = getVocalRegisterShift(song.easyConfig?.vocalProfile);
+  const buildSongAlignedNotes = (
+    lyrics: string,
+    chord1: string,
+    chord2: string | undefined,
+    barIndex: number,
+    sectionType: SectionType
+  ) =>
+    generateLyricAlignedGuideMelody({
+      lyrics,
+      chord1,
+      chord2,
+      baseKey: song.baseKey || 'C',
+      totalSteps,
+      stepsPerBeat,
+      vocalRegisterShift,
+      barIndex,
+      sectionType,
+      bpm: song.bpm,
+      timeSignature: song.timeSignature,
+      thaiGenre: song.thaiGenre,
+      songwriterStyle: song.songwriterStyle,
+      lyricDensity: song.lyricDensity ?? song.easyConfig?.lyricDensity,
+    });
 
   // If 100% retention on both lyrics and chords: 0 credits local polish
   if (lyricsRetentionPct === 100 && chordsRetentionPct === 100) {
@@ -127,15 +156,7 @@ export async function POST(request: Request): Promise<Response> {
               melodyNotes:
                 sec.type === 'intro'
                   ? []
-                  : generateLyricAlignedGuideMelody({
-                      lyrics: safeLyrics,
-                      chord1: safeChord1,
-                      chord2: safeChord2,
-                      totalSteps: 16,
-                      stepsPerBeat: 4,
-                      barIndex: bIdx,
-                      sectionType: sec.type,
-                    }),
+                  : buildSongAlignedNotes(safeLyrics, safeChord1, safeChord2, bIdx, sec.type),
             };
           }),
         };
@@ -202,6 +223,7 @@ export async function POST(request: Request): Promise<Response> {
       songwriterStyle: song.songwriterStyle,
       bpm: song.bpm,
       timeSignature: song.timeSignature,
+      lyricDensity: song.lyricDensity ?? song.easyConfig?.lyricDensity,
     });
 
     const userPrompt = buildCohesivePolishUserPrompt({
@@ -257,15 +279,7 @@ export async function POST(request: Request): Promise<Response> {
                 melodyNotes:
                   sec.type === 'intro'
                     ? []
-                    : generateLyricAlignedGuideMelody({
-                        lyrics: safeLyrics,
-                        chord1: safeChord1,
-                        chord2: safeChord2,
-                        totalSteps: 16,
-                        stepsPerBeat: 4,
-                        barIndex: bIdx,
-                        sectionType: sec.type,
-                      }),
+                    : buildSongAlignedNotes(safeLyrics, safeChord1, safeChord2, bIdx, sec.type),
               };
             }),
           };
@@ -382,15 +396,13 @@ export async function POST(request: Request): Promise<Response> {
           melodyNotes:
             sec.type === 'intro'
               ? []
-              : generateLyricAlignedGuideMelody({
-                  lyrics: nextLyrics,
-                  chord1: nextChords[0] || 'C',
-                  chord2: nextChords.length >= 2 ? nextChords[1] : undefined,
-                  totalSteps: 16,
-                  stepsPerBeat: 4,
-                  barIndex: barIdx,
-                  sectionType: sec.type,
-                }),
+              : buildSongAlignedNotes(
+                  nextLyrics,
+                  nextChords[0] || 'C',
+                  nextChords.length >= 2 ? nextChords[1] : undefined,
+                  barIdx,
+                  sec.type
+                ),
         };
       });
 

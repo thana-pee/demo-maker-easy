@@ -67,7 +67,11 @@ import {
   buildSectionTtsTextPlan,
 } from '@/lib/sectionUtils';
 import { getSyllableBudgetForBpm } from '@/lib/aiPrompts';
-import { applyGenreBandArrangement } from '@/lib/songArchitect';
+import {
+  applyGenreBandArrangement,
+  getStepsGridForTimeSignature,
+  getVocalRegisterShift,
+} from '@/lib/songArchitect';
 import { generateLyricAlignedGuideMelody } from '@/lib/melodyUtils';
 import type { LoopRange } from '@/lib/audioEngine';
 import { flattenSong, getTiming } from '@/lib/barPlanner';
@@ -1746,15 +1750,33 @@ export function SectionBuilder({
               loopRange.endBar === sectionEndGlobalIndex
           );
 
-          // Real-Time Songwriter HUD: คำนวณงบพยางค์เฉพาะสไตล์ + ท่อนเพลง และผลตรวจสัมผัส 0 เครดิต
+          // Real-Time Songwriter HUD: คำนวณงบพยางค์เฉพาะสไตล์ + ท่อนเพลง อัตราเร็วร้องจริง และผลตรวจสัมผัส 0 เครดิต
           const sectionBudget = getSyllableBudgetForBpm(song.bpm, song.timeSignature, {
             sectionType: section.type,
             songwriterStyle: song.songwriterStyle,
             thaiGenre: song.thaiGenre,
+            lyricDensity: song.lyricDensity ?? song.easyConfig?.lyricDensity,
           });
-          const nonEmptyBarsCount = section.bars.filter(
-            (b) => b.lyrics.trim().length > 0
-          ).length;
+          const barSec = getTiming(song).barSec;
+          const sungBarsSyllables = section.bars
+            .filter((b) => b.lyrics.trim().length > 0)
+            .map((b) => countThaiEnglishSyllables(b.lyrics));
+          const nonEmptyBarsCount = sungBarsSyllables.length;
+          const avgSylPerSec =
+            nonEmptyBarsCount > 0 && barSec > 0
+              ? sungBarsSyllables.reduce((acc, n) => acc + n, 0) /
+                nonEmptyBarsCount /
+                barSec
+              : 0;
+          const maxSylPerSec =
+            nonEmptyBarsCount > 0 && barSec > 0
+              ? Math.max(...sungBarsSyllables) / barSec
+              : 0;
+          const fastPacingCeiling =
+            sectionBudget.phrasingProfile === 'burst-pocket'
+              ? sectionBudget.maxSyllablesPerSec
+              : Math.min(3.4, sectionBudget.maxSyllablesPerSec);
+          const isPacingTooFast = maxSylPerSec > fastPacingCeiling;
           const sectionRhymeStats =
             nonEmptyBarsCount >= 2
               ? validateThaiLyricCouplets(
@@ -1840,6 +1862,25 @@ export function SectionBuilder({
                   <span className="inline-flex text-[11px] font-mono-tabular text-ink-400 shrink-0">
                     {section.bars.length} {lang === 'th' ? 'ห้อง' : 'bars'}
                   </span>
+
+                  {/* Live Vocal Pacing Rate Badge (พยางค์/วินาที) */}
+                  {nonEmptyBarsCount > 0 && avgSylPerSec > 0 && (
+                    <span
+                      title={
+                        isPacingTooFast
+                          ? t.pacingFastWarning
+                          : `${sectionBudget.guidance} (~${barSec.toFixed(1)}s/bar)`
+                      }
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-semibold ${
+                        isPacingTooFast
+                          ? 'bg-amber-50 border-amber-200 text-amber-800'
+                          : 'bg-emerald-50/80 border-emerald-200 text-emerald-700'
+                      }`}
+                    >
+                      ⚡ {avgSylPerSec.toFixed(1)} {t.pacingSyllablesPerSec} (
+                      {isPacingTooFast ? t.pacingFastWarning : t.pacingComfortable})
+                    </span>
+                  )}
 
                   {/* Real-Time Section Rhyme & Flow Badge (0 เครดิต) */}
                   {sectionRhymeStats && (
@@ -2419,7 +2460,7 @@ export function SectionBuilder({
                         const ttsPlan = buildSectionTtsTextPlan(section.bars, 240);
                         return (
                           <>
-                            <span className="font-medium">&ldquo;{ttsPlan.text}&rdquo;</span>
+                            <span className="font-medium">&ldquo;{ttsPlan.text.replace(/\n/g, ' / ')}&rdquo;</span>
                             <span className="ml-2 text-indigo-500 font-mono-tabular">
                               ({ttsPlan.text.length}/240)
                             </span>
@@ -3788,6 +3829,8 @@ export function SectionBuilder({
                               onClick={() => {
                                 let updatedSongForPlayback = song;
                                 if (!bar.melodyNotes || bar.melodyNotes.length === 0) {
+                                  const { totalSteps, stepsPerBeat } =
+                                    getStepsGridForTimeSignature(song.timeSignature);
                                   const alignedNotes = generateLyricAlignedGuideMelody(
                                     bar.lyrics,
                                     bar.chords[0] || song.baseKey,
@@ -3801,6 +3844,17 @@ export function SectionBuilder({
                                       barIndex,
                                       totalBars: section.bars.length,
                                       baseKey: song.baseKey,
+                                      totalSteps,
+                                      stepsPerBeat,
+                                      vocalRegisterShift: getVocalRegisterShift(
+                                        song.easyConfig?.vocalProfile
+                                      ),
+                                      bpm: song.bpm,
+                                      timeSignature: song.timeSignature,
+                                      thaiGenre: song.thaiGenre,
+                                      songwriterStyle: song.songwriterStyle,
+                                      lyricDensity:
+                                        song.lyricDensity ?? song.easyConfig?.lyricDensity,
                                     }
                                   );
                                   updatedSongForPlayback = {

@@ -45,6 +45,7 @@ import {
 } from '@/lib/aiPrompts';
 import { useLanguage } from '@/context/LanguageContext';
 import type {
+  LyricDensityMode,
   MelodyNote,
   SectionType,
   SongProject,
@@ -81,6 +82,7 @@ interface AdvanceModeModalProps {
   initialMode?: 'quick' | 'deep';
   initialTab?: 'rhyme' | 'ai-lyrics' | 'ai-director' | 'reference' | 'wallet';
   initialTopic?: string;
+  initialAnchorPhrase?: string;
   cloudUser?: CloudUser;
   onOpenAccountModal?: () => void;
   onCreditsChange: (balance: number) => void;
@@ -102,6 +104,7 @@ interface AdvanceModeModalProps {
     lyricDialect?: ThaiLyricDialect;
     songwriterStyle?: ThaiSongwriterStyle;
     emotionalResolution?: ThaiEmotionalResolution;
+    lyricDensity?: LyricDensityMode;
   }) => void;
   onApplySongUpdate?: (nextSong: SongProject) => void;
   onClose: () => void;
@@ -176,6 +179,7 @@ export const AdvanceModeModal: React.FC<AdvanceModeModalProps> = ({
   initialMode,
   initialTab,
   initialTopic,
+  initialAnchorPhrase,
   cloudUser = GUEST_USER,
   onOpenAccountModal,
   onCreditsChange,
@@ -185,7 +189,7 @@ export const AdvanceModeModal: React.FC<AdvanceModeModalProps> = ({
   onApplySongUpdate,
   onClose,
 }) => {
-  const { lang } = useLanguage();
+  const { lang, t } = useLanguage();
   const [activeTab, setActiveTab] = useState<AdvanceTab>(
     initialTab ?? (targetSection ? 'ai-lyrics' : 'rhyme')
   );
@@ -241,6 +245,9 @@ export const AdvanceModeModal: React.FC<AdvanceModeModalProps> = ({
     if (t && !t.startsWith('New Song') && !t.startsWith('เพลงใหม่')) return t;
     return '';
   });
+  const [sectionAnchorPhrase, setSectionAnchorPhrase] = useState(
+    () => initialAnchorPhrase?.trim() || ''
+  );
   const [thaiGenre, setThaiGenre] = useState<ThaiSongGenre>(song?.thaiGenre ?? 'thai-pop');
   const [lyricEra, setLyricEra] = useState<ThaiLyricEra>(song?.lyricEra ?? 'modern-indie');
   const [lyricDialect, setLyricDialect] = useState<ThaiLyricDialect>(
@@ -251,6 +258,9 @@ export const AdvanceModeModal: React.FC<AdvanceModeModalProps> = ({
   );
   const [emotionalResolution, setEmotionalResolution] = useState<ThaiEmotionalResolution>(
     song?.emotionalResolution ?? 'auto'
+  );
+  const [lyricDensity, setLyricDensity] = useState<LyricDensityMode>(
+    song?.lyricDensity ?? song?.easyConfig?.lyricDensity ?? 'balanced'
   );
   const [polishExistingDraft, setPolishExistingDraft] = useState(false);
   const [showCostConfirm, setShowCostConfirm] = useState(false);
@@ -705,6 +715,7 @@ export const AdvanceModeModal: React.FC<AdvanceModeModalProps> = ({
     lyricDialect?: ThaiLyricDialect;
     songwriterStyle?: ThaiSongwriterStyle;
     emotionalResolution?: ThaiEmotionalResolution;
+    lyricDensity?: LyricDensityMode;
   }) => {
     if (next.thaiGenre !== undefined) setThaiGenre(next.thaiGenre);
     if (next.lyricEra !== undefined) setLyricEra(next.lyricEra);
@@ -712,6 +723,9 @@ export const AdvanceModeModal: React.FC<AdvanceModeModalProps> = ({
     if (next.songwriterStyle !== undefined) setSongwriterStyle(next.songwriterStyle);
     if (next.emotionalResolution !== undefined) {
       setEmotionalResolution(next.emotionalResolution);
+    }
+    if (next.lyricDensity !== undefined) {
+      setLyricDensity(next.lyricDensity);
     }
     onUpdateSongStyleMeta?.(next);
   };
@@ -833,9 +847,18 @@ export const AdvanceModeModal: React.FC<AdvanceModeModalProps> = ({
           lyricDialect,
           songwriterStyle,
           emotionalResolution,
+          lyricDensity,
+          baseKey: song?.baseKey,
+          vocalProfile: song?.easyConfig?.vocalProfile,
           songTitle: song?.title,
           polishExistingDraft,
           mode: lyricMode,
+          ...(sectionAnchorPhrase.trim()
+            ? { sectionAnchorPhrase: sectionAnchorPhrase.trim() }
+            : {}),
+          ...(song?.easyConfig?.storyBlueprint
+            ? { storyBlueprint: song.easyConfig.storyBlueprint }
+            : {}),
         }),
       });
 
@@ -1611,10 +1634,10 @@ export const AdvanceModeModal: React.FC<AdvanceModeModalProps> = ({
                   </div>
                 </div>
 
-                <div className="space-y-1.5">
+                <div className="space-y-2">
                   <div className="flex items-center justify-between gap-2">
                     <label className="text-xs font-bold text-ink-700 block">
-                      {lang === 'th' ? 'เรื่องราว / คีย์เวิร์ดของท่อนนี้ (Topic):' : 'Topic / Imagery:'}
+                      {lang === 'th' ? 'เรื่องราว / คีย์เวิร์ดของท่อนนี้ (Topic & Story Context):' : 'Topic & Story Context:'}
                     </label>
                     <button
                       type="button"
@@ -1624,17 +1647,36 @@ export const AdvanceModeModal: React.FC<AdvanceModeModalProps> = ({
                       ✨ {lang === 'th' ? 'ดึงจากชื่อเพลง/ท่อนเดิม' : 'Auto-fill from Song'}
                     </button>
                   </div>
-                  <input
-                    type="text"
+                  <textarea
+                    rows={3}
+                    maxLength={1000}
                     value={topic}
                     onChange={(e) => setTopic(e.target.value)}
                     placeholder={
                       lang === 'th'
-                        ? 'เว้นว่างได้ระบบจะดึงจากชื่อเพลง หรือระบุเพิ่ม เช่น กาแฟอุ่นๆ ยามเช้า...'
-                        : 'e.g., Sunday morning coffee, watching the rain, stargazing promise...'
+                        ? 'เล่าเหตุการณ์หรืออารมณ์ของท่อนนี้ได้ยาวตามต้องการ หรือเว้นว่างเพื่อดึงจากชื่อเพลง...'
+                        : 'Describe the scene, emotion, or story continuity for this section...'
                     }
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-surface-2 border border-hairline text-ink-900 placeholder:text-ink-400 text-sm focus:outline-none focus:border-accent-500 focus:ring-2 focus:ring-accent-500/20"
+                    className="w-full px-3.5 py-2 rounded-xl bg-surface-2 border border-hairline text-ink-900 placeholder:text-ink-400 text-sm focus:outline-none focus:border-accent-500 focus:ring-2 focus:ring-accent-500/20"
                   />
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-semibold text-ink-600 block">
+                      {lang === 'th'
+                        ? '🎯 ประโยค/คำที่ต้องมีในท่อนนี้ (Optional):'
+                        : '🎯 Must-Have Phrase / Anchor in This Section (Optional):'}
+                    </label>
+                    <input
+                      type="text"
+                      value={sectionAnchorPhrase}
+                      onChange={(e) => setSectionAnchorPhrase(e.target.value)}
+                      placeholder={
+                        lang === 'th'
+                          ? 'เช่น ฝนตกริมหน้าต่าง, รักเธอเท่าเดิม...'
+                          : 'e.g., Still in love with you...'
+                      }
+                      className="w-full px-3 py-1.5 rounded-xl bg-surface-2 border border-hairline text-xs text-ink-900 placeholder:text-ink-400 focus:outline-none focus:border-accent-500 focus:ring-2 focus:ring-accent-500/20"
+                    />
+                  </div>
                 </div>
 
                 {/* Thai Genre, Era, Dialect & Songwriter Inspiration Controls */}
@@ -1746,6 +1788,34 @@ export const AdvanceModeModal: React.FC<AdvanceModeModalProps> = ({
                           </option>
                         ))}
                       </select>
+                    </div>
+                    <div className="sm:col-span-2 space-y-1">
+                      <label className="block text-[10px] font-bold text-ink-700">
+                        {t.lyricDensityLabel}
+                      </label>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        {(
+                          [
+                            { id: 'airy' as const, label: t.lyricDensityAiry },
+                            { id: 'balanced' as const, label: t.lyricDensityBalanced },
+                            { id: 'dense' as const, label: t.lyricDensityDense },
+                          ]
+                        ).map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => handleStyleMetaChange({ lyricDensity: opt.id })}
+                            aria-pressed={lyricDensity === opt.id}
+                            className={`px-2 py-1.5 rounded-xl border text-[11px] font-bold transition cursor-pointer ${
+                              lyricDensity === opt.id
+                                ? 'bg-accent-50 border-accent-500 text-accent-text'
+                                : 'bg-surface-1 border-hairline text-ink-700 hover:border-accent-200'
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
                   {(() => {
