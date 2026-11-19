@@ -26,6 +26,12 @@ import {
   Plus,
   Undo2,
   Redo2,
+  Save,
+  Camera,
+  Loader2,
+  Volume2,
+  Wand2,
+  FilePlus2,
 } from 'lucide-react';
 import { SongProject, TimeSignature, AppViewMode } from '@/types/song';
 import type { CloudSyncStatus, CloudUser } from '@/lib/cloudSync';
@@ -34,10 +40,14 @@ import { DEFAULT_STARTER_CREDITS } from '@/lib/creditManager';
 import { useLanguage } from '@/context/LanguageContext';
 import { useTheme, type ThemePreference } from '@/context/ThemeContext';
 
+export type LocalSaveState = 'saved' | 'dirty' | 'saving' | 'error';
+
 interface TransportBarProps {
   song: SongProject;
   activeMode: AppViewMode;
   isPlaying: boolean;
+  isLoading?: boolean;
+  hasOpenModal?: boolean;
   currentBarIndex: number;
   currentBeat: number;
   isCountIn: boolean;
@@ -54,6 +64,8 @@ interface TransportBarProps {
   onToggleZenMode?: () => void;
   onOpenAccountModal?: () => void;
   onOpenAdvanceModal?: () => void;
+  onOpenEasyMode?: () => void;
+  onCreateNewSong?: () => void;
   onOpenExportModal: () => void;
   onOpenLibraryModal: () => void;
   onUpdateSong: (updater: (prev: SongProject) => SongProject) => void;
@@ -61,6 +73,10 @@ interface TransportBarProps {
   canRedo?: boolean;
   onUndo?: () => void;
   onRedo?: () => void;
+  localSaveState?: LocalSaveState;
+  lastLocalSavedAt?: string | null;
+  onManualSave?: () => Promise<void> | void;
+  onSaveCheckpoint?: () => void;
 }
 
 type HeaderPopover = null | 'ts' | 'bpm' | 'key' | 'capo' | 'more';
@@ -78,6 +94,8 @@ export const TransportBar: React.FC<TransportBarProps> = ({
   song,
   activeMode,
   isPlaying,
+  isLoading = false,
+  hasOpenModal = false,
   currentBarIndex,
   currentBeat,
   isCountIn,
@@ -94,6 +112,8 @@ export const TransportBar: React.FC<TransportBarProps> = ({
   onToggleZenMode,
   onOpenAccountModal,
   onOpenAdvanceModal,
+  onOpenEasyMode,
+  onCreateNewSong,
   onOpenExportModal,
   onOpenLibraryModal,
   onUpdateSong,
@@ -101,12 +121,17 @@ export const TransportBar: React.FC<TransportBarProps> = ({
   canRedo = false,
   onUndo,
   onRedo,
+  localSaveState = 'saved',
+  lastLocalSavedAt = null,
+  onManualSave,
+  onSaveCheckpoint,
 }) => {
   const { lang, t, toggleLang } = useLanguage();
   const { themePref, resolvedTheme, setThemePref, toggleTheme } = useTheme();
   const [openPopover, setOpenPopover] = useState<HeaderPopover>(null);
   const headerRef = useRef<HTMLElement | null>(null);
   const dockRef = useRef<HTMLDivElement | null>(null);
+  const tapTimesRef = useRef<number[]>([]);
 
   const beatsPerBar = song.timeSignature === '3/4' ? 3 : song.timeSignature === '6/8' ? 6 : 4;
 
@@ -122,8 +147,26 @@ export const TransportBar: React.FC<TransportBarProps> = ({
   };
 
   const changeBpm = (nextBpm: number) => {
-    const clamped = Math.max(50, Math.min(160, nextBpm));
+    if (!Number.isFinite(nextBpm)) return;
+    const clamped = Math.max(50, Math.min(180, Math.round(nextBpm)));
     onUpdateSong((prev) => ({ ...prev, bpm: clamped }));
+  };
+
+  const handleTapTempo = () => {
+    const now = Date.now();
+    const recent = tapTimesRef.current.filter((tMs) => now - tMs <= 2200);
+    const updated = [...recent, now].slice(-5);
+    tapTimesRef.current = updated;
+    if (updated.length >= 2) {
+      let totalInterval = 0;
+      for (let i = 1; i < updated.length; i++) {
+        totalInterval += updated[i] - updated[i - 1];
+      }
+      const avgInterval = totalInterval / (updated.length - 1);
+      if (avgInterval > 0) {
+        changeBpm(Math.round(60000 / avgInterval));
+      }
+    }
   };
 
   // Click outside closes active popover
@@ -141,9 +184,19 @@ export const TransportBar: React.FC<TransportBarProps> = ({
     return () => document.removeEventListener('mousedown', handlePointerDown);
   }, [openPopover]);
 
-  // Global keyboard shortcuts: Space = Play/Pause, Esc = Close popover or Stop
+  // Global keyboard shortcuts: Ctrl+S / Ctrl+Shift+S (works even in inputs), Space = Play/Pause, Esc = Close popover or Stop
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          onSaveCheckpoint?.();
+        } else {
+          void onManualSave?.();
+        }
+        return;
+      }
+
       const activeEl = document.activeElement;
       const isTyping =
         activeEl instanceof HTMLInputElement ||
@@ -156,7 +209,10 @@ export const TransportBar: React.FC<TransportBarProps> = ({
           setOpenPopover(null);
           return;
         }
-        if (!isTyping && !isSoundPanelOpen && isPlaying) {
+        const hasDomModal =
+          typeof document !== 'undefined' &&
+          Boolean(document.querySelector('[role="dialog"], .fixed.inset-0'));
+        if (!isTyping && !isSoundPanelOpen && !hasOpenModal && !hasDomModal && isPlaying) {
           onStop();
         }
         return;
@@ -187,7 +243,7 @@ export const TransportBar: React.FC<TransportBarProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [openPopover, isSoundPanelOpen, isPlaying, onStop, onTogglePlay, onUndo, onRedo]);
+  }, [openPopover, isSoundPanelOpen, hasOpenModal, isPlaying, onStop, onTogglePlay, onUndo, onRedo, onManualSave, onSaveCheckpoint]);
 
   const togglePopover = (key: Exclude<HeaderPopover, null>) => {
     setOpenPopover((prev) => (prev === key ? null : key));
@@ -225,6 +281,28 @@ export const TransportBar: React.FC<TransportBarProps> = ({
   const transposeStr =
     song.transposeSemitones >= 0 ? `+${song.transposeSemitones}` : `${song.transposeSemitones}`;
 
+  const formattedSavedTime = React.useMemo(() => {
+    if (!lastLocalSavedAt) return '';
+    const ms = Date.parse(lastLocalSavedAt);
+    if (!Number.isFinite(ms)) return '';
+    const d = new Date(ms);
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  }, [lastLocalSavedAt]);
+
+  const saveDotClass =
+    localSaveState === 'dirty' || localSaveState === 'saving'
+      ? 'bg-warn-500 animate-pulse'
+      : localSaveState === 'error'
+        ? 'bg-rec-500'
+        : 'bg-ok-500';
+
+  const saveStatusText =
+    localSaveState === 'dirty' || localSaveState === 'saving'
+      ? t.saveStateSaving
+      : localSaveState === 'error'
+        ? t.saveStateError
+        : `${t.saveStateSaved}${formattedSavedTime ? ` ${formattedSavedTime}` : ''}`;
+
   return (
     <>
       <header
@@ -254,16 +332,53 @@ export const TransportBar: React.FC<TransportBarProps> = ({
                   onUpdateSong((prev) => ({ ...prev, title: newTitle }));
                 }}
                 aria-label={lang === 'th' ? 'ชื่อเพลง' : 'Song title'}
-                className="font-semibold text-base sm:text-lg tracking-[-0.01em] text-ink-900 bg-transparent hover:bg-surface-inset focus:bg-surface-1 focus:outline-none focus:ring-2 focus:ring-accent-200 rounded-lg px-2 py-1 min-w-0 w-36 sm:w-52 lg:w-60 truncate transition"
+                className="font-semibold text-base sm:text-lg tracking-[-0.01em] text-ink-900 bg-transparent hover:bg-surface-inset focus:bg-surface-1 focus:outline-none focus:ring-2 focus:ring-accent-200 rounded-lg px-2 py-1 min-w-0 w-32 sm:w-44 lg:w-52 truncate transition"
               />
 
               <span
-                className="hidden sm:inline-flex items-center gap-1.5 text-xs text-ink-400 whitespace-nowrap shrink-0"
-                title={`${t.autoSaved} • ${t.audioEngineBadge}`}
+                className={`hidden sm:inline-flex items-center gap-1.5 text-xs whitespace-nowrap shrink-0 ${
+                  localSaveState === 'error'
+                    ? 'text-rec-500 font-semibold'
+                    : localSaveState === 'dirty' || localSaveState === 'saving'
+                      ? 'text-warn-600 font-medium'
+                      : 'text-ink-400'
+                }`}
+                title={`${saveStatusText} • ${t.autoSaved} • ${t.audioEngineBadge}`}
+                data-save-state={localSaveState}
               >
-                <span className="w-1.5 h-1.5 rounded-full bg-ok-500" />
-                <span className="hidden lg:inline">{t.autoSaved}</span>
+                <span className={`w-1.5 h-1.5 rounded-full ${saveDotClass}`} />
+                <span className="hidden lg:inline">{saveStatusText}</span>
               </span>
+
+              {onManualSave && (
+                <button
+                  type="button"
+                  onClick={() => void onManualSave()}
+                  title={lang === 'th' ? 'บันทึกทันที (Ctrl+S)' : 'Save now (Ctrl+S)'}
+                  aria-label={lang === 'th' ? 'บันทึกทันที (Ctrl+S)' : 'Save now (Ctrl+S)'}
+                  className={`h-8 px-2 rounded-lg text-xs font-medium inline-flex items-center gap-1 transition cursor-pointer shrink-0 ${
+                    localSaveState === 'dirty'
+                      ? 'bg-amber-50 text-amber-800 border border-amber-300 hover:bg-amber-100'
+                      : 'text-ink-700 hover:text-ink-900 hover:bg-surface-inset'
+                  }`}
+                >
+                  <Save className="w-3.5 h-3.5" strokeWidth={1.75} />
+                  <span className="hidden xl:inline">{t.manualSaveBtn}</span>
+                </button>
+              )}
+
+              {onSaveCheckpoint && (
+                <button
+                  type="button"
+                  onClick={() => onSaveCheckpoint()}
+                  title={lang === 'th' ? 'ปักหมุดเวอร์ชัน (Ctrl+Shift+S)' : 'Save Checkpoint (Ctrl+Shift+S)'}
+                  aria-label={lang === 'th' ? 'ปักหมุดเวอร์ชัน (Ctrl+Shift+S)' : 'Save Checkpoint (Ctrl+Shift+S)'}
+                  className="hidden sm:inline-flex h-8 px-2 rounded-lg text-xs font-medium text-ink-700 hover:text-ink-900 hover:bg-surface-inset items-center gap-1 transition cursor-pointer shrink-0"
+                >
+                  <Camera className="w-3.5 h-3.5" strokeWidth={1.75} />
+                  <span className="hidden xl:inline">{t.saveCheckpointBtn}</span>
+                </button>
+              )}
             </div>
 
             {/* Center: 3-Mode Segmented Control (Desktop & iPad) */}
@@ -320,6 +435,30 @@ export const TransportBar: React.FC<TransportBarProps> = ({
                     <Redo2 className="w-4 h-4" strokeWidth={1.75} />
                   </button>
                 </div>
+              )}
+
+              {onOpenEasyMode && (
+                <button
+                  type="button"
+                  onClick={onOpenEasyMode}
+                  title={lang === 'th' ? 'สร้างเพลงง่าย ๆ ใน 30 วินาที (Easy Mode)' : 'Quick Start Wizard (Easy Mode)'}
+                  className="hidden sm:inline-flex h-8 px-2.5 rounded-lg bg-accent-50 hover:bg-accent-200/60 text-accent-text text-xs font-semibold items-center gap-1 border border-accent-200 transition cursor-pointer shrink-0"
+                >
+                  <Wand2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+                  <span className="hidden xl:inline">Easy Mode</span>
+                </button>
+              )}
+
+              {onCreateNewSong && (
+                <button
+                  type="button"
+                  onClick={onCreateNewSong}
+                  title={lang === 'th' ? 'สร้างเพลงใหม่' : 'New Song'}
+                  className="hidden sm:inline-flex h-8 px-2 rounded-lg hover:bg-surface-inset text-ink-700 hover:text-ink-900 text-xs font-medium items-center gap-1 transition cursor-pointer shrink-0"
+                >
+                  <FilePlus2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+                  <span className="hidden xl:inline">{lang === 'th' ? 'เพลงใหม่' : 'New'}</span>
+                </button>
               )}
 
               {/* AI & Advance Mode Credits Pill */}
@@ -450,6 +589,34 @@ export const TransportBar: React.FC<TransportBarProps> = ({
 
                     <div className="h-px bg-hairline my-1" />
 
+                    {onOpenEasyMode && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onOpenEasyMode();
+                          setOpenPopover(null);
+                        }}
+                        className="w-full h-9 px-2.5 rounded-xl hover:bg-surface-inset flex items-center gap-2.5 text-left transition cursor-pointer"
+                      >
+                        <Wand2 className="w-4 h-4 text-accent-text" />
+                        <span className="font-medium">{lang === 'th' ? '✨ Easy Mode (ตัวช่วยสร้างเพลง)' : '✨ Easy Mode Wizard'}</span>
+                      </button>
+                    )}
+
+                    {onCreateNewSong && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onCreateNewSong();
+                          setOpenPopover(null);
+                        }}
+                        className="w-full h-9 px-2.5 rounded-xl hover:bg-surface-inset flex items-center gap-2.5 text-left transition cursor-pointer"
+                      >
+                        <FilePlus2 className="w-4 h-4 text-ink-700" />
+                        <span>{lang === 'th' ? '➕ สร้างเพลงใหม่' : '➕ Create New Song'}</span>
+                      </button>
+                    )}
+
                     <button
                       type="button"
                       onClick={() => {
@@ -495,6 +662,40 @@ export const TransportBar: React.FC<TransportBarProps> = ({
                           <span>{lang === 'th' ? 'บัญชี & Cloud Sync' : 'Account & Cloud'}</span>
                         </span>
                         <span className={`w-2 h-2 rounded-full ${SYNC_DOT_COLOR[syncStatus]}`} />
+                      </button>
+                    )}
+
+                    {onManualSave && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void onManualSave();
+                          setOpenPopover(null);
+                        }}
+                        className="w-full h-9 px-2.5 rounded-xl hover:bg-surface-inset flex items-center justify-between text-left transition cursor-pointer"
+                      >
+                        <span className="inline-flex items-center gap-2.5 text-ink-900">
+                          <Save className="w-4 h-4 text-ink-700" />
+                          <span>{t.manualSaveBtn}</span>
+                        </span>
+                        <span className="font-mono-tabular text-[11px] text-ink-400">Ctrl+S</span>
+                      </button>
+                    )}
+
+                    {onSaveCheckpoint && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onSaveCheckpoint();
+                          setOpenPopover(null);
+                        }}
+                        className="w-full h-9 px-2.5 rounded-xl hover:bg-surface-inset flex items-center justify-between text-left transition cursor-pointer"
+                      >
+                        <span className="inline-flex items-center gap-2.5 text-ink-900">
+                          <Camera className="w-4 h-4 text-ink-700" />
+                          <span>{t.saveCheckpointBtn}</span>
+                        </span>
+                        <span className="font-mono-tabular text-[11px] text-ink-400">Ctrl+⇧+S</span>
                       </button>
                     )}
 
@@ -550,17 +751,33 @@ export const TransportBar: React.FC<TransportBarProps> = ({
                   ? 'เล่นเดโม่ (Space)'
                   : 'Play Demo (Space)'
               }
-              aria-label={isPlaying ? t.pause : t.playDemo}
+              aria-label={
+                isLoading
+                  ? lang === 'th'
+                    ? 'กำลังโหลดเสียงเครื่องดนตรี...'
+                    : 'Loading instruments...'
+                  : isPlaying
+                    ? t.pause
+                    : t.playDemo
+              }
               className={`w-10 h-10 rounded-full bg-accent-500 hover:bg-accent-hover text-white inline-flex items-center justify-center transition cursor-pointer shrink-0 ${
                 isPlaying ? 'ring-4 ring-accent-200' : ''
               }`}
             >
-              {isPlaying ? (
+              {isLoading ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : isPlaying ? (
                 <Pause className="w-4 h-4 fill-current" />
               ) : (
                 <Play className="w-4 h-4 fill-current translate-x-[1px]" />
               )}
             </button>
+
+            {isLoading && (
+              <span className="text-[11px] font-medium text-accent-text bg-accent-50 border border-accent-200 px-2 py-1 rounded-lg whitespace-nowrap animate-pulse">
+                {lang === 'th' ? 'กำลังโหลดเสียงเครื่องดนตรี...' : 'Loading instruments...'}
+              </span>
+            )}
 
             <button
               type="button"
@@ -586,6 +803,36 @@ export const TransportBar: React.FC<TransportBarProps> = ({
               <Timer className="w-4 h-4" strokeWidth={1.75} />
               <span className="hidden lg:inline">
                 {lang === 'th' ? 'นับเข้า' : 'Count-in'}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                onUpdateSong((prev) => ({
+                  ...prev,
+                  metronomeEnabled: !prev.metronomeEnabled,
+                }))
+              }
+              aria-pressed={Boolean(song.metronomeEnabled)}
+              title={
+                song.metronomeEnabled
+                  ? lang === 'th'
+                    ? 'ปิดคลิกจังหวะต่อเนื่องระหว่างเล่น'
+                    : 'Turn off playback metronome click'
+                  : lang === 'th'
+                    ? 'เปิดคลิกจังหวะต่อเนื่องทุกจังหวะระหว่างเล่น'
+                    : 'Enable metronome click during playback'
+              }
+              className={`h-9 px-2.5 rounded-xl text-xs font-medium inline-flex items-center gap-1.5 transition cursor-pointer ${
+                song.metronomeEnabled
+                  ? 'bg-accent-50 text-accent-text font-semibold'
+                  : 'text-ink-700 hover:text-ink-900 hover:bg-surface-inset'
+              }`}
+            >
+              <Volume2 className="w-4 h-4" strokeWidth={1.75} />
+              <span className="hidden xl:inline">
+                {lang === 'th' ? 'คลิกจังหวะ' : 'Click'}
               </span>
             </button>
 
@@ -697,29 +944,44 @@ export const TransportBar: React.FC<TransportBarProps> = ({
                 </button>
 
                 {openPopover === 'bpm' && (
-                  <div className="absolute left-0 mt-2 w-64 bg-surface-1 border border-hairline rounded-2xl shadow-e3 p-3.5 z-50 space-y-3">
-                    <div className="text-xs font-medium text-ink-400 uppercase tracking-wider">
-                      Tempo (BPM)
-                    </div>
+                  <div className="absolute left-0 mt-2 w-72 bg-surface-1 border border-hairline rounded-2xl shadow-e3 p-3.5 z-50 space-y-3">
                     <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-ink-400 uppercase tracking-wider">
+                        Tempo (BPM)
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleTapTempo}
+                        className="px-2.5 py-1 rounded-lg bg-accent-50 hover:bg-accent-200/70 text-accent-text border border-accent-200 text-xs font-semibold transition cursor-pointer"
+                      >
+                        🥁 Tap Tempo
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
                       <button
                         type="button"
                         onClick={() => changeBpm(song.bpm - 1)}
-                        className="w-9 h-9 rounded-xl bg-surface-inset hover:bg-accent-50 hover:text-accent-text inline-flex items-center justify-center transition cursor-pointer"
+                        className="w-9 h-9 rounded-xl bg-surface-inset hover:bg-accent-50 hover:text-accent-text inline-flex items-center justify-center transition cursor-pointer shrink-0"
                         aria-label="Decrease BPM"
                       >
                         <Minus className="w-4 h-4" />
                       </button>
-                      <div className="text-center">
-                        <span className="font-mono-tabular text-2xl font-semibold text-ink-900">
-                          {song.bpm}
-                        </span>
-                        <span className="ml-1 text-xs text-ink-400">BPM</span>
+                      <div className="flex items-baseline justify-center gap-1">
+                        <input
+                          type="number"
+                          min={50}
+                          max={180}
+                          value={song.bpm}
+                          onChange={(e) => changeBpm(parseInt(e.target.value, 10))}
+                          aria-label="Direct BPM Input"
+                          className="w-16 text-center font-mono-tabular text-2xl font-semibold text-ink-900 bg-surface-inset rounded-lg py-0.5 border border-hairline focus:outline-none focus:border-accent-500"
+                        />
+                        <span className="text-xs text-ink-400">BPM</span>
                       </div>
                       <button
                         type="button"
                         onClick={() => changeBpm(song.bpm + 1)}
-                        className="w-9 h-9 rounded-xl bg-surface-inset hover:bg-accent-50 hover:text-accent-text inline-flex items-center justify-center transition cursor-pointer"
+                        className="w-9 h-9 rounded-xl bg-surface-inset hover:bg-accent-50 hover:text-accent-text inline-flex items-center justify-center transition cursor-pointer shrink-0"
                         aria-label="Increase BPM"
                       >
                         <Plus className="w-4 h-4" />
@@ -728,14 +990,14 @@ export const TransportBar: React.FC<TransportBarProps> = ({
                     <input
                       type="range"
                       min="50"
-                      max="160"
+                      max="180"
                       value={song.bpm}
                       onChange={(e) => changeBpm(parseInt(e.target.value, 10))}
                       className="w-full accent-[#5B61EE] cursor-pointer"
                     />
                     <div className="flex justify-between text-xs font-mono-tabular text-ink-400">
                       <span>50</span>
-                      <span>160</span>
+                      <span>180</span>
                     </div>
                   </div>
                 )}
@@ -894,12 +1156,22 @@ export const TransportBar: React.FC<TransportBarProps> = ({
           <button
             type="button"
             onClick={onTogglePlay}
-            aria-label={isPlaying ? t.pause : t.playDemo}
+            aria-label={
+              isLoading
+                ? lang === 'th'
+                  ? 'กำลังโหลดเสียงเครื่องดนตรี...'
+                  : 'Loading instruments...'
+                : isPlaying
+                  ? t.pause
+                  : t.playDemo
+            }
             className={`w-10 h-10 rounded-full bg-accent-500 text-white inline-flex items-center justify-center shrink-0 cursor-pointer ${
               isPlaying ? 'ring-3 ring-accent-200' : ''
             }`}
           >
-            {isPlaying ? (
+            {isLoading ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : isPlaying ? (
               <Pause className="w-4 h-4 fill-current" />
             ) : (
               <Play className="w-4 h-4 fill-current translate-x-[1px]" />
@@ -975,18 +1247,56 @@ export const TransportBar: React.FC<TransportBarProps> = ({
                 </select>
               </div>
               <div className="space-y-1.5">
-                <div className="flex items-center justify-between text-sm">
+                <div className="flex items-center justify-between text-sm gap-2">
                   <span className="text-ink-700">Tempo</span>
-                  <span className="font-mono-tabular font-semibold">{song.bpm} BPM</span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={handleTapTempo}
+                      className="px-2 py-0.5 rounded-md bg-accent-50 text-accent-text border border-accent-200 text-[11px] font-semibold cursor-pointer"
+                    >
+                      🥁 Tap
+                    </button>
+                    <input
+                      type="number"
+                      min={50}
+                      max={180}
+                      value={song.bpm}
+                      onChange={(e) => changeBpm(parseInt(e.target.value, 10))}
+                      className="w-14 text-right font-mono-tabular text-xs font-semibold bg-surface-inset px-1.5 py-0.5 rounded border border-hairline text-ink-900"
+                    />
+                    <span className="text-xs text-ink-400">BPM</span>
+                  </div>
                 </div>
                 <input
                   type="range"
                   min="50"
-                  max="160"
+                  max="180"
                   value={song.bpm}
                   onChange={(e) => changeBpm(parseInt(e.target.value, 10))}
                   className="w-full accent-[#5B61EE]"
                 />
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-xs text-ink-700">
+                    {lang === 'th' ? 'คลิกจังหวะต่อเนื่อง' : 'Metronome Click'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onUpdateSong((prev) => ({
+                        ...prev,
+                        metronomeEnabled: !prev.metronomeEnabled,
+                      }))
+                    }
+                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer ${
+                      song.metronomeEnabled
+                        ? 'bg-accent-500 text-white'
+                        : 'bg-surface-inset text-ink-700'
+                    }`}
+                  >
+                    {song.metronomeEnabled ? 'ON' : 'OFF'}
+                  </button>
+                </div>
               </div>
               <div className="flex items-center justify-between text-sm">
                 <span className="text-ink-700">Key ({currentKeyName()} {transposeStr})</span>

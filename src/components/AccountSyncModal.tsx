@@ -80,6 +80,7 @@ export const AccountSyncModal: React.FC<AccountSyncModalProps> = ({
 
   const [showAdvanced, setShowAdvanced] = useState(false);
   const initialConfig = getCloudConfig();
+  const [autoSyncEnabled, setAutoSyncEnabled] = useState<boolean>(initialConfig.autoSyncEnabled);
   const [supabaseUrl, setSupabaseUrl] = useState(initialConfig.supabaseUrl || '');
   const [supabaseAnonKey, setSupabaseAnonKey] = useState(initialConfig.supabaseAnonKey || '');
 
@@ -142,12 +143,35 @@ export const AccountSyncModal: React.FC<AccountSyncModalProps> = ({
     }
   };
 
+  const handleToggleAutoSync = () => {
+    const nextVal = !autoSyncEnabled;
+    setAutoSyncEnabled(nextVal);
+    const cur = getCloudConfig();
+    saveCloudConfig({
+      ...cur,
+      autoSyncEnabled: nextVal,
+    });
+    setFeedback({
+      ok: true,
+      text: nextVal
+        ? lang === 'th'
+          ? 'เปิดซิงค์อัตโนมัติขึ้น Cloud หลังบันทึกเพลงแล้ว'
+          : 'Auto-sync on local save enabled.'
+        : lang === 'th'
+          ? 'ปิดซิงค์อัตโนมัติชั่วคราว (กด Sync Now เมื่อต้องการ)'
+          : 'Auto-sync paused (use Sync Now anytime).',
+    });
+  };
+
   const handleSaveCloudSettings = (e: React.FormEvent) => {
     e.preventDefault();
+    const nextAutoSync = Boolean(supabaseUrl.trim() && supabaseAnonKey.trim())
+      ? autoSyncEnabled
+      : false;
     saveCloudConfig({
       supabaseUrl: supabaseUrl.trim(),
       supabaseAnonKey: supabaseAnonKey.trim(),
-      autoSyncEnabled: Boolean(supabaseUrl.trim() && supabaseAnonKey.trim()),
+      autoSyncEnabled: nextAutoSync,
     });
     setFeedback({
       ok: true,
@@ -156,7 +180,7 @@ export const AccountSyncModal: React.FC<AccountSyncModalProps> = ({
           ? 'บันทึกการตั้งค่า Supabase Cloud เรียบร้อยแล้ว'
           : 'Saved Supabase Cloud configuration.',
     });
-    onAuthChange(user, Boolean(supabaseUrl.trim() && supabaseAnonKey.trim()) ? 'local-only' : 'local-only');
+    onAuthChange(user, 'local-only');
   };
 
   const avatarInitial =
@@ -165,15 +189,19 @@ export const AccountSyncModal: React.FC<AccountSyncModalProps> = ({
       : '👤';
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-md w-full p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150 max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+      <div
+        role="dialog"
+        aria-modal="true"
+        className="bg-surface-1 text-ink-900 rounded-3xl border border-hairline shadow-2xl max-w-md w-full p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150 max-h-[90vh] overflow-y-auto"
+      >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+        <div className="flex items-center justify-between border-b border-hairline pb-3">
           <div>
-            <h3 className="font-black text-lg text-slate-900 flex items-center gap-2">
+            <h3 className="font-black text-lg text-ink-900 flex items-center gap-2">
               {lang === 'th' ? '☁️ บัญชี & Cloud Sync' : '☁️ Account & Cloud Sync'}
             </h3>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-ink-400">
               {lang === 'th'
                 ? 'ซิงค์เพลง โฟลเดอร์ และ Snapshots ระหว่าง iPad / iPhone / คอมพิวเตอร์'
                 : 'Sync your songs, folders & snapshots across iPad, iPhone and desktop.'}
@@ -182,33 +210,33 @@ export const AccountSyncModal: React.FC<AccountSyncModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center font-bold text-xs cursor-pointer"
+            className="w-8 h-8 rounded-full bg-surface-2 hover:bg-surface-inset text-ink-700 flex items-center justify-center font-bold text-xs cursor-pointer"
           >
             ✕
           </button>
         </div>
 
         {/* User Profile Card + Live Status */}
-        <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-3">
+        <div className="p-4 rounded-2xl bg-surface-2 border border-hairline space-y-3">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
               <div
                 className={`w-11 h-11 rounded-2xl flex items-center justify-center font-black text-base shrink-0 ${
                   user.mode === 'authenticated'
                     ? 'bg-[#1A73E8] text-white shadow-sm'
-                    : 'bg-slate-200 text-slate-600'
+                    : 'bg-surface-inset text-ink-700'
                 }`}
               >
                 {avatarInitial}
               </div>
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="font-black text-sm text-slate-900 truncate">{user.displayName}</span>
+                  <span className="font-black text-sm text-ink-900 truncate">{user.displayName}</span>
                   <span
                     className={`px-2 py-0.5 rounded-full text-[10px] font-black border ${
                       user.mode === 'authenticated'
-                        ? 'bg-blue-50 text-[#1A73E8] border-blue-200'
-                        : 'bg-white text-slate-600 border-slate-200'
+                        ? 'bg-accent-50 text-accent-text border-accent-200'
+                        : 'bg-surface-1 text-ink-700 border-hairline'
                     }`}
                   >
                     {user.mode === 'authenticated'
@@ -216,7 +244,7 @@ export const AccountSyncModal: React.FC<AccountSyncModalProps> = ({
                       : 'Guest'}
                   </span>
                 </div>
-                <div className="text-xs text-slate-500 truncate">
+                <div className="text-xs text-ink-400 truncate">
                   {user.email ||
                     (lang === 'th'
                       ? 'ทำงานแบบ Offline-First (บันทึกในเครื่องอัตโนมัติ)'
@@ -226,7 +254,7 @@ export const AccountSyncModal: React.FC<AccountSyncModalProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-200/70">
+          <div className="flex items-center justify-between gap-2 pt-2 border-t border-hairline">
             <span
               className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border ${statusMeta.badge}`}
             >
@@ -235,7 +263,7 @@ export const AccountSyncModal: React.FC<AccountSyncModalProps> = ({
             </span>
 
             {lastSyncedAt && (
-              <span className="text-[11px] text-slate-400">
+              <span className="text-[11px] text-ink-400">
                 {lang === 'th' ? 'ซิงค์ล่าสุด: ' : 'Last sync: '}
                 {new Date(lastSyncedAt).toLocaleTimeString(lang === 'th' ? 'th-TH' : 'en-US', {
                   hour: '2-digit',
@@ -259,25 +287,49 @@ export const AccountSyncModal: React.FC<AccountSyncModalProps> = ({
           </div>
         )}
 
-        {/* 1-Click Sync Now Button */}
-        <button
-          type="button"
-          onClick={handleSyncClick}
-          disabled={isSubmitting || syncStatus === 'syncing'}
-          className="w-full py-2.5 px-4 rounded-2xl bg-[#1A73E8] hover:bg-blue-700 disabled:opacity-60 text-white font-black text-sm shadow-sm transition cursor-pointer flex items-center justify-center gap-2"
-        >
-          <span>{syncStatus === 'syncing' ? '⏳' : '☁️'}</span>
-          <span>
-            {syncStatus === 'syncing'
-              ? lang === 'th' ? 'กำลังดึงและอัปโหลดเพลง...' : 'Syncing library...'
-              : lang === 'th' ? 'ซิงค์ข้อมูลทันที (Sync Now)' : 'Sync Now'}
-          </span>
-        </button>
+        {/* 1-Click Sync Now Button + Auto-Sync Toggle */}
+        <div className="space-y-2">
+          <button
+            type="button"
+            onClick={handleSyncClick}
+            disabled={isSubmitting || syncStatus === 'syncing'}
+            className="w-full py-2.5 px-4 rounded-2xl bg-[#1A73E8] hover:bg-blue-700 disabled:opacity-60 text-white font-black text-sm shadow-sm transition cursor-pointer flex items-center justify-center gap-2"
+          >
+            <span>{syncStatus === 'syncing' ? '⏳' : '☁️'}</span>
+            <span>
+              {syncStatus === 'syncing'
+                ? lang === 'th' ? 'กำลังดึงและอัปโหลดเพลง...' : 'Syncing library...'
+                : lang === 'th' ? 'ซิงค์ข้อมูลทันที (Sync Now)' : 'Sync Now'}
+            </span>
+          </button>
+
+          <label className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-surface-2 border border-hairline text-xs cursor-pointer">
+            <span className="font-semibold text-ink-700">
+              {lang === 'th'
+                ? 'ซิงค์อัตโนมัติเมื่อบันทึกเพลง (Auto-Sync)'
+                : 'Auto-Sync on Local Save'}
+            </span>
+            <input
+              type="checkbox"
+              checked={autoSyncEnabled}
+              onChange={handleToggleAutoSync}
+              className="w-4 h-4 accent-[#1A73E8] cursor-pointer"
+            />
+          </label>
+        </div>
+
+        {/* Honest Vocal Assets Cross-Device Notice */}
+        <div className="px-3.5 py-2.5 rounded-2xl bg-amber-50/80 border border-amber-200/80 text-[11px] text-amber-950 leading-relaxed">
+          <span className="font-bold">🎙️ {lang === 'th' ? 'หมายเหตุไฟล์เสียงร้อง (IndexedDB):' : 'Vocal Audio Storage Note:'}</span>{' '}
+          {lang === 'th'
+            ? 'คอร์ด เนื้อร้อง โครงสร้างเพลง โฟลเดอร์ และ Snapshots จะซิงค์ขึ้น Cloud อัตโนมัติ ส่วนไฟล์เสียงร้อง (IndexedDB) เก็บในเครื่องเพื่อความรวดเร็ว — หากต้องการย้ายเสียงร้องข้ามเครื่อง แนะนำให้ Export ไฟล์สำรอง .JSON จากคลังเพลงครับ'
+            : 'Chords, lyrics, arrangement, folders & snapshots sync to Cloud. Recorded vocal audio (IndexedDB) stays on-device for speed — use .JSON Export/Import in My Songs Library to transfer vocal audio across devices.'}
+        </div>
 
         {/* Auth Form (Email OTP / Magic Link) OR Sign Out */}
         {user.mode === 'authenticated' ? (
-          <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
-            <span className="text-xs text-slate-500">
+          <div className="pt-2 border-t border-hairline flex items-center justify-between gap-2">
+            <span className="text-xs text-ink-400">
               {lang === 'th' ? 'เชื่อมต่อบัญชีเรียบร้อยแล้ว' : 'Signed in across devices'}
             </span>
             <button
@@ -290,14 +342,14 @@ export const AccountSyncModal: React.FC<AccountSyncModalProps> = ({
             </button>
           </div>
         ) : (
-          <div className="pt-2 border-t border-slate-100 space-y-3">
+          <div className="pt-2 border-t border-hairline space-y-3">
             {/* 1-Click Google OAuth Sign-In CTA */}
             <div className="space-y-1.5">
               <button
                 type="button"
                 onClick={handleGoogleSignIn}
                 disabled={isSubmitting}
-                className="w-full py-2.5 px-4 rounded-2xl bg-white hover:bg-slate-50 border border-slate-300 shadow-xs text-slate-900 font-black text-sm transition cursor-pointer flex items-center justify-center gap-2.5"
+                className="w-full py-2.5 px-4 rounded-2xl bg-surface-2 hover:bg-surface-inset border border-hairline shadow-xs text-ink-900 font-black text-sm transition cursor-pointer flex items-center justify-center gap-2.5"
               >
                 <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
                   <path
@@ -326,8 +378,8 @@ export const AccountSyncModal: React.FC<AccountSyncModalProps> = ({
               </p>
             </div>
 
-            <form onSubmit={handleSendMagicLink} className="space-y-2 pt-1 border-t border-slate-100">
-              <label htmlFor="account-email-input" className="text-xs font-bold text-slate-700 block">
+            <form onSubmit={handleSendMagicLink} className="space-y-2 pt-1 border-t border-hairline">
+              <label htmlFor="account-email-input" className="text-xs font-bold text-ink-700 block">
                 {lang === 'th'
                   ? 'หรือเข้าสู่ระบบด้วยอีเมล (Magic Link / Email OTP)'
                   : 'Or sign in with Email (Magic Link / OTP)'}
@@ -342,7 +394,7 @@ export const AccountSyncModal: React.FC<AccountSyncModalProps> = ({
                   value={emailInput}
                   onChange={(e) => setEmailInput(e.target.value)}
                   placeholder="artist@example.com"
-                  className="flex-1 px-3.5 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:border-[#1A73E8] focus:ring-2 focus:ring-blue-100"
+                  className="flex-1 px-3.5 py-2 rounded-xl border border-hairline bg-surface-2 text-ink-900 placeholder:text-ink-400 text-sm focus:outline-none focus:border-[#1A73E8] focus:ring-2 focus:ring-blue-100"
                 />
                 <button
                   type="submit"
@@ -353,7 +405,7 @@ export const AccountSyncModal: React.FC<AccountSyncModalProps> = ({
                 </button>
               </div>
               {!cloudReady && (
-                <p className="text-[11px] text-slate-400 leading-relaxed">
+                <p className="text-[11px] text-ink-400 leading-relaxed">
                   {lang === 'th'
                     ? 'โหมด Standalone: แอปทำงานแบบ Guest ได้เต็มรูปแบบ 100% หรือเพิ่ม Supabase Config ด้านล่างเพื่อเชื่อมต่อ Cloud'
                     : 'Standalone mode: App works 100% offline as Guest, or set Supabase credentials below to enable multi-device cloud.'}
@@ -376,7 +428,7 @@ export const AccountSyncModal: React.FC<AccountSyncModalProps> = ({
                     value={otpToken}
                     onChange={(e) => setOtpToken(e.target.value)}
                     placeholder="123456"
-                    className="flex-1 px-3 py-1.5 rounded-lg border border-blue-300 text-sm bg-white tracking-widest font-mono focus:outline-none"
+                    className="flex-1 px-3 py-1.5 rounded-lg border border-blue-300 text-sm bg-white text-slate-900 tracking-widest font-mono focus:outline-none"
                   />
                   <button
                     type="submit"
@@ -393,7 +445,7 @@ export const AccountSyncModal: React.FC<AccountSyncModalProps> = ({
 
         {/* Admin Analytics Shortcut (visible only on browsers unlocked as admin) */}
         {isAdminAnalyticsUnlocked() && (
-          <div className="pt-2 border-t border-slate-100">
+          <div className="pt-2 border-t border-hairline">
             <Link
               href="/admin/analytics"
               onClick={onClose}
@@ -406,18 +458,18 @@ export const AccountSyncModal: React.FC<AccountSyncModalProps> = ({
         )}
 
         {/* Collapsible Supabase Config */}
-        <div className="pt-2 border-t border-slate-100">
+        <div className="pt-2 border-t border-hairline">
           <button
             type="button"
             onClick={() => setShowAdvanced((v) => !v)}
-            className="text-[11px] font-bold text-slate-400 hover:text-slate-700 cursor-pointer flex items-center gap-1"
+            className="text-[11px] font-bold text-ink-400 hover:text-ink-900 cursor-pointer flex items-center gap-1"
           >
             <span>⚙️ {lang === 'th' ? 'ตั้งค่า Supabase Endpoint (ไม่บังคับ)' : 'Cloud Endpoint Settings (Optional)'}</span>
             <span>{showAdvanced ? '▲' : '▼'}</span>
           </button>
 
           {showAdvanced && (
-            <form onSubmit={handleSaveCloudSettings} className="mt-2 space-y-2 p-3 rounded-xl bg-slate-50 border border-slate-200">
+            <form onSubmit={handleSaveCloudSettings} className="mt-2 space-y-2 p-3 rounded-xl bg-surface-2 border border-hairline">
               <input
                 id="supabase-url-input"
                 name="supabaseUrl"
@@ -425,7 +477,7 @@ export const AccountSyncModal: React.FC<AccountSyncModalProps> = ({
                 value={supabaseUrl}
                 onChange={(e) => setSupabaseUrl(e.target.value)}
                 placeholder="https://your-project.supabase.co"
-                className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-xs bg-white"
+                className="w-full px-3 py-1.5 rounded-lg border border-hairline text-xs bg-surface-1 text-ink-900"
               />
               <input
                 id="supabase-anon-key-input"
@@ -434,7 +486,7 @@ export const AccountSyncModal: React.FC<AccountSyncModalProps> = ({
                 value={supabaseAnonKey}
                 onChange={(e) => setSupabaseAnonKey(e.target.value)}
                 placeholder="Supabase Anon Key"
-                className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-xs bg-white"
+                className="w-full px-3 py-1.5 rounded-lg border border-hairline text-xs bg-surface-1 text-ink-900"
               />
               <button
                 type="submit"

@@ -47,6 +47,8 @@ import {
   trimAudioBufferTrailingSilence,
   prepareAiTtsAudioBufferForSpan,
 } from './audioTrim';
+import { transposeChord } from './chordUtils';
+import { getGuitarVoicing } from './guitarVoicings';
 import {
   GUITAR_INSTRUMENT,
   TRACK_PAN,
@@ -105,6 +107,8 @@ export interface EngineStatus {
   loadProgress: number;    // 0–1
   activeBarIndex: number;  // -1 = ไม่ได้เล่น, 0+ = ห้องที่กำลังเล่น
   loopRange?: LoopRange | null;
+  isCountIn?: boolean;
+  metronomeEnabled?: boolean;
   error?: string;
 }
 
@@ -203,6 +207,10 @@ class AudioEngine {
   private statusChangeCbs: Set<StatusChangeCb> = new Set();
   private loopRange: LoopRange | null = null;
   private playBounds: LoopRange | null = null;
+  private isCountInFlag = false;
+  private metronomeEnabledFlag = false;
+  private clickSynth: DrumSynth | null = null;
+  private chordPreviewSynth: MelodySynth | null = null;
 
   // ─── Status helpers ───
 
@@ -212,6 +220,8 @@ class AudioEngine {
       loadProgress: this.loadProgress,
       activeBarIndex: this.activeBarIndex,
       loopRange: this.loopRange,
+      isCountIn: this.isCountInFlag,
+      metronomeEnabled: this.metronomeEnabledFlag,
     };
     this.statusChangeCbs.forEach((cb) => cb(s));
   }
@@ -222,7 +232,21 @@ class AudioEngine {
       loadProgress: this.loadProgress,
       activeBarIndex: this.activeBarIndex,
       loopRange: this.loopRange,
+      isCountIn: this.isCountInFlag,
+      metronomeEnabled: this.metronomeEnabledFlag,
     };
+  }
+
+  setMetronomeEnabled(enabled: boolean) {
+    const next = Boolean(enabled);
+    if (this.metronomeEnabledFlag !== next) {
+      this.metronomeEnabledFlag = next;
+      this.emitStatus();
+    }
+  }
+
+  getMetronomeEnabled(): boolean {
+    return this.metronomeEnabledFlag;
   }
 
   setLoopRange(range: LoopRange | null) {
@@ -355,9 +379,11 @@ class AudioEngine {
         song.mixer.vocal?.fxPreset ?? 'studio-warm'
       );
 
-      // DrumSynth ต่อเข้า drumsGain.input
+      // DrumSynth ต่อเข้า drumsGain.input และ clickSynth ต่อเข้า masterBus โดยตรงเพื่อให้เสียงเคาะจังหวะดังเสมอแม้ปิดกลอง
       this.drumSynth?.dispose();
       this.drumSynth = new DrumSynth(ctx, this.trackGains['drums']!.input);
+      this.clickSynth?.dispose();
+      this.clickSynth = new DrumSynth(ctx, dest);
 
       // MelodySynth ต่อเข้า melodyGain.input
       this.melodySynth?.dispose();
@@ -556,6 +582,47 @@ class AudioEngine {
     this.melodySynth.playNote(midiPitch, 100, now, durationSec);
   }
 
+  /** เล่นเสียงพรีวิวคอร์ดทันทีเมื่อเลือกคอร์ดใน Chord Picker (รองรับ Transpose & Capo) */
+  previewChord(chordSymbol: string, songOverride?: SongProject) {
+    if (typeof AudioContext === 'undefined') return;
+    if (!this.ctx) {
+      this.ctx = new AudioContext({ sampleRate: 44100, latencyHint: 'interactive' });
+    }
+    if (this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(() => {});
+    }
+
+    const activeSong = songOverride ?? this._currentSong;
+    const semitones = activeSong?.transposeSemitones ?? 0;
+    const capoFret = activeSong?.capoFret ?? 0;
+    const soundingChord = semitones !== 0 ? transposeChord(chordSymbol, semitones) : chordSymbol;
+    const voicing = getGuitarVoicing(soundingChord, capoFret);
+    const notes = voicing.strings.length > 0 ? voicing.strings.map((s) => s.midi) : [48, 52, 55, 60];
+
+    const now = this.ctx.currentTime + 0.01;
+    const guitar = this.instruments.guitarRhythm ?? this.instruments.piano;
+    if (guitar) {
+      notes.forEach((midi, idx) => {
+        guitar.start({
+          note: midi,
+          velocity: 92,
+          time: now + idx * 0.025,
+          duration: 1.05,
+        });
+      });
+      return;
+    }
+
+    const dest = this.masterBus || this.ctx.destination;
+    if (!this.chordPreviewSynth) {
+      this.chordPreviewSynth = new MelodySynth(this.ctx, dest);
+      this.chordPreviewSynth.setSound('piano');
+    }
+    notes.forEach((midi, idx) => {
+      this.chordPreviewSynth?.playNote(midi, 82, now + idx * 0.025, 0.9);
+    });
+  }
+
   /** เล่นฟังเสียงเฉพาะห้องนี้ห้องเดียว (Audition Bar) */
   playBarAudition(song: SongProject, barIndex: number, onComplete?: () => void) {
     if (this.state !== 'ready' && this.state !== 'playing') {
@@ -659,21 +726,29 @@ class AudioEngine {
     const events = planCountIn(song);
     const timing = getTiming(song);
     const now = ctx.currentTime + 0.05;
+    const metronomeDrum = this.clickSynth ?? this.drumSynth;
+
+    this.isCountInFlag = true;
+    this.emitStatus();
 
     events.forEach((e) => {
       if (e.kind === 'drum' && e.voice === 'click') {
-        this.drumSynth?.hit(e as PlannedEvent & { kind: 'drum' }, now + e.t);
+        metronomeDrum?.hit(e as PlannedEvent & { kind: 'drum' }, now + e.t);
       }
     });
 
     this.nextBarAudioTime = now + timing.barSec;
-    this.currentBarTimer = setTimeout(onDone, timing.barSec * 1000 + 40);
+    this.currentBarTimer = setTimeout(() => {
+      this.isCountInFlag = false;
+      onDone();
+    }, timing.barSec * 1000 + 40);
   }
 
   seekToBar(index: number) {
     if (!this.isPlayingFlag) return;
     const song = this._currentSong;
     if (!song) return;
+    this.isCountInFlag = false;
     this._clearTimer();
     this._stopAllVocals();
     this.nextBarAudioTime = (this.ctx?.currentTime ?? 0) + 0.05;
@@ -919,6 +994,17 @@ class AudioEngine {
     // ปรับความดังเฉพาะท่อน โทนเสียงแตกกีตาร์ลีด และ Auto-Ducking ตามท่อน
     this._applySectionMixAndDrive(activeSong, flat[barIndex].section, now, flat[barIndex], barIndex);
 
+    // Schedule metronome clicks if enabled
+    if (Boolean(activeSong.metronomeEnabled ?? this.metronomeEnabledFlag)) {
+      const clickEvents = planCountIn(activeSong);
+      const clickDrum = this.clickSynth ?? this.drumSynth;
+      for (const ce of clickEvents) {
+        if (ce.kind === 'drum' && ce.voice === 'click') {
+          clickDrum?.hit(ce as PlannedEvent & { kind: 'drum' }, now + ce.t);
+        }
+      }
+    }
+
     // Schedule events
     for (const ev of planned.events) {
       const t = now + ev.t;
@@ -990,6 +1076,7 @@ class AudioEngine {
   stop() {
     this._clearTimer();
     this.isPlayingFlag = false;
+    this.isCountInFlag = false;
     this.playBounds = null;
     this.nextBarAudioTime = 0;
     this._currentSong = null;

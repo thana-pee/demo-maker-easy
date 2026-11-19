@@ -1,4 +1,4 @@
-import type { SongBar, SongSection } from '@/types/song';
+import type { SongBar, SongProject, SongSection } from '@/types/song';
 import { segmentThaiWordToSyllables } from './thaiRhymeHelper';
 
 let uniqueIdCounter = 0;
@@ -434,5 +434,225 @@ export function buildSectionTtsTextPlan(
     includedBarsCount: 1,
     omittedBarsCount: lines.length - 1,
     fullCharCount: fullText.length,
+  };
+}
+
+// ───────── Phase 8E: History Fingerprint, Coalesced Undo & Non-Destructive Presets ─────────
+
+export const HISTORY_COALESCE_WINDOW_MS = 1200;
+
+export interface CoalescedUndoState {
+  undoStack: SongProject[];
+  lastKey: string | null;
+  lastAtMs: number;
+}
+
+/**
+ * สร้าง Fingerprint ของ SongProject สำหรับระบบ Undo/Redo และ Save tracking
+ * รวมข้อมูลเสียงร้อง (lightweight signature ของ vocalTakes / vocalAudio), Mixer และ Guitar Acoustics
+ */
+export function buildSongHistoryFingerprint(s: SongProject): string {
+  const compactSections = s.sections.map((sec) => ({
+    ...sec,
+    bars: sec.bars.map((bar) => ({
+      ...bar,
+      vocalAudio: bar.vocalAudio
+        ? `${bar.vocalAudio.length}:${bar.vocalAudio.slice(0, 24)}`
+        : '',
+    })),
+  }));
+
+  const compactTakes = (s.vocalTakes || []).map((t) => ({
+    id: t.id,
+    name: t.name,
+    scope: t.scope,
+    source: t.source ?? 'mic',
+    sectionId: t.sectionId ?? '',
+    startGlobalBarIndex: t.startGlobalBarIndex,
+    endGlobalBarIndex: t.endGlobalBarIndex ?? t.startGlobalBarIndex,
+    preRollOffsetSec: t.preRollOffsetSec ?? 0,
+    latencyOffsetMs: t.latencyOffsetMs ?? 0,
+    fxPreset: t.fxPreset,
+    isActive: Boolean(t.isActive),
+    audioLen: t.audioDataUrl?.length ?? 0,
+  }));
+
+  return JSON.stringify({
+    title: s.title,
+    bpm: s.bpm,
+    timeSignature: s.timeSignature,
+    baseKey: s.baseKey,
+    transposeSemitones: s.transposeSemitones,
+    capoFret: s.capoFret,
+    countInEnabled: Boolean(s.countInEnabled),
+    metronomeEnabled: Boolean(s.metronomeEnabled),
+    guitarModel: s.guitarModel,
+    stringGauge: s.stringGauge,
+    ambience3D: s.ambience3D,
+    vocalLatencyOffsetMs: s.vocalLatencyOffsetMs ?? 0,
+    folder: s.folder ?? '',
+    statusTag: s.statusTag ?? '',
+    sections: compactSections,
+    mixer: s.mixer,
+    vocalTakes: compactTakes,
+    thaiGenre: s.thaiGenre,
+    songwriterStyle: s.songwriterStyle,
+    emotionalResolution: s.emotionalResolution,
+  });
+}
+
+/**
+ * อนุมานคีย์สำหรับจัดกลุ่ม (Coalesce) การแก้ไขต่อเนื่องที่เกิดภายใน 1.2 วินาที (เช่น การพิมพ์เนื้อร้อง หรือการลาก Slider BPM/Mixer)
+ */
+export function inferHistoryCoalesceKey(
+  prev: SongProject,
+  next: SongProject,
+  explicitKey?: string
+): string {
+  if (explicitKey) return explicitKey;
+
+  if (prev.title !== next.title && prev.sections.length === next.sections.length && prev.bpm === next.bpm) {
+    return 'title';
+  }
+  if (prev.bpm !== next.bpm && prev.title === next.title && prev.sections === next.sections) {
+    return 'bpm';
+  }
+  if (
+    prev.mixer !== next.mixer &&
+    JSON.stringify(prev.mixer) !== JSON.stringify(next.mixer) &&
+    prev.sections === next.sections &&
+    prev.bpm === next.bpm
+  ) {
+    return 'mixer';
+  }
+
+  if (prev.sections.length === next.sections.length) {
+    let diffSectionId: string | null = null;
+    let diffBarId: string | null = null;
+    let nonLyricChange = false;
+    let diffBarCount = 0;
+
+    for (let sIdx = 0; sIdx < prev.sections.length; sIdx++) {
+      const ps = prev.sections[sIdx];
+      const ns = next.sections[sIdx];
+      if (ps === ns) continue;
+      if (ps.id !== ns.id || ps.bars.length !== ns.bars.length) {
+        nonLyricChange = true;
+        break;
+      }
+      for (let bIdx = 0; bIdx < ps.bars.length; bIdx++) {
+        const pb = ps.bars[bIdx];
+        const nb = ns.bars[bIdx];
+        if (pb === nb) continue;
+        if (
+          pb.id !== nb.id ||
+          pb.lyrics === nb.lyrics ||
+          pb.playStyle !== nb.playStyle ||
+          pb.vocalAudio !== nb.vocalAudio ||
+          JSON.stringify(pb.chords) !== JSON.stringify(nb.chords)
+        ) {
+          nonLyricChange = true;
+          break;
+        }
+        diffBarCount++;
+        diffSectionId = ps.id;
+        diffBarId = pb.id;
+      }
+      if (nonLyricChange || diffBarCount > 1) break;
+    }
+
+    if (!nonLyricChange && diffBarCount === 1 && diffSectionId && diffBarId) {
+      return `lyrics:${diffSectionId}:${diffBarId}`;
+    }
+  }
+
+  return 'structural';
+}
+
+/**
+ * บันทึก Snapshot เข้า Undo Stack โดยจัดกลุ่มการแก้ต่อเนื่องที่ตรงเงื่อนไขภายใน `HISTORY_COALESCE_WINDOW_MS` (1,200ms)
+ */
+export function pushCoalescedUndoHistory(
+  state: CoalescedUndoState,
+  prev: SongProject,
+  next: SongProject,
+  nowMs = Date.now(),
+  explicitKey?: string,
+  maxHistory = 30
+): { pushed: boolean; coalesced: boolean; state: CoalescedUndoState } {
+  if (buildSongHistoryFingerprint(prev) === buildSongHistoryFingerprint(next)) {
+    return { pushed: false, coalesced: false, state };
+  }
+
+  const key = inferHistoryCoalesceKey(prev, next, explicitKey);
+  const isCoalescable = key !== 'structural';
+  const withinWindow =
+    isCoalescable &&
+    state.undoStack.length > 0 &&
+    state.lastKey === key &&
+    nowMs - state.lastAtMs <= HISTORY_COALESCE_WINDOW_MS;
+
+  if (withinWindow) {
+    return {
+      pushed: false,
+      coalesced: true,
+      state: {
+        undoStack: state.undoStack,
+        lastKey: key,
+        lastAtMs: nowMs,
+      },
+    };
+  }
+
+  const snapshot = structuredClone(prev);
+  const nextStack = [...state.undoStack, snapshot].slice(-maxHistory);
+  return {
+    pushed: true,
+    coalesced: false,
+    state: {
+      undoStack: nextStack,
+      lastKey: isCoalescable ? key : null,
+      lastAtMs: nowMs,
+    },
+  };
+}
+
+/**
+ * นำชุดคอร์ดจากสูตรสำเร็จ (Progression Preset) มาสวมใส่ท่อนเพลงโดยไม่ทำลายเนื้อร้อง เมโลดี้ หรือเสียงร้องที่มีอยู่
+ * หากท่อนมีห้องน้อยกว่าชุดคอร์ดจะเพิ่มห้องใหม่ให้ครบ และหากท่อนมีห้องมากกว่าจะวนชุดคอร์ดให้ครบทุกห้อง
+ */
+export function applyProgressionPresetToSection(
+  section: SongSection,
+  presetChords: string[]
+): SongSection {
+  if (!presetChords || presetChords.length === 0) return section;
+
+  const targetCount = Math.max(section.bars.length, presetChords.length);
+  const nextBars: SongBar[] = [];
+
+  for (let idx = 0; idx < targetCount; idx++) {
+    const chord = presetChords[idx % presetChords.length] || 'C';
+    const existingBar = section.bars[idx];
+    if (existingBar) {
+      nextBars.push({
+        ...existingBar,
+        chordsPerBar: 1,
+        chords: [chord],
+      });
+    } else {
+      nextBars.push({
+        id: generateUniqueId('bar'),
+        chordsPerBar: 1,
+        chords: [chord],
+        playStyle: 'normal',
+        lyrics: '',
+        melodyNotes: [],
+      });
+    }
+  }
+
+  return {
+    ...section,
+    bars: nextBars,
   };
 }

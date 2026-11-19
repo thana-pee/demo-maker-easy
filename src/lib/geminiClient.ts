@@ -7,8 +7,11 @@ import { ApiError, GoogleGenAI, Modality, type GenerateContentResponse, type Gen
  */
 
 export const GEMINI_MODEL_LITE = 'gemini-3.5-flash-lite';
+export const GEMINI_MODEL_FAST_LITE = 'gemini-3.1-flash-lite';
+export const GEMINI_MODEL_FLASH = 'gemini-3.8-flash';
 export const GEMINI_MODEL_MAIN = 'gemini-4-hydrogen';
 export const GEMINI_MODEL_PRO = 'gemini-4-argon';
+export const GEMINI_MODEL_CARBON = 'gemini-4-carbon';
 export const GEMINI_MODEL_TRANSCRIBE = 'gemini-3.5-transcribe';
 export const GEMINI_MODEL_TTS_LITE = 'gemini-3.8-flash-lite-tts';
 export const GEMINI_MODEL_TTS = 'gemini-3.8-flash-tts';
@@ -114,6 +117,7 @@ export type GeminiMusicResult =
 
 export interface GeminiJsonCallOptions {
   model?: string;
+  fallbackModels?: string[];
   systemInstruction?: string;
   responseSchema?: Record<string, unknown>;
   maxOutputTokens?: number;
@@ -127,6 +131,7 @@ export interface GeminiTtsCallOptions {
   language?: string;
   styleHint?: string;
   mimeType?: 'audio/mp3' | 'audio/wav' | 'audio/ogg_opus';
+  timeoutMs?: number;
 }
 
 /** แปลงชื่อโมเดลเก่า/Alias ให้เป็น Public Model ID ปัจจุบันใน @google/genai */
@@ -166,44 +171,53 @@ export function resolveGeminiModel(preferredModel?: string): string {
 
 /**
  * ปรับระดับการคิด (thinking_level) ให้ปลอดภัยตามข้อจำกัดของโมเดล:
- * - gemini-3.5-flash-lite รองรับ minimal | low | medium | high
- * - gemini-4-hydrogen / gemini-4-argon รองรับ low | medium | high | xhigh (minimal จะคืน 400)
- * - gemini-3.8-flash รองรับ low | medium | high
+ * - gemini-3.5-flash-lite / gemini-3.1-flash-lite รองรับ minimal | low | medium | high
+ * - gemini-4-hydrogen รองรับ low | medium | high | xhigh (minimal -> low)
+ * - gemini-4-argon / gemini-4-carbon / gemini-3.8-flash รองรับ low | medium | high (minimal -> low, xhigh -> high)
  */
 export function resolveThinkingLevel(
   model: string,
   requested?: GeminiThinkingLevel
 ): GeminiThinkingLevel {
   const normalized = normalizeGeminiModel(model).toLowerCase();
-  if (normalized === GEMINI_MODEL_LITE) {
+  if (normalized === GEMINI_MODEL_LITE || normalized === GEMINI_MODEL_FAST_LITE) {
     if (!requested) return 'minimal';
     return requested === 'xhigh' ? 'high' : requested;
   }
   if (!requested || requested === 'minimal') {
     return 'low';
   }
-  if (requested === 'xhigh' && !normalized.startsWith('gemini-4-')) {
+  if (requested === 'xhigh' && normalized !== GEMINI_MODEL_MAIN) {
     return 'high';
   }
   return requested;
 }
 
-/** คำนวณ max_output_tokens ที่ปลอดภัยและป้องกันการบวมของ Token */
+/** คำนวณ max_output_tokens ที่ปลอดภัยและไม่เกินลิมิตจริงของแต่ละโมเดล */
 export function resolveMaxOutputTokens(model: string, requested?: number): number {
-  if (model === GEMINI_MODEL_PRO) {
+  const normalized = normalizeGeminiModel(model).toLowerCase();
+  const isArgon = normalized === GEMINI_MODEL_PRO;
+  const isCarbon = normalized === GEMINI_MODEL_CARBON;
+  const isLite = normalized === GEMINI_MODEL_LITE || normalized === GEMINI_MODEL_FAST_LITE;
+  const maxCap = isArgon || isCarbon ? 32768 : 65536;
+
+  if (isArgon) {
     const minArgonBudget = 32768;
-    if (typeof requested === 'number' && Number.isFinite(requested)) {
-      return Math.max(minArgonBudget, Math.round(requested));
+    if (typeof requested === 'number' && Number.isFinite(requested) && requested > 0) {
+      return Math.min(maxCap, Math.max(minArgonBudget, Math.round(requested)));
     }
     return minArgonBudget;
   }
+
   if (typeof requested === 'number' && Number.isFinite(requested) && requested > 0) {
-    return Math.round(requested);
+    return Math.min(maxCap, Math.round(requested));
   }
-  return model === GEMINI_MODEL_LITE ? 2048 : 4096;
+
+  if (isCarbon) return 32768;
+  return isLite ? 2048 : 4096;
 }
 
-/** ดึง JSON ออกจากข้อความตอบกลับแม้โมเดลจะครอบ ```json ... ``` */
+/** ดึง JSON ออกจากข้อความตอบกลับแม้โมเดลจะครอบ ```json ... ``` หรือมีข้อความอธิบายล้อมรอบ */
 export function extractJsonFromText<T>(rawText: string): T | null {
   const cleaned = rawText
     .replace(/^```json\s*/i, '')
@@ -214,8 +228,58 @@ export function extractJsonFromText<T>(rawText: string): T | null {
   try {
     return JSON.parse(cleaned) as T;
   } catch {
-    return null;
+    // Fall through to balanced bracket recovery
   }
+
+  for (let start = 0; start < rawText.length; start += 1) {
+    const openChar = rawText[start];
+    if (openChar !== '{' && openChar !== '[') continue;
+
+    const stack: string[] = [openChar === '{' ? '}' : ']'];
+    let inString = false;
+    let escaped = false;
+
+    for (let i = start + 1; i < rawText.length; i += 1) {
+      const ch = rawText[i];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch === '\\') {
+          escaped = true;
+        } else if (ch === '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (ch === '"') {
+        inString = true;
+      } else if (ch === '{') {
+        stack.push('}');
+      } else if (ch === '[') {
+        stack.push(']');
+      } else if (ch === '}' || ch === ']') {
+        if (stack[stack.length - 1] !== ch) {
+          break;
+        }
+        stack.pop();
+        if (stack.length === 0) {
+          const candidate = rawText.slice(start, i + 1);
+          try {
+            const parsed = JSON.parse(candidate) as unknown;
+            if (parsed !== null && typeof parsed === 'object') {
+              return parsed as T;
+            }
+          } catch {
+            // Continue searching later brackets if prose contained stray braces
+          }
+          break;
+        }
+      }
+    }
+  }
+
+  return null;
 }
 
 function extractHttpErrorStatus(error: unknown): number | undefined {
@@ -535,89 +599,141 @@ function extractAudioFromInteraction(interaction: {
 
 const DEFAULT_GEMINI_TIMEOUT_MS = 42_000;
 
+function isRetryableJsonFailure(failure: GeminiFailureResult): boolean {
+  if (failure.reason === 'missing-key' || failure.reason === 'auth-error') {
+    return false;
+  }
+  if (
+    failure.reason === 'rate-limit' ||
+    failure.reason === 'network-error' ||
+    failure.reason === 'incomplete-output' ||
+    failure.reason === 'parse-error'
+  ) {
+    return true;
+  }
+  if (failure.reason === 'http-error') {
+    if (typeof failure.status !== 'number') return true;
+    return failure.status >= 500 || failure.status === 404 || failure.status === 408;
+  }
+  return false;
+}
+
 /**
  * เรียก Gemini Interactions API ผ่าน official @google/genai SDK และรับ JSON ตาม Schema
  * รองรับทั้ง Prompt ข้อความเดี่ยว และ Multimodal Part Array (ข้อความ + ไฟล์เสียง Base64)
- * ไม่โยน Error ออกไปนอกฟังก์ชัน แต่คืนผลลัพธ์พร้อมสาเหตุที่ชัดเจนเพื่อให้ Route fallback ได้อย่างปลอดภัย
+ * พร้อม Auto-Fallback Chain ข้ามโมเดลเมื่อเจอ Rate Limit / Timeout / 5xx / 404 / Parse Error
  */
 export async function callGeminiJson<T>(
   promptOrInput: string | GeminiInputPart[],
   options?: GeminiJsonCallOptions
 ): Promise<GeminiJsonResult<T>> {
   const apiKey = getGeminiApiKey();
-  const model = resolveGeminiModel(options?.model);
+  const primaryModel = resolveGeminiModel(options?.model);
 
   if (!apiKey) {
-    return buildMissingKeyFailure(model);
+    return buildMissingKeyFailure(primaryModel);
   }
 
-  const thinkingLevel = resolveThinkingLevel(model, options?.thinkingLevel);
-  const maxOutputTokens = resolveMaxOutputTokens(model, options?.maxOutputTokens);
-  const timeoutMs =
+  const candidateModels: string[] = [];
+  for (const rawCandidate of [primaryModel, ...(options?.fallbackModels ?? [])]) {
+    const normalized = normalizeGeminiModel(rawCandidate);
+    if (normalized && !candidateModels.includes(normalized)) {
+      candidateModels.push(normalized);
+    }
+  }
+
+  const baseTimeoutMs =
     typeof options?.timeoutMs === 'number' && Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
       ? Math.round(options.timeoutMs)
       : DEFAULT_GEMINI_TIMEOUT_MS;
 
-  try {
-    const ai = new GoogleGenAI({ apiKey });
-    const interaction = await runWithAbortTimeout(timeoutMs, (signal) =>
-      ai.interactions.create(
-        {
-          model,
-          input: promptOrInput,
-          ...(options?.systemInstruction ? { system_instruction: options.systemInstruction } : {}),
-          response_format: {
-            type: 'text',
-            mime_type: 'application/json',
-            ...(options?.responseSchema ? { schema: options.responseSchema } : {}),
+  const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1beta' });
+  let previousTimedOut = false;
+  let lastFailure: GeminiFailureResult | null = null;
+
+  for (let idx = 0; idx < candidateModels.length; idx += 1) {
+    const candidateModel = candidateModels[idx];
+    const thinkingLevel = resolveThinkingLevel(candidateModel, options?.thinkingLevel);
+    const maxOutputTokens = resolveMaxOutputTokens(candidateModel, options?.maxOutputTokens);
+    const attemptTimeoutMs =
+      idx > 0 && previousTimedOut && baseTimeoutMs > 15_000
+        ? Math.min(baseTimeoutMs, 15_000)
+        : baseTimeoutMs;
+
+    let attemptFailure: GeminiFailureResult;
+
+    try {
+      const interaction = await runWithAbortTimeout(attemptTimeoutMs, (signal) =>
+        ai.interactions.create(
+          {
+            model: candidateModel,
+            input: promptOrInput,
+            ...(options?.systemInstruction ? { system_instruction: options.systemInstruction } : {}),
+            response_format: {
+              type: 'text',
+              mime_type: 'application/json',
+              ...(options?.responseSchema ? { schema: options.responseSchema } : {}),
+            },
+            generation_config: {
+              max_output_tokens: maxOutputTokens,
+              thinking_level: thinkingLevel,
+            },
+            store: false,
           },
-          generation_config: {
-            max_output_tokens: maxOutputTokens,
-            thinking_level: thinkingLevel,
-          },
-          store: false,
-        },
-        {
-          retries: { strategy: 'none' },
-          timeout_ms: timeoutMs,
-          fetch_options: { signal },
+          {
+            retries: { strategy: 'none' },
+            timeout_ms: attemptTimeoutMs,
+            fetch_options: { signal },
+          }
+        )
+      );
+
+      const terminalFailure = evaluateInteractionTerminalFailure(interaction, candidateModel);
+      if (terminalFailure) {
+        attemptFailure = terminalFailure;
+      } else {
+        const modelUsed = interaction.model || candidateModel;
+        const usage = buildUsageTelemetry(interaction.usage);
+        const rawText = extractTextFromInteraction(
+          interaction as Parameters<typeof extractTextFromInteraction>[0]
+        );
+        const parsed = extractJsonFromText<T>(rawText);
+        if (!parsed) {
+          attemptFailure = {
+            ok: false,
+            model: candidateModel,
+            modelUsed,
+            reason: 'parse-error',
+            failureReason: 'รูปแบบ JSON ที่ได้จากโมเดลไม่ถูกต้อง',
+            isSimulated: false,
+          };
+        } else {
+          return {
+            ok: true,
+            model: candidateModel,
+            modelUsed,
+            data: parsed,
+            usage,
+            isSimulated: false,
+          };
         }
-      )
-    );
-
-    const terminalFailure = evaluateInteractionTerminalFailure(interaction, model);
-    if (terminalFailure) {
-      return terminalFailure;
+      }
+    } catch (error) {
+      attemptFailure = classifyInteractionError(error, candidateModel);
     }
 
-    const modelUsed = interaction.model || model;
-    const usage = buildUsageTelemetry(interaction.usage);
-    const rawText = extractTextFromInteraction(
-      interaction as Parameters<typeof extractTextFromInteraction>[0]
-    );
-    const parsed = extractJsonFromText<T>(rawText);
-    if (!parsed) {
-      return {
-        ok: false,
-        model,
-        modelUsed,
-        reason: 'parse-error',
-        failureReason: 'รูปแบบ JSON ที่ได้จากโมเดลไม่ถูกต้อง',
-        isSimulated: false,
-      };
+    lastFailure = attemptFailure;
+    previousTimedOut =
+      attemptFailure.reason === 'network-error' && attemptFailure.failureReason.includes('Timeout');
+
+    if (idx < candidateModels.length - 1 && isRetryableJsonFailure(attemptFailure)) {
+      continue;
     }
 
-    return {
-      ok: true,
-      model,
-      modelUsed,
-      data: parsed,
-      usage,
-      isSimulated: false,
-    };
-  } catch (error) {
-    return classifyInteractionError(error, model);
+    return attemptFailure;
   }
+
+  return lastFailure ?? buildMissingKeyFailure(primaryModel);
 }
 
 /**
@@ -638,10 +754,12 @@ export async function callGeminiTranscribeAudio(
   const timeoutMs =
     typeof options?.timeoutMs === 'number' && Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
       ? Math.round(options.timeoutMs)
-      : 20_000;
+      : 12_000;
+
+  const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1beta' });
+  let primaryFailure: GeminiFailureResult | null = null;
 
   try {
-    const ai = new GoogleGenAI({ apiKey });
     const interaction = await runWithAbortTimeout(timeoutMs, (signal) =>
       ai.interactions.create(
         {
@@ -664,27 +782,71 @@ export async function callGeminiTranscribeAudio(
     );
 
     const terminalFailure = evaluateInteractionTerminalFailure(interaction, model);
-    if (terminalFailure) {
-      return terminalFailure;
+    if (!terminalFailure) {
+      const modelUsed = interaction.model || model;
+      const usage = buildUsageTelemetry(interaction.usage);
+      const transcript = extractTextFromInteraction(
+        interaction as Parameters<typeof extractTextFromInteraction>[0]
+      );
+
+      return {
+        ok: true,
+        model,
+        modelUsed,
+        transcript,
+        usage,
+        isSimulated: false,
+      };
     }
 
-    const modelUsed = interaction.model || model;
-    const usage = buildUsageTelemetry(interaction.usage);
-    const transcript = extractTextFromInteraction(
-      interaction as Parameters<typeof extractTextFromInteraction>[0]
-    );
-
-    return {
-      ok: true,
-      model,
-      modelUsed,
-      transcript,
-      usage,
-      isSimulated: false,
-    };
+    primaryFailure = terminalFailure;
   } catch (error) {
-    return classifyInteractionError(error, model);
+    const classified = classifyInteractionError(error, model);
+    if (classified.status !== 400 && classified.status !== 404) {
+      return classified;
+    }
+    primaryFailure = classified;
   }
+
+  if (typeof ai.models?.generateContent === 'function') {
+    try {
+      const response = await runWithAbortTimeout(timeoutMs, (signal) =>
+        ai.models.generateContent({
+          model,
+          contents: [
+            {
+              role: 'user',
+              parts: [{ inlineData: { data: audioBase64, mimeType } }],
+            },
+          ],
+          config: {
+            abortSignal: signal,
+          },
+        })
+      );
+      const fallbackPartsText = (response.candidates ?? [])
+        .flatMap((candidate) => candidate.content?.parts ?? [])
+        .map((part) => (typeof part.text === 'string' ? part.text.trim() : ''))
+        .filter(Boolean)
+        .join('\n')
+        .trim();
+      const transcript = (response.text ?? fallbackPartsText).trim();
+      if ((response.candidates?.length ?? 0) > 0 || transcript) {
+        return {
+          ok: true,
+          model,
+          modelUsed: response.modelVersion || model,
+          transcript,
+          usage: buildGenerateContentUsageTelemetry(response.usageMetadata),
+          isSimulated: false,
+        };
+      }
+    } catch (fallbackError) {
+      return classifyInteractionError(fallbackError, model);
+    }
+  }
+
+  return primaryFailure;
 }
 
 /**
@@ -704,47 +866,55 @@ export async function callGeminiTtsAudio(
 
   const voice = options?.voice?.trim() || 'Kore';
   const styleHint = options?.styleHint?.trim();
+  const timeoutMs =
+    typeof options?.timeoutMs === 'number' && Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
+      ? Math.round(options.timeoutMs)
+      : 35_000;
 
   // Gemini 3.8 TTS & /interactions audio endpoints require v1beta in @google/genai@3.3 (defaults to v1)
   const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1beta' });
   let primaryFailure: GeminiFailureResult | null = null;
 
   try {
-    const interaction = await ai.interactions.create(
-      {
-        model,
-        input: [
-          {
-            type: 'user_input',
-            content: [
-              {
-                type: 'text',
-                text: spokenText,
-                ...(styleHint
-                  ? {
-                      annotations: [
-                        {
-                          type: 'speech_metadata' as const,
-                          style: styleHint,
-                        },
-                      ],
-                    }
-                  : {}),
-              },
-            ],
+    const interaction = await runWithAbortTimeout(timeoutMs, (signal) =>
+      ai.interactions.create(
+        {
+          model,
+          input: [
+            {
+              type: 'user_input',
+              content: [
+                {
+                  type: 'text',
+                  text: spokenText,
+                  ...(styleHint
+                    ? {
+                        annotations: [
+                          {
+                            type: 'speech_metadata' as const,
+                            style: styleHint,
+                          },
+                        ],
+                      }
+                    : {}),
+                },
+              ],
+            },
+          ],
+          response_format: {
+            type: 'audio',
+            ...(options?.mimeType ? { mime_type: options.mimeType } : {}),
           },
-        ],
-        response_format: {
-          type: 'audio',
-          ...(options?.mimeType ? { mime_type: options.mimeType } : {}),
+          generation_config: {
+            speech_config: [{ voice }],
+          },
         },
-        generation_config: {
-          speech_config: [{ voice }],
-        },
-      },
-      {
-        retries: { strategy: 'none' },
-      }
+        {
+          retries: { strategy: 'none' },
+          timeout_ms: timeoutMs,
+          fetch_options: { signal },
+        }
+      )
     );
 
     const terminalFailure = evaluateInteractionTerminalFailure(interaction, model);
@@ -793,28 +963,26 @@ export async function callGeminiTtsAudio(
   // Fallback ไปยัง models.generateContent เมื่อ Interactions endpoint คืน 400/404
   if (typeof ai.models?.generateContent === 'function') {
     try {
-      const response = await ai.models.generateContent({
-        model,
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              {
-                text: spokenText,
-                ...(styleHint ? { speechMetadata: { style: styleHint } } : {}),
-              },
-            ],
-          },
-        ],
-        config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: { voiceName: voice },
+      const response = await runWithAbortTimeout(timeoutMs, (signal) =>
+        ai.models.generateContent({
+          model,
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: spokenText }],
             },
+          ],
+          config: {
+            responseModalities: [Modality.AUDIO],
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: { voiceName: voice },
+              },
+            },
+            abortSignal: signal,
           },
-        },
-      });
+        })
+      );
       const audioBlock = extractAudioFromGenerateContentResponse(response);
       if (audioBlock) {
         return {
@@ -841,7 +1009,7 @@ export async function callGeminiTtsAudio(
  */
 export async function callGeminiMusicAudio(
   prompt: string,
-  options?: { mimeType?: 'audio/mp3' | 'audio/wav' }
+  options?: { mimeType?: 'audio/mp3' | 'audio/wav'; timeoutMs?: number }
 ): Promise<GeminiMusicResult> {
   const apiKey = getGeminiApiKey();
   const model = GEMINI_MODEL_MUSIC;
@@ -850,63 +1018,116 @@ export async function callGeminiMusicAudio(
     return buildMissingKeyFailure(model);
   }
 
+  const timeoutMs =
+    typeof options?.timeoutMs === 'number' && Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
+      ? Math.round(options.timeoutMs)
+      : 50_000;
+
+  const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1beta' });
+  let primaryFailure: GeminiFailureResult | null = null;
+
   try {
-    const ai = new GoogleGenAI({ apiKey });
-    const interaction = await ai.interactions.create(
-      {
-        model,
-        input: prompt,
-        ...(options?.mimeType
-          ? {
-              response_format: {
-                type: 'audio',
-                mime_type: options.mimeType,
-              },
-            }
-          : {}),
-        store: false,
-      },
-      {
-        retries: { strategy: 'none' },
-      }
+    const interaction = await runWithAbortTimeout(timeoutMs, (signal) =>
+      ai.interactions.create(
+        {
+          model,
+          input: prompt,
+          ...(options?.mimeType
+            ? {
+                response_format: {
+                  type: 'audio',
+                  mime_type: options.mimeType,
+                },
+              }
+            : {}),
+          store: false,
+        },
+        {
+          retries: { strategy: 'none' },
+          timeout_ms: timeoutMs,
+          fetch_options: { signal },
+        }
+      )
     );
 
     const terminalFailure = evaluateInteractionTerminalFailure(interaction, model);
-    if (terminalFailure) {
-      return terminalFailure;
-    }
+    if (!terminalFailure) {
+      const modelUsed = interaction.model || model;
+      const usage = buildUsageTelemetry(interaction.usage);
+      const audioBlock = extractAudioFromInteraction(
+        interaction as Parameters<typeof extractAudioFromInteraction>[0]
+      );
+      const lyricsOrNotes = extractTextFromInteraction(
+        interaction as Parameters<typeof extractTextFromInteraction>[0]
+      );
 
-    const modelUsed = interaction.model || model;
-    const usage = buildUsageTelemetry(interaction.usage);
-    const audioBlock = extractAudioFromInteraction(
-      interaction as Parameters<typeof extractAudioFromInteraction>[0]
-    );
-    const lyricsOrNotes = extractTextFromInteraction(
-      interaction as Parameters<typeof extractTextFromInteraction>[0]
-    );
+      if (!audioBlock) {
+        return {
+          ok: false,
+          model,
+          modelUsed,
+          reason: 'parse-error',
+          failureReason: 'ไม่พบไฟล์เสียงอ้างอิงจากการตอบกลับของ Lyria 3.5',
+          isSimulated: false,
+        };
+      }
 
-    if (!audioBlock) {
       return {
-        ok: false,
+        ok: true,
         model,
         modelUsed,
-        reason: 'parse-error',
-        failureReason: 'ไม่พบไฟล์เสียงอ้างอิงจากการตอบกลับของ Lyria 3.5',
+        audioBase64: audioBlock.data,
+        mimeType: audioBlock.mimeType || 'audio/mp3',
+        lyricsOrNotes,
+        usage,
         isSimulated: false,
       };
     }
 
-    return {
-      ok: true,
-      model,
-      modelUsed,
-      audioBase64: audioBlock.data,
-      mimeType: audioBlock.mimeType || 'audio/mp3',
-      lyricsOrNotes,
-      usage,
-      isSimulated: false,
-    };
+    primaryFailure = terminalFailure;
   } catch (error) {
-    return classifyInteractionError(error, model);
+    const classified = classifyInteractionError(error, model);
+    if (classified.status !== 400 && classified.status !== 404) {
+      return classified;
+    }
+    primaryFailure = classified;
   }
+
+  if (typeof ai.models?.generateContent === 'function') {
+    try {
+      const response = await runWithAbortTimeout(timeoutMs, (signal) =>
+        ai.models.generateContent({
+          model,
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: prompt }],
+            },
+          ],
+          config: {
+            responseModalities: [Modality.AUDIO, Modality.TEXT],
+            abortSignal: signal,
+          },
+        })
+      );
+      const audioBlock = extractAudioFromGenerateContentResponse(response);
+      if (audioBlock) {
+        const lyricsOrNotes = (response.text ?? '').trim();
+        return {
+          ok: true,
+          model,
+          modelUsed: response.modelVersion || model,
+          audioBase64: audioBlock.data,
+          mimeType: audioBlock.mimeType || options?.mimeType || 'audio/mp3',
+          lyricsOrNotes,
+          usage: buildGenerateContentUsageTelemetry(response.usageMetadata),
+          isSimulated: false,
+        };
+      }
+    } catch (fallbackError) {
+      return classifyInteractionError(fallbackError, model);
+    }
+  }
+
+  return primaryFailure;
 }

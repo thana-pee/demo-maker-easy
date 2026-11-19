@@ -7,7 +7,7 @@ import {
   getSavedSongs,
   saveSong,
   deleteSong,
-  duplicateSong,
+  duplicateSongWithVocals,
   exportAllSongsJSON,
   importSongsJSON,
   extractSongFolders,
@@ -17,6 +17,7 @@ import {
   restoreSongFromSnapshot,
   updateSongLibraryMeta,
 } from '@/lib/storage';
+import { generateUniqueId } from '@/lib/sectionUtils';
 import { useLanguage } from '@/context/LanguageContext';
 
 interface SongLibraryModalProps {
@@ -52,7 +53,7 @@ const STATUS_TAG_META: Record<
   },
 };
 
-/** รวม vocalAudio ของ currentSong หากแก้ไขเพลงที่กำลังเปิดอยู่ */
+/** รวม vocalAudio และ vocalTakes ของ currentSong หากแก้ไขเพลงที่กำลังเปิดอยู่ */
 function mergeLiveVocalsIfActive(updated: SongProject, currentSong: SongProject): SongProject {
   if (updated.id !== currentSong.id) return updated;
   const vocals = new Map<string, string>();
@@ -61,9 +62,11 @@ function mergeLiveVocalsIfActive(updated: SongProject, currentSong: SongProject)
       if (bar.vocalAudio) vocals.set(bar.id, bar.vocalAudio);
     }
   }
-  if (vocals.size === 0) return updated;
+  const hasTakes = currentSong.vocalTakes !== undefined;
+  if (vocals.size === 0 && !hasTakes) return updated;
   return {
     ...updated,
+    ...(hasTakes ? { vocalTakes: currentSong.vocalTakes } : {}),
     sections: updated.sections.map((sec) => ({
       ...sec,
       bars: sec.bars.map((bar) =>
@@ -139,7 +142,7 @@ export const SongLibraryModal: React.FC<SongLibraryModalProps> = ({
     );
     if (!title) return;
     const newSong = createDefaultSong();
-    newSong.id = `song-${Date.now()}`;
+    newSong.id = generateUniqueId('demo-song');
     newSong.title = title.trim();
     if (folderFilter !== 'ALL' && folderFilter !== '__UNFILED__') {
       newSong.folder = folderFilter;
@@ -155,9 +158,9 @@ export const SongLibraryModal: React.FC<SongLibraryModalProps> = ({
     onClose();
   };
 
-  const handleDuplicate = (id: string, e: React.MouseEvent) => {
+  const handleDuplicate = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    const copy = duplicateSong(id);
+    const copy = await duplicateSongWithVocals(id, id === currentSong.id ? currentSong : undefined);
     if (copy) {
       setSongs(getSavedSongs());
       showFeedback(lang === 'th' ? `ทำสำเนาเป็น "${copy.title}" เรียบร้อยแล้ว` : `Duplicated as "${copy.title}"`);
@@ -166,23 +169,38 @@ export const SongLibraryModal: React.FC<SongLibraryModalProps> = ({
 
   const handleDelete = (id: string, title: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (songs.length <= 1) {
-      alert(
-        lang === 'th'
-          ? 'ไม่สามารถลบได้ เนื่องจากต้องมีเพลงในระบบอย่างน้อย 1 เพลงครับ'
-          : 'Cannot delete. You must have at least 1 song in your library.'
-      );
-      return;
-    }
-    if (confirm(lang === 'th' ? `คุณต้องการลบเพลง "${title}" ใช่หรือไม่?` : `Are you sure you want to delete "${title}"?`)) {
+    const isLastSong = songs.length <= 1;
+    const confirmMsg = isLastSong
+      ? lang === 'th'
+        ? `คุณต้องการลบเพลง "${title}" หรือไม่? (ระบบจะสร้างเพลงเดโมเริ่มต้นใหม่ให้สะอาด)`
+        : `Delete "${title}"? A clean default demo song will be created automatically.`
+      : lang === 'th'
+        ? `คุณต้องการลบเพลง "${title}" ใช่หรือไม่?`
+        : `Are you sure you want to delete "${title}"?`;
+
+    if (confirm(confirmMsg)) {
       const ok = deleteSong(id);
       if (ok) {
         const remaining = getSavedSongs();
         setSongs(remaining);
-        if (currentSong.id === id && remaining.length > 0) {
+        if ((currentSong.id === id || isLastSong) && remaining.length > 0) {
           onSelectSong(remaining[0]);
         }
-        showFeedback(lang === 'th' ? `ลบเพลง "${title}" เรียบร้อย` : `Deleted "${title}" successfully`);
+        showFeedback(
+          isLastSong
+            ? lang === 'th'
+              ? `ลบเพลง "${title}" และสร้างเพลงเริ่มต้นใหม่เรียบร้อย`
+              : `Deleted "${title}" and created a fresh default demo.`
+            : lang === 'th'
+              ? `ลบเพลง "${title}" เรียบร้อย`
+              : `Deleted "${title}" successfully`
+        );
+      } else {
+        showFeedback(
+          lang === 'th'
+            ? 'ไม่สามารถลบเพลงได้ในขณะนี้'
+            : 'Could not delete song right now'
+        );
       }
     }
   };
@@ -573,16 +591,14 @@ export const SongLibraryModal: React.FC<SongLibraryModalProps> = ({
                       >
                         📑
                       </button>
-                      {songs.length > 1 && (
-                        <button
-                          type="button"
-                          title={lang === 'th' ? 'ลบเพลงนี้' : 'Delete song'}
-                          onClick={(e) => handleDelete(displaySong.id, displaySong.title, e)}
-                          className="p-1.5 rounded-lg hover:bg-red-100 text-red-600 text-xs font-bold transition cursor-pointer"
-                        >
-                          🗑️
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        title={lang === 'th' ? 'ลบเพลงนี้' : 'Delete song'}
+                        onClick={(e) => handleDelete(displaySong.id, displaySong.title, e)}
+                        className="p-1.5 rounded-lg hover:bg-red-100 text-red-600 text-xs font-bold transition cursor-pointer"
+                      >
+                        🗑️
+                      </button>
                     </div>
                   </div>
 

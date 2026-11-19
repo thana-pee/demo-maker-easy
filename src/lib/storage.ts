@@ -18,6 +18,7 @@ import { createDefaultSong } from './defaultSong';
 import { generateUniqueId } from './sectionUtils';
 import {
   clearSongVocals,
+  hasUnpersistedVocals,
   hydrateSongVocalsFromIdb,
   persistSongVocalsToIdb,
 } from './audioStorageIdb';
@@ -26,6 +27,60 @@ export { hydrateSongVocalsFromIdb, persistSongVocalsToIdb };
 
 export const STORAGE_KEY = 'demo_maker_songs_v1';
 export const ACTIVE_SONG_KEY = 'demo_maker_active_song_id';
+export const DELETED_SONGS_KEY = 'demo_maker_deleted_songs_v1';
+export const DELETED_SONGS_TOMBSTONE_KEY = DELETED_SONGS_KEY;
+
+export function getDeletedSongTombstones(): Record<string, string> {
+  const storage = getStorage();
+  if (!storage) return {};
+  try {
+    const raw = storage.getItem(DELETED_SONGS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof k === 'string' && k.trim() && typeof v === 'string' && v.trim()) {
+        out[k] = v;
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function recordDeletedSongTombstone(
+  id: string,
+  deletedAtIso: string = new Date().toISOString()
+): void {
+  const cleanId = id.trim();
+  if (!cleanId) return;
+  const storage = getStorage();
+  if (!storage) return;
+  try {
+    const current = getDeletedSongTombstones();
+    current[cleanId] = deletedAtIso;
+    storage.setItem(DELETED_SONGS_KEY, JSON.stringify(current));
+  } catch {
+    // ignore storage write failures
+  }
+}
+
+export function clearDeletedSongTombstone(id: string): void {
+  const cleanId = id.trim();
+  if (!cleanId) return;
+  const storage = getStorage();
+  if (!storage) return;
+  try {
+    const current = getDeletedSongTombstones();
+    if (!(cleanId in current)) return;
+    delete current[cleanId];
+    storage.setItem(DELETED_SONGS_KEY, JSON.stringify(current));
+  } catch {
+    // ignore storage write failures
+  }
+}
 
 export interface SongSummary {
   id: string;
@@ -57,8 +112,12 @@ export function getSavedSongs(): SongProject[] {
   try {
     const raw = storage.getItem(STORAGE_KEY);
     if (!raw) {
-      // ครั้งแรก: สร้าง defaultSong ลงใน storage อัตโนมัติ
-      const initial = [createDefaultSong()];
+      // ครั้งแรก: สร้าง defaultSong ลงใน storage อัตโนมัติด้วย ID เฉพาะเครื่อง (เลี่ยงชนข้ามอุปกรณ์)
+      const seededDefault: SongProject = {
+        ...createDefaultSong(),
+        id: generateUniqueId('demo-song'),
+      };
+      const initial = [seededDefault];
       storage.setItem(STORAGE_KEY, JSON.stringify(initial));
       return initial;
     }
@@ -122,21 +181,33 @@ export function getSongById(id: string): SongProject | null {
   return songs.find((s) => s.id === id) || null;
 }
 
+export interface SaveSongOptions {
+  setActive?: boolean;
+  preserveUpdatedAt?: boolean;
+  skipIdbPersist?: boolean;
+}
+
 /** บันทึกหรืออัปเดตเพลง (offload vocalAudio ไปยัง IndexedDB ในเบราว์เซอร์ + มีระบบกู้คืนเมื่อ LocalStorage เต็ม) */
-export function saveSong(song: SongProject, options?: { setActive?: boolean }): void {
+export function saveSong(song: SongProject, options?: SaveSongOptions): boolean {
   const storage = getStorage();
+  const resolvedUpdatedAt =
+    options?.preserveUpdatedAt === true &&
+    typeof song.updatedAt === 'string' &&
+    song.updatedAt.trim().length > 0
+      ? song.updatedAt
+      : new Date().toISOString();
   const updatedSong: SongProject = {
     ...song,
-    updatedAt: new Date().toISOString(),
+    updatedAt: resolvedUpdatedAt,
   };
 
-  // ในเบราว์เซอร์ที่มี IndexedDB ให้ย้ายไฟล์เสียงร้องไปเก็บใน IndexedDB เพื่อเลี่ยงขีดจำกัด 5MB ของ localStorage
+  // ในเบราว์เซอร์ที่มี IndexedDB ให้ย้ายไฟล์เสียงร้องไปเก็บใน IndexedDB เฉพาะเมื่อมีเสียงใหม่หรือมีการเปลี่ยนแปลง
   const canOffloadToIdb = typeof indexedDB !== 'undefined' && indexedDB !== null;
-  if (canOffloadToIdb) {
+  if (canOffloadToIdb && !options?.skipIdbPersist && hasUnpersistedVocals(updatedSong)) {
     void persistSongVocalsToIdb(updatedSong);
   }
 
-  if (!storage) return;
+  if (!storage) return true;
   try {
     const songs = getSavedSongs();
     const songForLocalStorage = canOffloadToIdb ? stripVocalsFromSong(updatedSong) : updatedSong;
@@ -162,6 +233,7 @@ export function saveSong(song: SongProject, options?: { setActive?: boolean }): 
           storage.setItem(STORAGE_KEY, JSON.stringify(pruned));
         } catch (retryErr) {
           console.error('Critical: Storage quota full even after pruning older vocals', retryErr);
+          return false;
         }
       } else {
         throw writeErr;
@@ -171,23 +243,37 @@ export function saveSong(song: SongProject, options?: { setActive?: boolean }): 
     if (options?.setActive !== false) {
       setActiveSongId(song.id);
     }
+    clearDeletedSongTombstone(song.id);
+    return true;
   } catch (err) {
     console.error('Error saving song to localStorage:', err);
+    return false;
   }
 }
 
-/** ลบเพลงตาม ID พร้อมล้างไฟล์เสียงร้องของเพลงนั้นใน IndexedDB */
+/** ลบเพลงตาม ID พร้อมบันทึก Tombstone และล้างไฟล์เสียงร้องของเพลงนั้นใน IndexedDB */
 export function deleteSong(id: string): boolean {
   const storage = getStorage();
   void clearSongVocals(id);
   if (!storage) return false;
   try {
     const songs = getSavedSongs();
-    if (songs.length <= 1) {
-      // ห้ามลบจนหมด ให้เหลืออย่างน้อย 1 เพลง
+    if (!songs.some((s) => s.id === id)) {
       return false;
     }
+    recordDeletedSongTombstone(id);
     const filtered = songs.filter((s) => s.id !== id);
+    if (filtered.length === 0) {
+      const freshDefault: SongProject = {
+        ...createDefaultSong(),
+        id: generateUniqueId('demo-song'),
+        updatedAt: new Date().toISOString(),
+      };
+      storage.setItem(STORAGE_KEY, JSON.stringify([freshDefault]));
+      setActiveSongId(freshDefault.id);
+      return true;
+    }
+
     storage.setItem(STORAGE_KEY, JSON.stringify(filtered));
 
     // ถ้าเพลงที่ลบคือเพลงที่กำลังเปิดอยู่ ให้เปลี่ยนไปเปิดเพลงแรกที่เหลือ
@@ -224,6 +310,90 @@ export function duplicateSong(id: string): SongProject | null {
 
   saveSong(copy, { setActive: false });
   return copy;
+}
+
+/** ทำสำเนาเพลงพร้อมดึงและคัดลอกไฟล์เสียงร้องทั้ง bar.vocalAudio และ vocalTakes ใน IndexedDB ให้ครบ 100% */
+export async function duplicateSongWithVocals(
+  id: string,
+  liveSong?: SongProject
+): Promise<SongProject | null> {
+  const baseSource = liveSong && liveSong.id === id ? liveSong : getSongById(id);
+  if (!baseSource) return null;
+
+  const hydrated = await hydrateSongVocalsFromIdb(baseSource);
+  const sectionIdMap = new Map<string, string>();
+  const newSections = (hydrated.sections || []).map((sec) => {
+    const newSecId = generateUniqueId('sec');
+    sectionIdMap.set(sec.id, newSecId);
+    return {
+      ...sec,
+      id: newSecId,
+      bars: (sec.bars || []).map((b) => ({
+        ...b,
+        id: generateUniqueId('bar'),
+      })),
+    };
+  });
+
+  const newVocalTakes = Array.isArray(hydrated.vocalTakes)
+    ? hydrated.vocalTakes.map((take) => ({
+        ...take,
+        id: generateUniqueId('take'),
+        ...(take.sectionId ? { sectionId: sectionIdMap.get(take.sectionId) ?? take.sectionId } : {}),
+      }))
+    : undefined;
+
+  const copy: SongProject = {
+    ...hydrated,
+    id: generateUniqueId('song'),
+    title: `${hydrated.title} (สำเนา)`,
+    updatedAt: new Date().toISOString(),
+    snapshots: [],
+    sections: newSections,
+    ...(newVocalTakes !== undefined ? { vocalTakes: newVocalTakes } : {}),
+  };
+
+  await persistSongVocalsToIdb(copy);
+  saveSong(copy, { setActive: false, preserveUpdatedAt: true, skipIdbPersist: true });
+  return copy;
+}
+
+function buildShareCollisionDigest(song: SongProject): string {
+  return JSON.stringify({
+    title: song.title || '',
+    bpm: song.bpm,
+    baseKey: song.baseKey,
+    sections: (song.sections || []).map((sec) => ({
+      type: sec.type,
+      name: sec.name,
+      bars: (sec.bars || []).map((bar) => ({
+        chords: bar.chords,
+        lyrics: bar.lyrics,
+      })),
+    })),
+  });
+}
+
+/** ป้องกันลิงก์แชร์ ?song= เขียนทับเพลงที่มี ID ชนกันในคลังของผู้ใช้ */
+export function resolveSafeSharedSong(
+  shared: SongProject,
+  existingSongs?: SongProject[]
+): { song: SongProject; reassignedId: boolean } {
+  const list = existingSongs ?? getSavedSongs();
+  const existing = list.find((s) => s.id === shared.id);
+  if (!existing) {
+    return { song: shared, reassignedId: false };
+  }
+  if (buildShareCollisionDigest(existing) === buildShareCollisionDigest(shared)) {
+    return { song: shared, reassignedId: false };
+  }
+  return {
+    song: {
+      ...shared,
+      id: generateUniqueId('shared'),
+    },
+    reassignedId: true,
+  };
 }
 
 /** ดึง ID ของเพลงที่เปิดใช้งานล่าสุด */
@@ -267,6 +437,7 @@ export function importSongsJSON(jsonStr: string): SongProject[] | null {
     const canOffloadToIdb = typeof indexedDB !== 'undefined' && indexedDB !== null;
     for (const song of toAdd) {
       void persistSongVocalsToIdb(song);
+      clearDeletedSongTombstone(song.id);
     }
 
     const combined = [...toAdd, ...existing];

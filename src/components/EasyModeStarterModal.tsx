@@ -20,6 +20,7 @@ import {
   CREDIT_COST_TABLE,
   applyServerWalletSnapshot,
   canAfford,
+  canUsePaidOnlyModel,
   deductCredits,
   getCreditBalance,
   getEasyArchitectCreditCost,
@@ -64,7 +65,11 @@ interface EasyModeStarterModalProps {
   onCreditsChange: (balance: number) => void;
   onPreviewAudioToggle: (previewSong: SongProject) => void;
   onStopAudio: () => void;
-  onApplySong: (song: SongProject, targetView: 'songwriter' | 'arranger') => void;
+  onApplySong: (
+    song: SongProject,
+    targetView: 'songwriter' | 'arranger',
+    applyMode?: 'new-song' | 'overwrite-current'
+  ) => void;
   onOpenWallet: () => void;
   onClose: () => void;
 }
@@ -237,7 +242,14 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
     ];
   }, [structurePreset, customSections]);
 
-  const currentCreditCost = getEasyArchitectCreditCost(activeSections.length);
+  const [useProArgon, setUseProArgon] = useState<boolean>(false);
+  const [needsTopUpError, setNeedsTopUpError] = useState<boolean>(false);
+
+  const standardCreditCost = getEasyArchitectCreditCost(activeSections.length);
+  const currentCreditCost = useProArgon
+    ? CREDIT_COST_TABLE.aiProArgonArranger
+    : standardCreditCost;
+  const proArgonGate = canUsePaidOnlyModel(CREDIT_COST_TABLE.aiProArgonArranger);
   const estimatedKey = vocalProfile === 'female' ? 'G' : 'C';
 
   const [showCostConfirm, setShowCostConfirm] = useState(false);
@@ -259,6 +271,7 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
   const [generatedResult, setGeneratedResult] = useState<ArchitectApiResult | null>(null);
   const [previewSong, setPreviewSong] = useState<SongProject | null>(null);
   const [bandDensity, setBandDensity] = useState<BandDensityLevel>('balanced');
+  const [applyMode, setApplyMode] = useState<'new-song' | 'overwrite-current'>('new-song');
 
   const recorderRef = useRef<MicRecorder | null>(null);
   const humTimerRef = useRef<number | null>(null);
@@ -355,6 +368,7 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
   const handleRequestGenerate = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
+    setNeedsTopUpError(false);
     if (!topic.trim()) {
       setErrorMsg(
         lang === 'th'
@@ -363,8 +377,25 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
       );
       return;
     }
-    if (!canAfford(currentCreditCost)) {
+    if (useProArgon) {
+      const gate = canUsePaidOnlyModel(CREDIT_COST_TABLE.aiProArgonArranger);
+      if (!gate.allowed) {
+        setShowCostConfirm(false);
+        setNeedsTopUpError(true);
+        setErrorMsg(
+          gate.reason === 'paid-credits-required'
+            ? lang === 'th'
+              ? `โหมด Pro Producer (Gemini 4 Argon) ต้องใช้เครดิตเติมเงินอย่างน้อย ${CREDIT_COST_TABLE.aiProArgonArranger} เครดิต (เครดิตทดลองใช้ไม่ได้)`
+              : `Pro Producer (Gemini 4 Argon) requires ${CREDIT_COST_TABLE.aiProArgonArranger} purchased credits (trial credits cannot be used).`
+            : lang === 'th'
+              ? `เครดิตเติมเงินไม่เพียงพอ (ต้องใช้ ${CREDIT_COST_TABLE.aiProArgonArranger} เหรียญ) กรุณาเติมเครดิตก่อนครับ`
+              : `Insufficient purchased credits (requires ${CREDIT_COST_TABLE.aiProArgonArranger} credits). Please top up in Wallet.`
+        );
+        return;
+      }
+    } else if (!canAfford(currentCreditCost)) {
       setShowCostConfirm(false);
+      setNeedsTopUpError(true);
       setErrorMsg(
         lang === 'th'
           ? `เครดิตไม่เพียงพอ (ต้องใช้ ${currentCreditCost} เหรียญ) กรุณาเติมเครดิตก่อนครับ`
@@ -377,7 +408,24 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
 
   const handleConfirmGenerate = async () => {
     setShowCostConfirm(false);
-    if (!canAfford(currentCreditCost)) {
+    setNeedsTopUpError(false);
+    if (useProArgon) {
+      const gate = canUsePaidOnlyModel(CREDIT_COST_TABLE.aiProArgonArranger);
+      if (!gate.allowed) {
+        setNeedsTopUpError(true);
+        setErrorMsg(
+          gate.reason === 'paid-credits-required'
+            ? lang === 'th'
+              ? 'โหมด Pro Producer (Gemini 4 Argon) ต้องใช้เครดิตจากการเติมแพ็กเกจ (Purchased Credits)'
+              : 'Pro Producer (Gemini 4 Argon) requires Purchased Credits.'
+            : lang === 'th'
+              ? 'เครดิตไม่เพียงพอ'
+              : 'Insufficient credits'
+        );
+        return;
+      }
+    } else if (!canAfford(currentCreditCost)) {
+      setNeedsTopUpError(true);
       setErrorMsg(lang === 'th' ? 'เครดิตไม่เพียงพอ' : 'Insufficient credits');
       return;
     }
@@ -396,6 +444,8 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
         lyricDialect,
         songwriterStyle,
         emotionalResolution,
+        useProArgon,
+        modelTier: useProArgon ? 'pro-argon' : 'standard',
         customStructure: activeSections,
         chordProgressionPreset:
           chordMode !== 'auto' && chordMode !== 'custom' ? chordMode : undefined,
@@ -409,6 +459,9 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
         if (data?.wallet) {
           const synced = applyServerWalletSnapshot(data.wallet);
           onCreditsChange(synced.balance);
+        }
+        if (res.status === 402) {
+          setNeedsTopUpError(true);
         }
         setErrorMsg(formatEasyApiFailureMessage(res.status, data?.error, 'architect', lang));
         return;
@@ -1165,10 +1218,86 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
                     />
                   </div>
 
+                  {/* Model Tier Selector: Standard vs Pro Argon (10 Cr Paid Only) */}
+                  <div className="space-y-1.5">
+                    <span className="text-xs font-bold text-ink-900 block">
+                      {lang === 'th' ? '6. คุณภาพโมเดล AI (Model Tier):' : '6. AI Model Tier:'}
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUseProArgon(false);
+                          setNeedsTopUpError(false);
+                          setShowCostConfirm(false);
+                        }}
+                        className={`p-2.5 rounded-2xl border text-left transition cursor-pointer ${
+                          !useProArgon
+                            ? 'bg-accent-50 border-accent-500 ring-2 ring-accent-500/20'
+                            : 'bg-surface-2/60 border-hairline hover:border-accent-200'
+                        }`}
+                      >
+                        <div className="text-xs font-black text-ink-900">
+                          ⚡ Standard (Gemini 4 Hydrogen · {standardCreditCost} Cr)
+                        </div>
+                        <div className="text-[10px] text-ink-500 mt-0.5">
+                          {lang === 'th'
+                            ? 'รวดเร็ว สมดุล ใช้ได้ทั้งเครดิตทดลองและเครดิตเติมเงิน'
+                            : 'Fast & balanced — works with Trial & Purchased credits'}
+                        </div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUseProArgon(true);
+                          setShowCostConfirm(false);
+                        }}
+                        className={`p-2.5 rounded-2xl border text-left transition cursor-pointer ${
+                          useProArgon
+                            ? 'bg-amber-50 border-amber-500 ring-2 ring-amber-500/25'
+                            : 'bg-surface-2/60 border-hairline hover:border-amber-300'
+                        }`}
+                      >
+                        <div className="text-xs font-black text-amber-950">
+                          💎 Pro Producer (Gemini 4 Argon · {CREDIT_COST_TABLE.aiProArgonArranger} Cr ·{' '}
+                          {lang === 'th' ? 'เครดิตเติมเงิน' : 'Paid Credits'})
+                        </div>
+                        <div className="text-[10px] text-amber-800/80 mt-0.5">
+                          {lang === 'th'
+                            ? 'วิเคราะห์ฉันทลักษณ์และเรียบเรียงดนตรีระดับลึก (ต้องใช้ Purchased Credits)'
+                            : 'Deep musical arrangement & Thai lyric craft (Purchased Credits only)'}
+                        </div>
+                      </button>
+                    </div>
+                    {useProArgon && !proArgonGate.allowed && (
+                      <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-[11px] font-semibold flex items-center justify-between gap-2">
+                        <span>
+                          {proArgonGate.reason === 'paid-credits-required'
+                            ? lang === 'th'
+                              ? `บัญชีมีเฉพาะ Trial Credits — โหมด Gemini 4 Argon ต้องใช้เครดิตเติมเงินอย่างน้อย ${CREDIT_COST_TABLE.aiProArgonArranger} Cr`
+                              : `Trial-only balance — Gemini 4 Argon requires ${CREDIT_COST_TABLE.aiProArgonArranger} purchased credits.`
+                            : lang === 'th'
+                              ? `เครดิตเติมเงินไม่พอสำหรับ Gemini 4 Argon (ต้องการ ${CREDIT_COST_TABLE.aiProArgonArranger} Cr)`
+                              : `Insufficient purchased credits for Gemini 4 Argon (${CREDIT_COST_TABLE.aiProArgonArranger} Cr needed).`}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onClose();
+                            onOpenWallet();
+                          }}
+                          className="px-2.5 py-1 rounded-lg bg-amber-500 text-white text-[11px] font-black cursor-pointer shrink-0"
+                        >
+                          {lang === 'th' ? 'เติมเครดิต' : 'Top Up'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
                   {errorMsg && (
                     <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold flex items-center justify-between gap-2">
                       <span>{errorMsg}</span>
-                      {!canAfford(currentCreditCost) && (
+                      {(!canAfford(currentCreditCost) || (useProArgon && !proArgonGate.allowed) || needsTopUpError) && (
                         <button
                           type="button"
                           onClick={() => {
@@ -1196,8 +1325,8 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
                       </div>
                       <p className="text-[11px] text-amber-900">
                         {lang === 'th'
-                          ? `เรียกใช้ Gemini 4 Hydrogen เสก ${activeSections.length} ท่อน (คอร์ด + เนื้อเพลงมีสัมผัส + เมโลดี้ไกด์ + มิกซ์) คงเหลือหลังใช้ ${currentBalance - currentCreditCost} Credits (ตัดเฉพาะเมื่อผลลัพธ์ไม่จำลอง)`
-                          : `Calls Gemini 4 Hydrogen to compose a complete ${activeSections.length}-section song (${currentBalance - currentCreditCost} credits remaining on live success).`}
+                          ? `เรียกใช้ ${useProArgon ? 'Gemini 4 Argon (Pro)' : 'Gemini 4 Hydrogen'} เสก ${activeSections.length} ท่อน (คอร์ด + เนื้อเพลงมีสัมผัส + เมโลดี้ไกด์ + มิกซ์) คงเหลือหลังใช้ ${currentBalance - currentCreditCost} Credits (ตัดเฉพาะเมื่อผลลัพธ์ไม่จำลอง)`
+                          : `Calls ${useProArgon ? 'Gemini 4 Argon (Pro)' : 'Gemini 4 Hydrogen'} to compose a complete ${activeSections.length}-section song (${currentBalance - currentCreditCost} credits remaining on live success).`}
                       </p>
                       <div className="flex gap-2">
                         <button
@@ -1645,38 +1774,71 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
           )}
         </div>
 
-        {/* Footer CTAs in Preview Stage */}
+        {/* Target Apply Mode & Footer CTAs in Preview Stage */}
         {previewSong && generatedResult && (
-          <div className="border-t border-hairline pt-3 flex flex-col sm:flex-row gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={() => {
-                onStopAudio();
-                setPreviewSong(null);
-                setGeneratedResult(null);
-                setTranscribedLyricsPreview('');
-                setConfidenceNotePreview('');
-              }}
-              className="px-3.5 py-2.5 rounded-xl border border-hairline bg-surface-2 hover:bg-surface-3 text-ink-700 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition"
-            >
-              <ArrowLeft className="w-3.5 h-3.5" />
-              <span>{lang === 'th' ? 'สร้างใหม่' : 'Regenerate'}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                onStopAudio();
-                onApplySong(previewSong, 'songwriter');
-              }}
-              className="flex-1 py-2.5 px-4 rounded-xl bg-accent-500 hover:bg-accent-hover text-white text-xs sm:text-sm font-bold flex items-center justify-center gap-2 cursor-pointer transition shadow-e1"
-            >
-              <SlidersHorizontal className="w-4 h-4" />
-              <span>
+          <div className="border-t border-hairline pt-3 space-y-2.5 shrink-0">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs">
+              <button
+                type="button"
+                onClick={() => setApplyMode('new-song')}
+                aria-pressed={applyMode === 'new-song'}
+                className={`px-3 py-2 rounded-xl border font-semibold text-left transition cursor-pointer ${
+                  applyMode === 'new-song'
+                    ? 'bg-accent-50 border-accent-500 text-accent-text'
+                    : 'bg-surface-2 border-hairline text-ink-700 hover:bg-surface-inset'
+                }`}
+              >
                 {lang === 'th'
-                  ? '🎛️ เข้าโหมดปรับละเอียด (Songwriter / Arranger)'
-                  : '🎛️ Open in Fine-Tune Studio'}
-              </span>
-            </button>
+                  ? '➕ สร้างเป็นเพลงใหม่ในคลัง (ไม่ทับเพลงเดิม)'
+                  : '➕ Create as New Song (Safe)'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setApplyMode('overwrite-current')}
+                aria-pressed={applyMode === 'overwrite-current'}
+                className={`px-3 py-2 rounded-xl border font-semibold text-left transition cursor-pointer ${
+                  applyMode === 'overwrite-current'
+                    ? 'bg-amber-500/15 border-amber-500 text-amber-700 dark:text-amber-300'
+                    : 'bg-surface-2 border-hairline text-ink-700 hover:bg-surface-inset'
+                }`}
+              >
+                {lang === 'th'
+                  ? '🔄 เขียนทับเพลงปัจจุบันที่กำลังเปิด'
+                  : '🔄 Overwrite Current Song'}
+              </button>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  onStopAudio();
+                  setPreviewSong(null);
+                  setGeneratedResult(null);
+                  setTranscribedLyricsPreview('');
+                  setConfidenceNotePreview('');
+                  setApplyMode('new-song');
+                }}
+                className="px-3.5 py-2.5 rounded-xl border border-hairline bg-surface-2 hover:bg-surface-3 text-ink-700 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>{lang === 'th' ? 'สร้างใหม่' : 'Regenerate'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onStopAudio();
+                  onApplySong(previewSong, 'songwriter', applyMode);
+                }}
+                className="flex-1 py-2.5 px-4 rounded-xl bg-accent-500 hover:bg-accent-hover text-white text-xs sm:text-sm font-bold flex items-center justify-center gap-2 cursor-pointer transition shadow-e1"
+              >
+                <SlidersHorizontal className="w-4 h-4" />
+                <span>
+                  {lang === 'th'
+                    ? '🎛️ เข้าโหมดปรับละเอียด (Songwriter / Arranger)'
+                    : '🎛️ Open in Fine-Tune Studio'}
+                </span>
+              </button>
+            </div>
           </div>
         )}
       </div>

@@ -14,7 +14,12 @@ import {
   ThaiEmotionalResolution,
 } from '@/types/song';
 import { createDefaultSong } from '@/lib/defaultSong';
-import { generateUniqueId } from '@/lib/sectionUtils';
+import {
+  applyProgressionPresetToSection,
+  buildSongHistoryFingerprint,
+  generateUniqueId,
+  pushCoalescedUndoHistory,
+} from '@/lib/sectionUtils';
 import { ProgressionPreset } from '@/lib/chordUtils';
 import { useAudioEngine } from '@/hooks/useAudioEngine';
 import type { LoopRange } from '@/lib/audioEngine';
@@ -24,6 +29,8 @@ import {
   getActiveSongId,
   setActiveSongId,
   hydrateSongVocalsFromIdb,
+  addSnapshotToSong,
+  resolveSafeSharedSong,
 } from '@/lib/storage';
 import {
   saveVocalBlob,
@@ -33,7 +40,7 @@ import {
 import { parseSongFromUrl } from '@/lib/shareUrl';
 import { trackSessionStartOnce, trackUsageEvent } from '@/lib/analytics';
 
-import { TransportBar } from '@/components/TransportBar';
+import { TransportBar, type LocalSaveState } from '@/components/TransportBar';
 import { SoundCustomizerPanel } from '@/components/SoundCustomizerPanel';
 import { SectionBuilder } from '@/components/SectionBuilder';
 import { KaraokeTeleprompter } from '@/components/KaraokeTeleprompter';
@@ -64,6 +71,7 @@ import {
   type CloudUser,
   type CloudSyncStatus,
   getAuthAccessToken,
+  getCloudConfig,
   getCurrentUser,
   getLastSyncedAt,
   isCloudConfigured,
@@ -75,20 +83,11 @@ import { useLanguage } from '@/context/LanguageContext';
 
 const MAX_HISTORY = 30;
 
-function buildSongHistoryFingerprint(s: SongProject): string {
-  return JSON.stringify({
-    title: s.title,
-    bpm: s.bpm,
-    timeSignature: s.timeSignature,
-    baseKey: s.baseKey,
-    transposeSemitones: s.transposeSemitones,
-    capoFret: s.capoFret,
-    sections: s.sections,
-    mixer: s.mixer,
-    thaiGenre: s.thaiGenre,
-    songwriterStyle: s.songwriterStyle,
-    emotionalResolution: s.emotionalResolution,
-  });
+function makePersistedSongKey(s: SongProject): string {
+  const vocalTakesKey = (s.vocalTakes || [])
+    .map((t) => `${t.id}:${t.isActive ? 1 : 0}:${t.audioDataUrl?.length ?? 0}`)
+    .join(',');
+  return `${s.id}::${s.updatedAt}::${buildSongHistoryFingerprint(s)}::${s.snapshots?.length ?? 0}::${s.folder ?? ''}::${s.statusTag ?? ''}::${s.countInEnabled ? 1 : 0}::${s.guitarModel}::${s.stringGauge}::${s.ambience3D}::${s.vocalLatencyOffsetMs ?? 0}::${vocalTakesKey}`;
 }
 
 export default function Home() {
@@ -97,22 +96,74 @@ export default function Home() {
   const songRef = useRef<SongProject>(song);
   const undoStackRef = useRef<SongProject[]>([]);
   const redoStackRef = useRef<SongProject[]>([]);
+  const lastHistoryKeyRef = useRef<string | null>(null);
+  const lastHistoryAtRef = useRef<number>(0);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
+  const [localSaveState, setLocalSaveState] = useState<LocalSaveState>('saved');
+  const [lastLocalSavedAt, setLastLocalSavedAt] = useState<string | null>(null);
+  const isHydratingOrLoadingRef = useRef<boolean>(false);
+  const lastPersistedSongKeyRef = useRef<string>('');
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     songRef.current = song;
   }, [song]);
 
-  const updateSongWithHistory = useCallback(
-    (updater: SongProject | ((prev: SongProject) => SongProject)) => {
-      const prev = songRef.current;
-      const next = typeof updater === 'function' ? updater(prev) : updater;
-      if (next === prev) return;
+  const flushPendingLocalSave = useCallback((songToFlush?: SongProject): boolean => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+    const target = songToFlush ?? songRef.current;
+    const targetKey = makePersistedSongKey(target);
+    if (lastPersistedSongKeyRef.current === targetKey) {
+      setLocalSaveState('saved');
+      return true;
+    }
+    setLocalSaveState('saving');
+    const ok = saveSong(target, { preserveUpdatedAt: true });
+    if (ok) {
+      lastPersistedSongKeyRef.current = targetKey;
+      setLocalSaveState('saved');
+      setLastLocalSavedAt(target.updatedAt || new Date().toISOString());
+    } else {
+      setLocalSaveState('error');
+    }
+    return ok;
+  }, []);
 
-      if (buildSongHistoryFingerprint(prev) !== buildSongHistoryFingerprint(next)) {
-        const snapshot = structuredClone(prev);
-        undoStackRef.current = [...undoStackRef.current, snapshot].slice(-MAX_HISTORY);
+  const updateSongWithHistory = useCallback(
+    (
+      updater: SongProject | ((prev: SongProject) => SongProject),
+      options?: { coalesceKey?: string }
+    ) => {
+      const prev = songRef.current;
+      const rawNext = typeof updater === 'function' ? updater(prev) : updater;
+      if (rawNext === prev) return;
+
+      const next: SongProject = {
+        ...rawNext,
+        updatedAt: new Date().toISOString(),
+      };
+
+      const res = pushCoalescedUndoHistory(
+        {
+          undoStack: undoStackRef.current,
+          lastKey: lastHistoryKeyRef.current,
+          lastAtMs: lastHistoryAtRef.current,
+        },
+        prev,
+        next,
+        Date.now(),
+        options?.coalesceKey,
+        MAX_HISTORY
+      );
+
+      if (res.pushed || res.coalesced) {
+        undoStackRef.current = res.state.undoStack;
+        lastHistoryKeyRef.current = res.state.lastKey;
+        lastHistoryAtRef.current = res.state.lastAtMs;
         redoStackRef.current = [];
         setCanUndo(undoStackRef.current.length > 0);
         setCanRedo(false);
@@ -120,6 +171,7 @@ export default function Home() {
 
       songRef.current = next;
       setSong(next);
+      setLocalSaveState('dirty');
     },
     []
   );
@@ -169,10 +221,17 @@ export default function Home() {
     if (stack.length === 0) return;
     const prevSnapshot = stack[stack.length - 1];
     undoStackRef.current = stack.slice(0, -1);
+    lastHistoryKeyRef.current = null;
+    lastHistoryAtRef.current = 0;
     const currentSnapshot = structuredClone(songRef.current);
     redoStackRef.current = [...redoStackRef.current, currentSnapshot].slice(-MAX_HISTORY);
-    songRef.current = prevSnapshot;
-    setSong(prevSnapshot);
+    const nextSong: SongProject = {
+      ...prevSnapshot,
+      updatedAt: new Date().toISOString(),
+    };
+    songRef.current = nextSong;
+    setSong(nextSong);
+    setLocalSaveState('dirty');
     setCanUndo(undoStackRef.current.length > 0);
     setCanRedo(redoStackRef.current.length > 0);
     setShareToastMsg(lang === 'th' ? '↩ ย้อนกลับ 1 ขั้นแล้ว' : '↩ Undid last edit');
@@ -183,28 +242,59 @@ export default function Home() {
     if (stack.length === 0) return;
     const nextSnapshot = stack[stack.length - 1];
     redoStackRef.current = stack.slice(0, -1);
+    lastHistoryKeyRef.current = null;
+    lastHistoryAtRef.current = 0;
     const currentSnapshot = structuredClone(songRef.current);
     undoStackRef.current = [...undoStackRef.current, currentSnapshot].slice(-MAX_HISTORY);
-    songRef.current = nextSnapshot;
-    setSong(nextSnapshot);
+    const nextSong: SongProject = {
+      ...nextSnapshot,
+      updatedAt: new Date().toISOString(),
+    };
+    songRef.current = nextSong;
+    setSong(nextSong);
+    setLocalSaveState('dirty');
     setCanUndo(undoStackRef.current.length > 0);
     setCanRedo(redoStackRef.current.length > 0);
     setShareToastMsg(lang === 'th' ? '↪ ทำซ้ำ 1 ขั้นแล้ว' : '↪ Redid edit');
   }, [lang]);
 
-  const selectSongWithVocals = useCallback((nextSong: SongProject) => {
-    undoStackRef.current = [];
-    redoStackRef.current = [];
-    setCanUndo(false);
-    setCanRedo(false);
-    songRef.current = nextSong;
-    setSong(nextSong);
-    void hydrateSongVocalsFromIdb(nextSong).then((hydrated) => {
-      if (hydrated !== nextSong) {
-        setSong((cur) => (cur.id === hydrated.id ? hydrated : cur));
+  const selectSongWithVocals = useCallback(
+    (nextSong: SongProject) => {
+      const isSameSong = nextSong.id === songRef.current.id;
+      if (!isSameSong) {
+        const currentKey = makePersistedSongKey(songRef.current);
+        if (lastPersistedSongKeyRef.current && lastPersistedSongKeyRef.current !== currentKey) {
+          flushPendingLocalSave(songRef.current);
+        }
+        undoStackRef.current = [];
+        redoStackRef.current = [];
+        lastHistoryKeyRef.current = null;
+        lastHistoryAtRef.current = 0;
+        setCanUndo(false);
+        setCanRedo(false);
       }
-    });
-  }, []);
+
+      isHydratingOrLoadingRef.current = true;
+      lastPersistedSongKeyRef.current = makePersistedSongKey(nextSong);
+      songRef.current = nextSong;
+      setSong(nextSong);
+      setLocalSaveState('saved');
+      setLastLocalSavedAt(nextSong.updatedAt || new Date().toISOString());
+
+      void hydrateSongVocalsFromIdb(nextSong)
+        .then((hydrated) => {
+          lastPersistedSongKeyRef.current = makePersistedSongKey(hydrated);
+          if (hydrated !== nextSong && songRef.current.id === hydrated.id) {
+            songRef.current = hydrated;
+            setSong((cur) => (cur.id === hydrated.id ? hydrated : cur));
+          }
+        })
+        .finally(() => {
+          isHydratingOrLoadingRef.current = false;
+        });
+    },
+    [flushPendingLocalSave]
+  );
 
   // 1. ตรวจสอบเพลงจาก URL หรือจาก localStorage เมื่อเปิดเว็บครั้งแรก
   useEffect(() => {
@@ -214,10 +304,20 @@ export default function Home() {
       if (window.location.search) {
         const shared = parseSongFromUrl(window.location.search);
         if (shared) {
-          setSong(shared);
-          saveSong(shared);
-          setActiveSongId(shared.id);
-          setShareToastMsg(`📥 โหลดเพลง "${shared.title}" จากลิงก์แชร์เรียบร้อยแล้ว! พร้อมเล่นและแต่งต่อได้ทันที`);
+          const { song: safeShared, reassignedId } = resolveSafeSharedSong(shared, getSavedSongs());
+          isHydratingOrLoadingRef.current = false;
+          saveSong(safeShared, { preserveUpdatedAt: true });
+          lastPersistedSongKeyRef.current = makePersistedSongKey(safeShared);
+          songRef.current = safeShared;
+          setSong(safeShared);
+          setActiveSongId(safeShared.id);
+          setLocalSaveState('saved');
+          setLastLocalSavedAt(safeShared.updatedAt || new Date().toISOString());
+          setShareToastMsg(
+            reassignedId
+              ? `📥 โหลดเพลง "${safeShared.title}" จากลิงก์แชร์เป็นเพลงใหม่ในคลังแล้ว (ไม่ทับเพลงเดิมที่ ID ชนกัน)`
+              : `📥 โหลดเพลง "${safeShared.title}" จากลิงก์แชร์เรียบร้อยแล้ว! พร้อมเล่นและแต่งต่อได้ทันที`
+          );
           // ล้าง query string ออกเพื่อไม่ให้ค้างในช่อง URL
           window.history.replaceState({}, document.title, window.location.pathname);
           return;
@@ -235,25 +335,52 @@ export default function Home() {
     return () => cancelAnimationFrame(rafId);
   }, [selectSongWithVocals]);
 
-  // 2. Auto-save เพลงลง localStorage เมื่อมีการเปลี่ยนแปลง (Debounce 600ms)
+  // 2. Auto-save เพลงลง localStorage เมื่อมีการแก้ไขจริงเท่านั้น (Debounce 600ms, กัน Phantom Auto-Save)
   const isInitialMount = useRef(true);
   useEffect(() => {
     if (isInitialMount.current) {
       isInitialMount.current = false;
       return;
     }
-    const timer = setTimeout(() => {
-      saveSong(song);
+    if (isHydratingOrLoadingRef.current) return;
+    if (makePersistedSongKey(song) === lastPersistedSongKeyRef.current) return;
+
+    autoSaveTimerRef.current = setTimeout(() => {
+      flushPendingLocalSave(song);
     }, 600);
-    return () => clearTimeout(timer);
-  }, [song]);
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
+    };
+  }, [song, flushPendingLocalSave]);
+
+  // 2b. Flush ข้อมูลค้างก่อนเปลี่ยนแท็บหรือปิดหน้าต่าง
+  useEffect(() => {
+    if (typeof document === 'undefined' || typeof window === 'undefined') return;
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        flushPendingLocalSave();
+      }
+    };
+    const handlePageHide = () => {
+      flushPendingLocalSave();
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pagehide', handlePageHide);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pagehide', handlePageHide);
+    };
+  }, [flushPendingLocalSave]);
 
   // ── Audio Engine (real smplr playback) ──
   const [previewAudioSong, setPreviewAudioSong] = useState<SongProject | null>(null);
   const engine = useAudioEngine(previewAudioSong ?? song);
   const isPlaying = engine.isPlaying;
   const currentBarIndex = engine.activeBarIndex >= 0 ? engine.activeBarIndex : 0;
-  const isCountIn = false; // count-in handled internally by engine
+  const isCountIn = engine.isCountIn;
 
   // Modals state
   const [chordPickerState, setChordPickerState] = useState<{
@@ -325,6 +452,32 @@ export default function Home() {
   const [syncStatus, setSyncStatus] = useState<CloudSyncStatus>('local-only');
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
 
+  const lastCloudSyncedKeyRef = useRef<string>('');
+
+  const handleSyncNow = useCallback(async () => {
+    setSyncStatus('syncing');
+    const current = songRef.current;
+    const saved = getSavedSongs();
+    const localList = saved.some((s) => s.id === current.id)
+      ? saved.map((s) => (s.id === current.id ? current : s))
+      : [current, ...saved];
+    const res = await syncLibraryNow(localList);
+    setSyncStatus(res.status);
+    if (res.syncedAt) setLastSyncedAt(res.syncedAt);
+    if (res.success) {
+      lastCloudSyncedKeyRef.current = makePersistedSongKey(songRef.current);
+    }
+    const updatedActive = res.mergedSongs.find((s) => s.id === songRef.current.id);
+    if (
+      updatedActive &&
+      (Date.parse(updatedActive.updatedAt || '') > Date.parse(songRef.current.updatedAt || '') ||
+        (updatedActive.snapshots?.length ?? 0) > (songRef.current.snapshots?.length ?? 0))
+    ) {
+      selectSongWithVocals(updatedActive);
+    }
+    return { success: res.success, message: res.message };
+  }, [selectSongWithVocals]);
+
   // 1b. โหลดสถานะผู้ใช้ Cloud + รับ Magic Link Hash + จับสถานะ Online/Offline
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -335,7 +488,8 @@ export default function Home() {
       if (!active) return;
       const resolvedUser = callbackUser || getCurrentUser();
       setCloudUser(resolvedUser);
-      setLastSyncedAt(getLastSyncedAt());
+      const savedLastSync = getLastSyncedAt();
+      setLastSyncedAt(savedLastSync);
       setCreditBalance(getCreditBalance());
       if (resolvedUser.mode === 'authenticated') {
         let token = getAuthAccessToken();
@@ -359,7 +513,8 @@ export default function Home() {
       if (!navigator.onLine) {
         setSyncStatus('offline');
       } else if (resolvedUser.mode === 'authenticated' && isCloudConfigured()) {
-        setSyncStatus('synced');
+        setSyncStatus(savedLastSync ? 'synced' : 'local-only');
+        await handleSyncNow();
       } else {
         setSyncStatus('local-only');
       }
@@ -368,7 +523,15 @@ export default function Home() {
 
     const handleOnline = () => {
       const u = getCurrentUser();
-      setSyncStatus(u.mode === 'authenticated' && isCloudConfigured() ? 'synced' : 'local-only');
+      if (u.mode === 'authenticated' && isCloudConfigured()) {
+        if (getCloudConfig().autoSyncEnabled) {
+          void handleSyncNow();
+        } else {
+          setSyncStatus(getLastSyncedAt() ? 'synced' : 'local-only');
+        }
+      } else {
+        setSyncStatus('local-only');
+      }
     };
     const handleOffline = () => setSyncStatus('offline');
     window.addEventListener('online', handleOnline);
@@ -378,23 +541,85 @@ export default function Home() {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, []);
+  }, [handleSyncNow]);
 
-  const handleSyncNow = useCallback(async () => {
-    setSyncStatus('syncing');
-    const saved = getSavedSongs();
-    const localList = saved.some((s) => s.id === song.id)
-      ? saved.map((s) => (s.id === song.id ? song : s))
-      : [song, ...saved];
-    const res = await syncLibraryNow(localList);
-    setSyncStatus(res.status);
-    if (res.syncedAt) setLastSyncedAt(res.syncedAt);
-    const updatedActive = res.mergedSongs.find((s) => s.id === song.id);
-    if (updatedActive && Date.parse(updatedActive.updatedAt || '') > Date.parse(song.updatedAt || '')) {
-      selectSongWithVocals(updatedActive);
+  // 1c. Auto-Sync ขึ้น Cloud เบื้องหลัง (Debounce 3 วินาที) เมื่อ autoSyncEnabled เปิดอยู่
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (cloudUser.mode !== 'authenticated' || !isCloudConfigured()) return;
+    if (!getCloudConfig().autoSyncEnabled) return;
+    if (localSaveState !== 'saved') return;
+    const currentKey = makePersistedSongKey(song);
+    if (!lastCloudSyncedKeyRef.current) {
+      lastCloudSyncedKeyRef.current = currentKey;
+      return;
     }
-    return { success: res.success, message: res.message };
-  }, [song, selectSongWithVocals]);
+    if (currentKey === lastCloudSyncedKeyRef.current) return;
+
+    const timer = setTimeout(() => {
+      if (navigator.onLine && getCloudConfig().autoSyncEnabled) {
+        void handleSyncNow();
+      }
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [cloudUser.mode, localSaveState, lastLocalSavedAt, song, handleSyncNow]);
+
+  const handleManualSave = useCallback(async () => {
+    const ok = flushPendingLocalSave(songRef.current);
+    if (!ok) {
+      setShareToastMsg(
+        lang === 'th'
+          ? '⚠️ บันทึกลงเครื่องไม่สำเร็จ (พื้นที่จัดเก็บอาจเต็ม)'
+          : '⚠️ Failed to save locally (storage may be full)'
+      );
+      return;
+    }
+    if (cloudUser.mode === 'authenticated' && isCloudConfigured()) {
+      setShareToastMsg(
+        lang === 'th'
+          ? '💾 บันทึกลงเครื่องแล้ว กำลังซิงค์ขึ้น Cloud...'
+          : '💾 Saved locally, syncing to cloud...'
+      );
+      const syncRes = await handleSyncNow();
+      setShareToastMsg(
+        syncRes.success
+          ? lang === 'th'
+            ? '💾 บันทึกลงเครื่องและซิงค์ขึ้น Cloud เรียบร้อยแล้ว'
+            : '💾 Saved locally & synced to cloud'
+          : lang === 'th'
+            ? '💾 บันทึกลงเครื่องแล้ว (ซิงค์ Cloud ยังไม่สำเร็จ)'
+            : '💾 Saved locally (cloud sync failed)'
+      );
+      return;
+    }
+    setShareToastMsg(
+      lang === 'th'
+        ? '💾 บันทึกโปรเจกต์ลงเครื่องเรียบร้อยแล้ว (Ctrl+S)'
+        : '💾 Project saved locally (Ctrl+S)'
+    );
+  }, [flushPendingLocalSave, cloudUser.mode, handleSyncNow, lang]);
+
+  const handleSaveCheckpoint = useCallback(() => {
+    const { song: withSnap, snapshot } = addSnapshotToSong(songRef.current);
+    lastPersistedSongKeyRef.current = makePersistedSongKey(withSnap);
+    songRef.current = withSnap;
+    setSong(withSnap);
+    setLocalSaveState('saved');
+    setLastLocalSavedAt(withSnap.updatedAt || new Date().toISOString());
+    setShareToastMsg(
+      lang === 'th'
+        ? `📸 ปักหมุดเวอร์ชัน "${snapshot.name}" เรียบร้อยแล้ว`
+        : `📸 Saved checkpoint "${snapshot.name}"`
+    );
+  }, [lang]);
+
+  const createAutoCheckpointBeforeMutation = useCallback((label: string): SongProject => {
+    const { song: withSnap } = addSnapshotToSong(songRef.current, label);
+    lastPersistedSongKeyRef.current = makePersistedSongKey(withSnap);
+    songRef.current = withSnap;
+    setSong(withSnap);
+    return withSnap;
+  }, []);
 
   // Beat ticker driven by bar timing & synced on every bar change
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -506,27 +731,24 @@ export default function Home() {
     });
   }, []);
 
-  const handleApplyPreset = useCallback((preset: ProgressionPreset) => {
-    setPresetsModalState((presetState) => {
-      const { sectionId } = presetState;
-      updateSongWithHistory((prev) => ({
-        ...prev,
-        sections: prev.sections.map((sec) => {
-          if (sec.id !== sectionId) return sec;
-          const newBars = preset.chords.map((chord, idx) => ({
-            id: `bar-${Date.now()}-${idx}`,
-            chordsPerBar: 1 as const,
-            chords: [chord] as [string],
-            playStyle: 'normal' as const,
-            lyrics: sec.bars[idx] ? sec.bars[idx].lyrics : '',
-            melodyNotes: [],
-          }));
-          return { ...sec, bars: newBars };
-        }),
-      }));
-      return { ...presetState, isOpen: false };
-    });
-  }, [updateSongWithHistory]);
+  const handleApplyPreset = useCallback(
+    (preset: ProgressionPreset) => {
+      const sectionId = presetsModalState.sectionId;
+      if (sectionId) {
+        createAutoCheckpointBeforeMutation('Auto-backup: ก่อนเปลี่ยนสูตรคอร์ด');
+        updateSongWithHistory((prev) => ({
+          ...prev,
+          sections: prev.sections.map((sec) =>
+            sec.id === sectionId
+              ? applyProgressionPresetToSection(sec, preset.chords)
+              : sec
+          ),
+        }));
+      }
+      setPresetsModalState((prev) => ({ ...prev, isOpen: false }));
+    },
+    [presetsModalState.sectionId, createAutoCheckpointBeforeMutation, updateSongWithHistory]
+  );
 
   // Open Mini Piano Roll Modal
   const handleOpenMelodyPianoRoll = useCallback((sectionId: string, barId: string, globalBarIndex: number) => {
@@ -675,6 +897,7 @@ export default function Home() {
       selectedBarIndices?: number[]
     ) => {
       if (lines.length === 0) return;
+      createAutoCheckpointBeforeMutation('Auto-backup: ก่อนใช้เนื้อร้อง AI');
       const allowedIndices = selectedBarIndices
         ? new Set(selectedBarIndices)
         : new Set(lines.map((_, i) => i));
@@ -735,7 +958,24 @@ export default function Home() {
         }),
       }));
     },
-    [updateSongWithHistory]
+    [createAutoCheckpointBeforeMutation, updateSongWithHistory]
+  );
+
+  const handleApplyDirectorSongUpdate = useCallback(
+    (updater: SongProject | ((prev: SongProject) => SongProject)) => {
+      const withCheckpoint = createAutoCheckpointBeforeMutation(
+        'Auto-backup: ก่อนปรับเพลงด้วย AI Director'
+      );
+      updateSongWithHistory((prev) => {
+        const next = typeof updater === 'function' ? updater(prev) : updater;
+        return next.snapshots === undefined ||
+          (withCheckpoint.snapshots &&
+            next.snapshots.length < withCheckpoint.snapshots.length)
+          ? { ...next, snapshots: withCheckpoint.snapshots }
+          : next;
+      });
+    },
+    [createAutoCheckpointBeforeMutation, updateSongWithHistory]
   );
 
   const handleApplySectionVocalAudio = useCallback(
@@ -885,19 +1125,88 @@ export default function Home() {
     setCurrentBeat(1);
   }, [engine]);
 
+  const handleCreateNewSong = useCallback(() => {
+    engine.stop();
+    engine.setLoopRange(null);
+    setPreviewAudioSong(null);
+    const fresh = createDefaultSong();
+    const newSong: SongProject = {
+      ...fresh,
+      id: generateUniqueId('song'),
+      title: lang === 'th' ? 'เพลงใหม่ (Demo)' : 'Untitled Song (Demo)',
+      updatedAt: new Date().toISOString(),
+    };
+    saveSong(newSong, { preserveUpdatedAt: true });
+    selectSongWithVocals(newSong);
+    setActiveSongId(newSong.id);
+    setShareToastMsg(
+      lang === 'th'
+        ? '➕ สร้างโปรเจกต์เพลงใหม่ในคลังเรียบร้อยแล้ว'
+        : '➕ Created a new song project'
+    );
+  }, [engine, lang, selectSongWithVocals]);
+
   const handleApplyEasySong = useCallback(
-    (generatedSong: SongProject, targetView: 'songwriter' | 'arranger') => {
+    (
+      generatedSong: SongProject,
+      targetView: 'songwriter' | 'arranger',
+      applyMode: 'new-song' | 'overwrite-current' = 'new-song'
+    ) => {
       engine.stop();
       engine.setLoopRange(null);
       setPreviewAudioSong(null);
-      updateSongWithHistory(generatedSong);
-      saveSong(generatedSong);
-      setActiveSongId(generatedSong.id);
+
+      if (applyMode === 'overwrite-current') {
+        createAutoCheckpointBeforeMutation('Auto-backup: ก่อนใช้เพลงจาก Easy Mode');
+        const nextOverwritten: SongProject = {
+          ...generatedSong,
+          id: songRef.current.id,
+        };
+        updateSongWithHistory(nextOverwritten);
+        const savedOk = saveSong(songRef.current, { preserveUpdatedAt: true });
+        if (savedOk) {
+          lastPersistedSongKeyRef.current = makePersistedSongKey(songRef.current);
+          setLocalSaveState('saved');
+          setLastLocalSavedAt(songRef.current.updatedAt || new Date().toISOString());
+        } else {
+          setLocalSaveState('error');
+        }
+        setActiveSongId(songRef.current.id);
+      } else {
+        const nextEasySong: SongProject = {
+          ...generatedSong,
+          id: generateUniqueId('song'),
+          updatedAt: new Date().toISOString(),
+        };
+        const savedOk = saveSong(nextEasySong, { preserveUpdatedAt: true });
+        selectSongWithVocals(nextEasySong);
+        if (savedOk) {
+          lastPersistedSongKeyRef.current = makePersistedSongKey(nextEasySong);
+          setLocalSaveState('saved');
+          setLastLocalSavedAt(nextEasySong.updatedAt);
+        } else {
+          setLocalSaveState('error');
+        }
+        setActiveSongId(nextEasySong.id);
+      }
+
       setActiveMode(targetView);
       setIsEasyModalOpen(false);
     },
-    [engine, updateSongWithHistory]
+    [engine, createAutoCheckpointBeforeMutation, updateSongWithHistory, selectSongWithVocals]
   );
+
+  const hasOpenModal =
+    chordPickerState.isOpen ||
+    presetsModalState.isOpen ||
+    melodyModalState.isOpen ||
+    vocalModalState.isOpen ||
+    isExportModalOpen ||
+    isLibraryModalOpen ||
+    isAccountModalOpen ||
+    isEasyModalOpen ||
+    advanceModalState.isOpen ||
+    Boolean(continueStoryTarget);
 
   return (
     <div className="min-h-screen bg-canvas text-ink-900 pb-28 md:pb-20 safe-bottom transition-colors">
@@ -955,6 +1264,8 @@ export default function Home() {
         song={song}
         activeMode={activeMode}
         isPlaying={isPlaying}
+        isLoading={engine.isLoading}
+        hasOpenModal={hasOpenModal}
         currentBarIndex={currentBarIndex}
         currentBeat={currentBeat}
         isCountIn={isCountIn}
@@ -979,6 +1290,8 @@ export default function Home() {
         onToggleZenMode={() => setIsZenMode((prev) => !prev)}
         onOpenAccountModal={() => setIsAccountModalOpen(true)}
         onOpenAdvanceModal={() => handleOpenAdvanceModal()}
+        onOpenEasyMode={() => setIsEasyModalOpen(true)}
+        onCreateNewSong={handleCreateNewSong}
         onOpenExportModal={() => setIsExportModalOpen(true)}
         onOpenLibraryModal={() => setIsLibraryModalOpen(true)}
         onUpdateSong={updateSongWithHistory}
@@ -986,6 +1299,10 @@ export default function Home() {
         canRedo={canRedo}
         onUndo={handleUndo}
         onRedo={handleRedo}
+        localSaveState={localSaveState}
+        lastLocalSavedAt={lastLocalSavedAt}
+        onManualSave={handleManualSave}
+        onSaveCheckpoint={handleSaveCheckpoint}
       />
 
       {/* Main Content Area */}
@@ -994,6 +1311,9 @@ export default function Home() {
         <SoundCustomizerPanel
           song={song}
           isOpen={isSoundPanelOpen}
+          isPlaying={isPlaying}
+          onTogglePlay={handleTogglePlay}
+          onStop={handleStop}
           onUpdateSong={updateSongWithHistory}
           onClose={() => setIsSoundPanelOpen(false)}
         />
@@ -1035,6 +1355,17 @@ export default function Home() {
             onToggleLoopRange={handleToggleLoopRange}
             onPlayBarFromIndex={handlePlayBarFromIndex}
             onPlaySectionOnce={handlePlaySectionOnce}
+            onSeekToBar={(idx) =>
+              engine.isPlaying ? engine.seekToBar(idx) : handlePlayBarFromIndex(idx)
+            }
+            onOpenRhymeDictionary={() =>
+              setAdvanceModalState({
+                isOpen: true,
+                targetSection: null,
+                initialMode: 'quick',
+                initialTab: 'rhyme',
+              })
+            }
             onOpenKaraoke={() => setActiveMode('karaoke')}
             onUpdateSong={updateSongWithHistory}
             onOpenChordPicker={handleOpenChordPicker}
@@ -1079,6 +1410,8 @@ export default function Home() {
         isOpen={chordPickerState.isOpen}
         baseKey={song.baseKey}
         currentChord={chordPickerState.currentChord}
+        song={song}
+        onPreviewChord={engine.previewChord}
         onSelectChord={handleSelectChord}
         onClose={() => setChordPickerState((prev) => ({ ...prev, isOpen: false }))}
       />
@@ -1133,7 +1466,12 @@ export default function Home() {
                 }
               });
             }
+            if (isCloudConfigured()) {
+              void handleSyncNow();
+            }
           } else {
+            lastCloudSyncedKeyRef.current = '';
+            setLastSyncedAt(null);
             setCreditBalance(getCreditBalance());
           }
         }}
@@ -1221,7 +1559,7 @@ export default function Home() {
           onApplyLyrics={handleApplyAiLyrics}
           onApplySectionVocalAudio={handleApplySectionVocalAudio}
           onUpdateSongStyleMeta={handleUpdateSongStyleMeta}
-          onApplySongUpdate={updateSongWithHistory}
+          onApplySongUpdate={handleApplyDirectorSongUpdate}
           onClose={() => setAdvanceModalState((prev) => ({ ...prev, isOpen: false }))}
         />
       )}

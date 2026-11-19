@@ -5,8 +5,10 @@ import {
 } from '@/lib/aiPrompts';
 import {
   callGeminiJson,
+  GEMINI_MODEL_FLASH,
   GEMINI_MODEL_LITE,
   GEMINI_MODEL_MAIN,
+  GEMINI_MODEL_PRO,
   type GeminiTokenUsage,
 } from '@/lib/geminiClient';
 import { CREDIT_COST_TABLE } from '@/lib/creditManager';
@@ -23,6 +25,9 @@ import { parseChord } from '@/lib/chordUtils';
 import type { BarPlayStyle, SongBar, SongProject, SongSection } from '@/types/song';
 
 export const maxDuration = 60;
+
+const VALID_CHORD_REGEX =
+  /^[A-G][#b]?(?:maj7|maj9|m7b5|m7|min7|m9|m6|sus4|sus2|add9|dim7|dim|aug|m|7|9|6|5)?(?:\/[A-G][#b]?)?$/;
 
 export interface AdvanceCohesivePolishResponseBody {
   isSimulated: boolean;
@@ -55,6 +60,19 @@ export async function POST(request: Request): Promise<Response> {
       { status: 400 }
     );
   }
+  if (
+    !rawSong.sections.every((s) =>
+      Boolean(
+        s &&
+          typeof s === 'object' &&
+          typeof s.id === 'string' &&
+          Array.isArray(s.bars) &&
+          s.bars.every((b) => Boolean(b && typeof b === 'object' && Array.isArray(b.chords)))
+      )
+    )
+  ) {
+    return Response.json({ error: 'Invalid song sections' }, { status: 400 });
+  }
 
   const song = rawSong;
   const lyricsRetentionPct =
@@ -71,38 +89,58 @@ export async function POST(request: Request): Promise<Response> {
   const rebalanceBand = typeof obj.rebalanceBand === 'boolean' ? obj.rebalanceBand : true;
 
   const lockedSet = new Set(lockedSectionIds);
-  const unlockedSections = song.sections.filter((s) => !lockedSet.has(s.id));
+  const originalSectionById = new Map<string, SongSection>(
+    song.sections.map((s) => [s.id, s])
+  );
+  const restoreLockedSections = (target: SongProject): SongProject => ({
+    ...target,
+    sections: target.sections.map((sec) =>
+      lockedSet.has(sec.id) ? originalSectionById.get(sec.id) ?? sec : sec
+    ),
+  });
+  const unlockedSections = song.sections.filter(
+    (s) => s && typeof s.id === 'string' && !lockedSet.has(s.id)
+  );
 
   // If 100% retention on both lyrics and chords: 0 credits local polish
   if (lyricsRetentionPct === 100 && chordsRetentionPct === 100) {
     let resultSong = song;
-    if (rebalanceBand) {
+    if (rebalanceBand && resultSong.mixer && typeof resultSong.mixer === 'object') {
       resultSong = applyGenreBandArrangement(resultSong);
     }
-    resultSong = {
+    resultSong = restoreLockedSections({
       ...resultSong,
       sections: resultSong.sections.map((sec) => {
-        if (lockedSet.has(sec.id)) return sec;
+        if (lockedSet.has(sec.id)) return originalSectionById.get(sec.id) ?? sec;
         return {
           ...sec,
-          bars: sec.bars.map((bar, bIdx) => ({
-            ...bar,
-            melodyNotes:
-              sec.type === 'intro'
-                ? []
-                : generateLyricAlignedGuideMelody({
-                    lyrics: bar.lyrics,
-                    chord1: bar.chords[0] || 'C',
-                    chord2: bar.chordsPerBar === 2 ? bar.chords[1] : undefined,
-                    totalSteps: 16,
-                    stepsPerBeat: 4,
-                    barIndex: bIdx,
-                    sectionType: sec.type,
-                  }),
-          })),
+          bars: sec.bars.map((bar, bIdx) => {
+            const safeLyrics = typeof bar.lyrics === 'string' ? bar.lyrics : '';
+            const safeChord1 = typeof bar.chords[0] === 'string' && bar.chords[0].trim() ? bar.chords[0] : 'C';
+            const safeChord2 =
+              bar.chordsPerBar === 2 && typeof bar.chords[1] === 'string' && bar.chords[1].trim()
+                ? bar.chords[1]
+                : undefined;
+            return {
+              ...bar,
+              lyrics: safeLyrics,
+              melodyNotes:
+                sec.type === 'intro'
+                  ? []
+                  : generateLyricAlignedGuideMelody({
+                      lyrics: safeLyrics,
+                      chord1: safeChord1,
+                      chord2: safeChord2,
+                      totalSteps: 16,
+                      stepsPerBeat: 4,
+                      barIndex: bIdx,
+                      sectionType: sec.type,
+                    }),
+            };
+          }),
         };
       }),
-    };
+    });
 
     return Response.json(
       {
@@ -118,23 +156,39 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   // Determine model & credit cost:
+  // Pro Mode (10 Paid Credits): gemini-4-argon
   // <= 3 unlocked sections: gemini-3.5-flash-lite (2 credits)
   // > 3 unlocked sections: gemini-4-hydrogen (3 credits)
+  const useProArgon = obj.useProArgon === true || obj.modelTier === 'pro-argon';
   const isPartial = unlockedSections.length <= 3;
-  const modelToUse = isPartial ? GEMINI_MODEL_LITE : GEMINI_MODEL_MAIN;
-  const cost = isPartial
-    ? CREDIT_COST_TABLE.aiCohesivePolishPartial
-    : CREDIT_COST_TABLE.aiCohesivePolishWhole;
-  const timeoutMs = isPartial ? 18_000 : 32_000;
+  const modelToUse = useProArgon
+    ? GEMINI_MODEL_PRO
+    : isPartial
+      ? GEMINI_MODEL_LITE
+      : GEMINI_MODEL_MAIN;
+  const cost = useProArgon
+    ? CREDIT_COST_TABLE.aiProArgonArranger
+    : isPartial
+      ? CREDIT_COST_TABLE.aiCohesivePolishPartial
+      : CREDIT_COST_TABLE.aiCohesivePolishWhole;
+  const timeoutMs = useProArgon ? 46_000 : isPartial ? 20_000 : 36_000;
+  const maxOutputTokens = useProArgon ? 32768 : isPartial ? 4096 : 8192;
+  const thinkingLevel = useProArgon ? 'medium' : 'low';
+  const fallbackModels = useProArgon
+    ? [GEMINI_MODEL_MAIN, GEMINI_MODEL_FLASH]
+    : isPartial
+      ? [GEMINI_MODEL_FLASH]
+      : [GEMINI_MODEL_FLASH, GEMINI_MODEL_LITE];
 
   let billing: ServerBillingPreDeductResult = { active: false };
+  let billingRefunded = false;
 
   try {
     billing = await tryServerBillingPreDeduct(
       request,
       cost,
       `Cohesive Polish (${modelToUse}): ${song.title?.slice(0, 24) || 'Song'}`,
-      { modelId: modelToUse }
+      { requirePurchased: useProArgon, modelId: modelToUse }
     );
     if (billing.active && 'errorStatus' in billing) {
       return Response.json(
@@ -170,43 +224,53 @@ export async function POST(request: Request): Promise<Response> {
       producerSummary?: string;
     }>(userPrompt, {
       model: modelToUse,
+      fallbackModels,
       systemInstruction,
       responseSchema: COHESIVE_POLISH_RESPONSE_SCHEMA,
-      maxOutputTokens: 3072,
-      thinkingLevel: isPartial ? 'minimal' : 'low',
+      maxOutputTokens,
+      thinkingLevel,
       timeoutMs,
     });
 
     if (!gemini.ok) {
       // Local graceful fallback
       let fallbackSong = song;
-      if (rebalanceBand) {
+      if (rebalanceBand && fallbackSong.mixer && typeof fallbackSong.mixer === 'object') {
         fallbackSong = applyGenreBandArrangement(fallbackSong);
       }
-      fallbackSong = {
+      fallbackSong = restoreLockedSections({
         ...fallbackSong,
         sections: fallbackSong.sections.map((sec) => {
-          if (lockedSet.has(sec.id)) return sec;
+          if (lockedSet.has(sec.id)) return originalSectionById.get(sec.id) ?? sec;
           return {
             ...sec,
-            bars: sec.bars.map((bar, bIdx) => ({
-              ...bar,
-              melodyNotes:
-                sec.type === 'intro'
-                  ? []
-                  : generateLyricAlignedGuideMelody({
-                      lyrics: bar.lyrics,
-                      chord1: bar.chords[0] || 'C',
-                      chord2: bar.chordsPerBar === 2 ? bar.chords[1] : undefined,
-                      totalSteps: 16,
-                      stepsPerBeat: 4,
-                      barIndex: bIdx,
-                      sectionType: sec.type,
-                    }),
-            })),
+            bars: sec.bars.map((bar, bIdx) => {
+              const safeLyrics = typeof bar.lyrics === 'string' ? bar.lyrics : '';
+              const safeChord1 = typeof bar.chords[0] === 'string' && bar.chords[0].trim() ? bar.chords[0] : 'C';
+              const safeChord2 =
+                bar.chordsPerBar === 2 && typeof bar.chords[1] === 'string' && bar.chords[1].trim()
+                  ? bar.chords[1]
+                  : undefined;
+              return {
+                ...bar,
+                lyrics: safeLyrics,
+                melodyNotes:
+                  sec.type === 'intro'
+                    ? []
+                    : generateLyricAlignedGuideMelody({
+                        lyrics: safeLyrics,
+                        chord1: safeChord1,
+                        chord2: safeChord2,
+                        totalSteps: 16,
+                        stepsPerBeat: 4,
+                        barIndex: bIdx,
+                        sectionType: sec.type,
+                      }),
+              };
+            }),
           };
         }),
-      };
+      });
 
       const refundedWallet = await refundServerBillingOnFailure(
         billing,
@@ -214,6 +278,7 @@ export async function POST(request: Request): Promise<Response> {
         `Auto-refund Cohesive Polish (${gemini.reason})`,
         { modelId: modelToUse }
       );
+      billingRefunded = true;
 
       await recordServerFeatureEvent(
         request,
@@ -258,14 +323,19 @@ export async function POST(request: Request): Promise<Response> {
         returnedMapById.set(s.id, s);
       }
     });
+    const unlockedReturnCandidates = returnedSections.filter(
+      (s) => !s?.id || !lockedSet.has(s.id)
+    );
+    let unlockedCursor = 0;
 
-    const mergedSections: SongSection[] = song.sections.map((sec, secIdx) => {
+    const mergedSections: SongSection[] = song.sections.map((sec) => {
       // Rule 1: NEVER modify locked sections
       if (lockedSet.has(sec.id)) {
-        return sec;
+        return originalSectionById.get(sec.id) ?? sec;
       }
 
-      const match = returnedMapById.get(sec.id) ?? returnedSections[secIdx];
+      const unlockedIdx = unlockedCursor++;
+      const match = returnedMapById.get(sec.id) ?? unlockedReturnCandidates[unlockedIdx];
       if (!match || !Array.isArray(match.bars)) {
         return sec;
       }
@@ -275,18 +345,24 @@ export async function POST(request: Request): Promise<Response> {
         if (!pBar) return bar;
 
         let nextLyrics = bar.lyrics;
-        if (typeof pBar.lyrics === 'string') {
-          nextLyrics = pBar.lyrics.trim();
+        if (lyricsRetentionPct !== 100 && typeof pBar.lyrics === 'string') {
+          const trimmedLyric = pBar.lyrics.trim();
+          if (trimmedLyric.length > 0 || !bar.lyrics.trim()) {
+            nextLyrics = trimmedLyric;
+          }
         }
 
         let nextChords = bar.chords;
-        if (Array.isArray(pBar.chords) && pBar.chords.length > 0) {
+        if (chordsRetentionPct !== 100 && Array.isArray(pBar.chords) && pBar.chords.length > 0) {
           const cleaned = pBar.chords
             .filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
             .map((c) => {
-              const parsed = parseChord(c);
-              return parsed.root + parsed.quality;
-            });
+              const trimmed = c.trim();
+              if (!VALID_CHORD_REGEX.test(trimmed)) return '';
+              const parsed = parseChord(trimmed);
+              return parsed.root + parsed.quality + (parsed.bass ? `/${parsed.bass}` : '');
+            })
+            .filter((c) => c.length > 0 && VALID_CHORD_REGEX.test(c));
           if (cleaned.length > 0) {
             nextChords = cleaned.slice(0, 2);
           }
@@ -299,6 +375,7 @@ export async function POST(request: Request): Promise<Response> {
 
         return {
           ...bar,
+          chordsPerBar: (nextChords.length >= 2 ? 2 : 1) as 1 | 2,
           lyrics: nextLyrics,
           chords: nextChords,
           playStyle: nextPlayStyle,
@@ -329,8 +406,10 @@ export async function POST(request: Request): Promise<Response> {
       sections: mergedSections,
     };
 
-    if (rebalanceBand) {
-      polishedSong = applyGenreBandArrangement(polishedSong);
+    if (rebalanceBand && polishedSong.mixer && typeof polishedSong.mixer === 'object') {
+      polishedSong = restoreLockedSections(applyGenreBandArrangement(polishedSong));
+    } else {
+      polishedSong = restoreLockedSections(polishedSong);
     }
 
     await recordServerFeatureEvent(
@@ -374,12 +453,14 @@ export async function POST(request: Request): Promise<Response> {
       .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [REDACTED]');
     console.error('[cohesive-polish] unexpected failure:', safeMsg);
 
-    const refundedWallet = await refundServerBillingOnFailure(
-      billing,
-      cost,
-      'Auto-refund Cohesive Polish (internal-error)',
-      { modelId: modelToUse }
-    );
+    const refundedWallet = !billingRefunded
+      ? await refundServerBillingOnFailure(
+          billing,
+          cost,
+          'Auto-refund Cohesive Polish (internal-error)',
+          { modelId: modelToUse }
+        )
+      : undefined;
 
     return Response.json(
       {

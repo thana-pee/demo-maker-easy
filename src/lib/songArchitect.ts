@@ -546,6 +546,9 @@ export function sanitizeArchitectSongProject(
       ? rawSections.map((sec, idx) => sanitizeSection(sec, preset, input.language, idx))
       : buildSimulatedArchitectSong(input).sections;
 
+  const totalBarSteps = timeSignature === '3/4' || timeSignature === '6/8' ? 12 : 16;
+  const maxBarStep = totalBarSteps - 1;
+
   const sections: SongSection[] = baseSections.map((sec, secIdx) => {
     const isOutroSec = sec.type === 'outro' || secIdx === baseSections.length - 1;
     let prevBarWasBreak = false;
@@ -563,10 +566,24 @@ export function sanitizeArchitectSongProject(
       }
       prevBarWasBreak = nextPlayStyle === 'break';
 
+      const nextMelodyNotes =
+        sec.type === 'intro'
+          ? []
+          : bar.melodyNotes.map((note) => {
+              const safeStep = Math.max(0, Math.min(maxBarStep, Math.round(note.step)));
+              const maxDur = Math.max(1, totalBarSteps - safeStep);
+              const safeDuration = Math.max(1, Math.min(maxDur, Math.round(note.durationSteps)));
+              return {
+                ...note,
+                step: safeStep,
+                durationSteps: safeDuration,
+              };
+            });
+
       return {
         ...bar,
         playStyle: nextPlayStyle,
-        melodyNotes: sec.type === 'intro' ? [] : bar.melodyNotes,
+        melodyNotes: nextMelodyNotes,
       };
     });
 

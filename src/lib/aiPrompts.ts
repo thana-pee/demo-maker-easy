@@ -1327,12 +1327,12 @@ export function buildDirectorSystemPrompt(): string {
     '- guitarModel: "classical-nylon" | "dreadnought-steel" | "ovation-roundback" | "gibson-les-paul"',
     '- ambience3D: "living-room" | "wood-studio" | "unplugged-hall"',
     '- intensity: "low" | "medium" | "high"',
-    '- guitarRhythmStyle: "campfire-strum" | "soft-strum" | "fingerpicking"',
+    '- guitarRhythmStyle: "campfire-strum" | "soft-strum" | "fingerpicking" | "lukthung-bounce" | "rock-power"',
     '- guitarLeadStyle: "melodic-solo" | "riff-fills" | "soft-arpeggio"',
-    '- guitarLeadDrive: "clean" | "crunch" | "overdrive" | "distortion"',
-    '- bassStyle: "root-fifth" | "warm-sustain"',
-    '- pianoStyle: "warm-pad" | "gentle-arpeggio"',
-    '- drumsStyle: "off" | "shaker-cajon" | "simple-kit"',
+    '- guitarLeadDrive: "clean" | "crunch" | "overdrive" | "distortion" | "fuzz"',
+    '- bassStyle: "root-fifth" | "warm-sustain" | "lukthung-groove" | "rnb-syncopated"',
+    '- pianoStyle: "warm-pad" | "gentle-arpeggio" | "rnb-neo-chord" | "rock-organ-pad"',
+    '- drumsStyle: "off" | "shaker-cajon" | "simple-kit" | "lukthung-3cha" | "rnb-pocket" | "rock-drive"',
     '',
     'ตัวอย่าง Golden Few-Shot Patch (อ้างอิงวิธีคิดแบบโปรดิวเซอร์):',
     'ตัวอย่างที่ 1 — คำสั่ง: "อยากได้ฟีล Acoustic อุ่นๆ เหมือนเล่นในร้านกาแฟยามบ่าย"',
@@ -1402,7 +1402,7 @@ export function buildEasyArchitectSystemPrompt(options?: {
     'กฎสำคัญเพิ่มเติมด้านอารมณ์และการแต่ง:',
     '- วาง Emotional Energy Arc ชัดเจน: Intro(2/10) -> Verse(4/10 เล่าภาพเปิดฉาก) -> Pre-Chorus(7/10 บีบอารมณ์และยกโน้ตส่ง) -> Chorus(10/10 หมัดฮุคคำโดน Bar 1 + พีค Bar 3 + ประโยคทอง Bar 4) -> Outro(3->1/10 ปิดอารมณ์ให้ขาดหรือฟูลฟิลสมบูรณ์)',
     `- ทุกท่อนต้องต่อเรื่องราวกันอย่างมีพัฒนาการทางอารมณ์ และเคารพจำนวนพยางค์ตาม BPM/สไตล์ (${budget.guidance})`,
-    '- กฎความกระชับเพื่อการขับร้องจริง (Singable Pacing & Anti-Rush): ในท่อน Verse, Pre-Chorus และ Chorus ต้องเขียนวรรคสั้นกระชับ 4-6 พยางค์ต่อห้อง (ห้ามแต่งประโยคยาว 8-12 พยางค์เด็ดขาด) เพื่อให้ AI Vocal ทอดเสียงร้องลงจังหวะคอร์ดได้ไพเราะ ไม่รัวคำ และมีช่องหายใจท้ายห้องทุกห้อง',
+    `- กฎความกระชับเพื่อการขับร้องจริง (Singable Pacing & Anti-Rush): ในท่อน Verse, Pre-Chorus และ Chorus ต้องคุมจำนวนพยางค์ต่อห้องตามงบของจังหวะและสไตล์ (${budget.min}-${budget.max} พยางค์ต่อห้อง: ${budget.guidance}) เพื่อให้ AI Vocal ทอดเสียงร้องลงจังหวะคอร์ดได้ไพเราะ ไม่รัวคำ และมีช่องหายใจท้ายห้องทุกห้อง`,
     '- บังคับสัมผัสสระ+ตัวสะกดภาษาไทยต่อเนื่องทุกวรรค (ท้ายวรรคเข้าต้น/กลางหรือท้ายวรรคถัดไป) และสลับสระไม่ซ้ำคำลงท้ายเดิมในท่อน Verse, Pre-Chorus, Chorus และ Outro',
     '- กฎความหลากหลายของคีย์ (Key Diversity): หลีกเลี่ยงการตกไปใช้ C หรือ Am ซ้ำทุกเพลง ให้เลือกใช้คีย์ที่เหมาะกับอารมณ์เพลงและโทนเสียงจริง เช่น D, E, F, G, A, Bb, Em, Bm, Dm, F#m พร้อม capoFret (0-5) ที่จับง่ายบนกีตาร์โปร่ง',
     "- กฎการหยุดจังหวะ (playStyle): ห้ามตั้ง playStyle: 'break' ในห้องสุดท้ายของท่อน outro (ต้องใช้ 'let-ring'), ห้องแรกของ intro, และห้ามวาง 'break' ติดกัน 2 ห้องในท่อนที่มีเนื้อร้อง (สำหรับเพลงช้า < 78 BPM ให้ใช้ 'let-ring' แทน 'break' ท้ายท่อนส่งเข้าฮุค เพื่อไม่ให้เกิดช่วงเงียบยาวเกินไป)",
@@ -1456,6 +1456,11 @@ export function buildEasyArchitectUserPrompt(input: {
   const headerLine = hasCustomStructure
     ? `โปรดออกแบบเพลง 1 เพลงเต็มตามโครงสร้างท่อนเพลงที่กำหนด (${input.customStructure!.length} ท่อน):`
     : 'โปรดออกแบบเพลง 1 เพลงเต็ม (5 ท่อน: intro 2 ห้อง, verse 4 ห้อง, pre-chorus 2-4 ห้อง, chorus 4 ห้อง, outro 2 ห้อง):';
+  const budget = getSyllableBudgetForBpm(input.recommendedBpm || 85, '4/4', {
+    sectionType: 'verse',
+    songwriterStyle: input.songwriterStyle,
+    thaiGenre: input.thaiGenre,
+  });
 
   return [
     headerLine,
@@ -1498,8 +1503,8 @@ export function buildEasyArchitectUserPrompt(input: {
     'ข้อบังคับโครงสร้าง:',
     '- ท่อน intro เว้น lyrics เป็น "" และ melodyNotes เป็น [] เพื่อให้ดนตรีเกริ่นนำ ส่วน outro ให้ใส่ประโยคปิดท้ายอารมณ์สั้นๆ ในห้องแรก และใช้ playStyle: "let-ring" ปิดนิ่งในห้องสุดท้าย',
     '- ท่อน pre-chorus ต้องไต่ระดับอารมณ์ส่งเข้าคำแรกของท่อน chorus และท่อน chorus ต้องมีประโยคจำ (Opening Punchline + Signature Payoff Line) ที่ทรงพลังที่สุดในเพลง',
-    "- จำกัดจำนวนคำในทุกห้องของ verse, pre-chorus, chorus ให้สั้นคมเพียง 4-6 พยางค์ต่อห้องเท่านั้น (เช่น 'ใจเธอนั้นเหมือนหิน', 'ดีแค่ไหนก็ไม่มอง') ห้ามเขียนเนื้อร้องยาวติดกันจนร้องรัว",
-    '- ท่อน verse, pre-chorus, chorus ต้องมีทั้งคอร์ด เนื้อร้องที่มีสัมผัสคล้องจองสอดคล้องคำเป็น/คำตาย และ melodyNotes ไกด์ (step 0..15) ที่ร้องได้จริง',
+    `- คุมจำนวนคำในทุกห้องของ verse, pre-chorus, chorus ให้อยู่ในช่วง ${budget.min}-${budget.max} พยางค์ต่อห้อง (${budget.guidance}) ไม่เขียนเนื้อร้องยาวล้นงบจนร้องรัว`,
+    '- ท่อน verse, pre-chorus, chorus ต้องมีทั้งคอร์ดและเนื้อร้องที่มีสัมผัสคล้องจองสอดคล้องคำเป็น/คำตาย (ส่วน melodyNotes ให้ส่ง [] หรือละเว้นไว้เพื่อให้ระบบ Synth ฝั่งแอปสร้างโน้ตไกด์อัตโนมัติ)',
     hasCustomStructure
       ? '- บังคับสร้างท่อนและจำนวนห้องให้ตรงตามโครงสร้างด้านบนเป๊ะ 100%'
       : '',
@@ -1546,6 +1551,7 @@ export function selectPrioritySectionsForPolish<T>(
 /** สร้าง Prompt สำหรับรอบขัดเกลาสัมผัสภาษาไทย (สูงสุด 1 รอบเมื่อ post-validator พบคำไม่คล้องจอง คำซ้ำท้ายวรรค หรือพยางค์ล้น) */
 export function buildRhymePolishPrompt(
   sectionsToFix: Array<{
+    sectionId?: string;
     sectionName: string;
     chords: string[];
     lines: string[];
@@ -1566,7 +1572,7 @@ export function buildRhymePolishPrompt(
   const weakPairNotes = sectionsToFix.flatMap((s) =>
     (s.weakPairs ?? []).map(
       ([fromIdx, toIdx]) =>
-        `- ${s.sectionName}: วรรค ${fromIdx + 1} -> วรรค ${toIdx + 1} ยังไม่รับ-ส่งสัมผัส ให้ปรับคำลงท้ายหรือคำเชื่อมสระ+มาตราให้คล้องกัน`
+        `- ${s.sectionName}${s.sectionId ? ` [${s.sectionId}]` : ''}: วรรค ${fromIdx + 1} -> วรรค ${toIdx + 1} ยังไม่รับ-ส่งสัมผัส ให้ปรับคำลงท้ายหรือคำเชื่อมสระ+มาตราให้คล้องกัน`
     )
   );
   const overflowNotes = sectionsToFix.flatMap((s) =>
@@ -1574,7 +1580,7 @@ export function buildRhymePolishPrompt(
       .filter((b) => b.syllables > b.expectedMax)
       .map(
         (b) =>
-          `- ${s.sectionName} วรรค ${b.barIndex + 1}: มี ${b.syllables} พยางค์ เกินงบ (ควรลดให้ไม่เกิน ${b.expectedMax} พยางค์)`
+          `- ${s.sectionName}${s.sectionId ? ` [${s.sectionId}]` : ''} วรรค ${b.barIndex + 1}: มี ${b.syllables} พยางค์ เกินงบ (ควรลดให้ไม่เกิน ${b.expectedMax} พยางค์)`
       )
   );
   const targetSyllables = '4-6 พยางค์/วรรค (กระชับ ร้องไม่รัว)';
@@ -1592,7 +1598,7 @@ export function buildRhymePolishPrompt(
     '- ตัวอย่างการรับ-ส่งสัมผัสสระ+ตัวสะกดที่ถูกต้อง: วรรค 1 จบ "...ใจ" -> วรรค 2 รับสระ+มาตราเดียวกัน "...ไกล" / "...ไป" | วรรค 3 จบ "...ฝัน" -> วรรค 4 รับ "...วัน" / "...กัน" (ห้ามลงท้ายด้วยคำเดิมซ้ำหรือสระคนละมาตรา)',
     JSON.stringify(sectionsToFix),
     '',
-    'คงความหมายเดิมและจำนวนบรรทัดของแต่ละท่อนไว้ให้ครบตรงตามจำนวนอินพุต แล้วตอบกลับมาในรูปแบบ JSON array `polishedSections`',
+    'คงความหมายเดิม รักษา sectionId และ sectionName เดิม รวมถึงจำนวนบรรทัดของแต่ละท่อนไว้ให้ครบตรงตามจำนวนอินพุต แล้วตอบกลับมาในรูปแบบ JSON array `polishedSections`',
   ].join('\n');
 }
 
@@ -1646,7 +1652,7 @@ export function buildHumToSongSystemPrompt(): string {
     'หลักปฏิบัติ:',
     '1. จับชีพจรจังหวะและการเน้นคำ (pulse & downbeat) จากเสียงฮัมจริงก่อนเลือก BPM และ timeSignature',
     '2. เลือกคอร์ด (chords เช่น ["C"] หรือ ["Am", "F"]) ในแต่ละห้องให้รองรับโน้ตเด่นในจังหวะตก (beat 1 & 3) ของเสียงฮัม และจับง่ายบนกีตาร์โปร่ง',
-    '3. โน้ต melodyNotes ใช้ค่า midiPitch (48-84), step (0-7 สำหรับ 4/4 และ 0-5 สำหรับ 3/4 หรือ 6/8) และ durationSteps (1-8)',
+    '3. โน้ต melodyNotes ใช้ค่า midiPitch (48-84), step (0-15 สำหรับ 4/4 และ 0-11 สำหรับ 3/4 หรือ 6/8) และ durationSteps (1-16)',
     '4. หากผู้ใช้ฮัมเป็นคำ/เนื้อร้อง ให้นำไปเรียบเรียงใน transcribedLyrics และกระจายลงในท่อนเพลง; หากฮัมไม่มีคำ (ฮือ/ลา) ให้สร้างเนื้อร้องไทยที่สละสลวยตรงจังหวะพยางค์ที่ฮัมไว้',
     '5. ระบุความแม่นยำใน confidenceNote อย่างซื่อสัตย์ หากเสียงสั้นหรือมีเสียงรบกวน ให้จัดวางเป็นโครงร่างอะคูสติกที่สะอาดและร้องตามง่าย',
   ].join('\n');
@@ -1958,10 +1964,11 @@ export const RHYME_POLISH_RESPONSE_SCHEMA: Record<string, unknown> = {
   properties: {
     polishedSections: {
       type: 'array',
-      description: 'Polished sections preserving original section names and bar line count',
+      description: 'Polished sections preserving original section ids, names and bar line count',
       items: {
         type: 'object',
         properties: {
+          sectionId: { type: 'string' },
           sectionName: { type: 'string' },
           lines: { type: 'array', items: { type: 'string' } },
         },
@@ -1994,16 +2001,14 @@ export const HUM_TO_SONG_RESPONSE_SCHEMA: Record<string, unknown> = {
           intensity: { type: 'string', enum: ['low', 'medium', 'high'] },
           bars: {
             type: 'array',
-            maxItems: 6,
             items: {
               type: 'object',
               properties: {
                 chords: { type: 'array', items: { type: 'string' } },
                 lyrics: { type: 'string' },
-                playStyle: { type: 'string', enum: ['normal', 'accent', 'mute', 'fermata'] },
+                playStyle: { type: 'string', enum: ['normal', 'let-ring', 'break'] },
                 melodyNotes: {
                   type: 'array',
-                  maxItems: 10,
                   items: {
                     type: 'object',
                     properties: {
@@ -2022,7 +2027,10 @@ export const HUM_TO_SONG_RESPONSE_SCHEMA: Record<string, unknown> = {
         required: ['type', 'name', 'bars'],
       },
     },
-    producerNotes: { type: 'string' },
+    producerNotes: {
+      type: 'array',
+      items: { type: 'string' },
+    },
   },
   required: ['title', 'bpm', 'baseKey', 'timeSignature', 'transcribedLyrics', 'confidenceNote', 'sections', 'producerNotes'],
 };
@@ -2515,6 +2523,11 @@ export function buildCohesivePolishSystemPrompt(options?: {
 }): string {
   const genreNote = options?.thaiGenre ? ` ในแนวเพลง ${options.thaiGenre}` : '';
   const tempoNote = options?.bpm ? ` ที่ความเร็ว ${options.bpm} BPM` : '';
+  const budget = getSyllableBudgetForBpm(options?.bpm ?? 85, options?.timeSignature ?? '4/4', {
+    sectionType: 'verse',
+    songwriterStyle: options?.songwriterStyle,
+    thaiGenre: options?.thaiGenre,
+  });
 
   return [
     `คุณคือ "Chief Executive Music Producer & Whole-Song Polish Editor" เชี่ยวชาญการเกลาคำร้อง เชื่อมสัมผัสภาษาไทย และทางคอร์ดให้เพลงทั้งเพลงฟังดูเป็นเนื้อเดียวกันอย่างกลมกล่อม${genreNote}${tempoNote}`,
@@ -2532,7 +2545,7 @@ export function buildCohesivePolishSystemPrompt(options?: {
     '4. ความต่อเนื่องของเรื่องราวและสัมผัสคำ (Narrative & Rhyme Flow):',
     '   - ท่อนที่เพิ่งเพิ่มเข้ามาหรือท่อนที่ไม่ได้ล็อก ต้องเชื่อมคำร้องและอารมณ์ให้ไหลลื่นต่อเนื่องกับท่อนข้างเคียง ไม่หลุดโทน',
     '   - สัมผัสคำท้ายวรรคต้องส่งถึงคำแรกๆ หรือคำท้ายของวรรคถัดไปตามหลักฉันทลักษณ์เพลงไทย',
-    '5. กฎความกระชับ (Singable Pacing): รักษาจำนวนพยางค์ 4-6 พยางค์ต่อห้อง ไม่เขียนยาวรัวเกินไป และเว้นจังหวะหายใจ',
+    `5. กฎความกระชับ (Singable Pacing): รักษาจำนวนพยางค์ ${budget.min}-${budget.max} พยางค์ต่อห้อง (${budget.guidance}) ไม่เขียนยาวรัวเกินไป และเว้นจังหวะหายใจ`,
     '6. ตอบกลับเป็น JSON ตาม Schema ที่กำหนดเท่านั้น ห้ามใช้ Markdown ครอบรอบนอก',
   ].join('\n');
 }

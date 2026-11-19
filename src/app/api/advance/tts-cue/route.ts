@@ -9,6 +9,7 @@ import {
 import {
   refundServerBillingOnFailure,
   tryServerBillingPreDeduct,
+  type ServerBillingPreDeductResult,
   type WalletBalanceSummary,
 } from '@/lib/serverWallet';
 import { recordServerFeatureEvent } from '@/lib/serverAnalytics';
@@ -78,8 +79,14 @@ export async function POST(request: Request): Promise<Response> {
   const bpm = Math.max(50, Math.min(180, rawBpm));
   const includeCountIn = Boolean(obj.includeCountIn);
   const voice = typeof obj.voice === 'string' && obj.voice.trim() ? obj.voice.trim() : 'Kore';
-  const requestedModel = obj.modelTier === 'pro-tts' ? GEMINI_MODEL_TTS : GEMINI_MODEL_TTS_LITE;
   const vocalMode = obj.vocalMode === 'singing-demo' ? 'singing-demo' : 'guide';
+  const containsThai = /[ก-๙]/.test(rawText);
+  const requiresProTts =
+    obj.modelTier === 'pro-tts' ||
+    vocalMode === 'singing-demo' ||
+    language === 'th' ||
+    containsThai;
+  const requestedModel = requiresProTts ? GEMINI_MODEL_TTS : GEMINI_MODEL_TTS_LITE;
   const thaiGenre = typeof obj.thaiGenre === 'string' ? obj.thaiGenre.trim() : '';
   const sectionType = typeof obj.sectionType === 'string' ? obj.sectionType.trim() : '';
   const baseKey = typeof obj.baseKey === 'string' ? obj.baseKey.trim() : '';
@@ -108,44 +115,91 @@ export async function POST(request: Request): Promise<Response> {
   });
 
   const ttsCost = CREDIT_COST_TABLE.aiTtsCue;
-  const billing = await tryServerBillingPreDeduct(
-    request,
-    ttsCost,
-    `TTS Cue (${requestedModel}): ${rawText.slice(0, 24)}`,
-    { modelId: requestedModel }
-  );
-  if (billing.active && 'errorStatus' in billing) {
-    return Response.json(
-      { error: billing.error, code: billing.errorCode },
-      { status: billing.errorStatus }
-    );
-  }
+  let billing: ServerBillingPreDeductResult = { active: false };
+  let billingRefunded = false;
 
-  const ttsResult = await callGeminiTtsAudio(spokenText, {
-    model: requestedModel,
-    voice,
-    language: language === 'en' ? 'en-US' : 'th-TH',
-    styleHint,
-  });
-
-  if (!ttsResult.ok) {
-    let tip: string;
-    if (ttsResult.reason === 'missing-key') {
-      tip = 'โหมดจำลองเสียงไกด์ TTS (ยังไม่ได้ตั้งค่า GEMINI_API_KEY บนเซิร์ฟเวอร์) — ใช้เสียงอ่านในเบราว์เซอร์แทนโดยไม่หัก 2 เครดิต';
-    } else if (ttsResult.reason === 'rate-limit') {
-      tip = 'โควตาคำขอ Gemini API เต็มชั่วคราว (429) — ใช้เสียงอ่านในเบราว์เซอร์แทนโดยไม่หัก 2 เครดิต';
-    } else if (ttsResult.reason === 'auth-error') {
-      tip = 'GEMINI_API_KEY ไม่ถูกต้องหรือไม่มีสิทธิ์เข้าถึง TTS — ใช้เสียงอ่านในเบราว์เซอร์แทนโดยไม่หัก 2 เครดิต';
-    } else {
-      tip = `${ttsResult.failureReason} — ใช้เสียงอ่านในเบราว์เซอร์แทนโดยไม่หัก 2 เครดิต`;
-    }
-
-    const refundedWallet = await refundServerBillingOnFailure(
-      billing,
+  try {
+    billing = await tryServerBillingPreDeduct(
+      request,
       ttsCost,
-      `Auto-refund TTS Cue (${ttsResult.reason})`,
+      `TTS Cue (${requestedModel}): ${rawText.slice(0, 24)}`,
       { modelId: requestedModel }
     );
+    if (billing.active && 'errorStatus' in billing) {
+      return Response.json(
+        { error: billing.error, code: billing.errorCode },
+        { status: billing.errorStatus }
+      );
+    }
+
+    const ttsResult = await callGeminiTtsAudio(spokenText, {
+      model: requestedModel,
+      voice,
+      language: language === 'en' ? 'en-US' : 'th-TH',
+      styleHint,
+      timeoutMs: 35_000,
+    });
+
+    if (!ttsResult.ok) {
+      let tip: string;
+      if (ttsResult.reason === 'missing-key') {
+        tip = 'โหมดจำลองเสียงไกด์ TTS (ยังไม่ได้ตั้งค่า GEMINI_API_KEY บนเซิร์ฟเวอร์) — ใช้เสียงอ่านในเบราว์เซอร์แทนโดยไม่หัก 2 เครดิต';
+      } else if (ttsResult.reason === 'rate-limit') {
+        tip = 'โควตาคำขอ Gemini API เต็มชั่วคราว (429) — ใช้เสียงอ่านในเบราว์เซอร์แทนโดยไม่หัก 2 เครดิต';
+      } else if (ttsResult.reason === 'auth-error') {
+        tip = 'GEMINI_API_KEY ไม่ถูกต้องหรือไม่มีสิทธิ์เข้าถึง TTS — ใช้เสียงอ่านในเบราว์เซอร์แทนโดยไม่หัก 2 เครดิต';
+      } else {
+        tip = `${ttsResult.failureReason} — ใช้เสียงอ่านในเบราว์เซอร์แทนโดยไม่หัก 2 เครดิต`;
+      }
+
+      const refundedWallet = await refundServerBillingOnFailure(
+        billing,
+        ttsCost,
+        `Auto-refund TTS Cue (${ttsResult.reason})`,
+        { modelId: requestedModel }
+      );
+      billingRefunded = true;
+
+      await recordServerFeatureEvent(
+        request,
+        {
+          eventName: 'ai_tts_vocal_cue',
+          category: 'ai',
+          songwriterStyle: typeof obj.songwriterStyle === 'string' ? obj.songwriterStyle : undefined,
+          thaiGenre,
+          featureVariant: vocalMode,
+          isSimulated: true,
+          creditsCost: 0,
+          metadata: {
+            model: requestedModel,
+            vocalMode,
+            language,
+            voice,
+            reason: ttsResult.reason,
+          },
+        },
+        {
+          userId: billing.active && 'userId' in billing ? billing.userId : undefined,
+          skipAuthLookup: billing.active,
+        }
+      );
+
+      return Response.json(
+        {
+          isSimulated: true,
+          model: 'browser-speech-fallback',
+          cueText: spokenText,
+          audioDataUrl: null,
+          mimeType: null,
+          tip,
+          ...(refundedWallet ? { wallet: refundedWallet } : {}),
+          failureReason: ttsResult.reason,
+        } satisfies TtsCueResponseBody,
+        { status: 200 }
+      );
+    }
+
+    const audioDataUrl = `data:${ttsResult.mimeType};base64,${ttsResult.audioBase64}`;
 
     await recordServerFeatureEvent(
       request,
@@ -155,14 +209,13 @@ export async function POST(request: Request): Promise<Response> {
         songwriterStyle: typeof obj.songwriterStyle === 'string' ? obj.songwriterStyle : undefined,
         thaiGenre,
         featureVariant: vocalMode,
-        isSimulated: true,
-        creditsCost: 0,
+        isSimulated: false,
+        creditsCost: ttsCost,
         metadata: {
           model: requestedModel,
           vocalMode,
           language,
           voice,
-          reason: ttsResult.reason,
         },
       },
       {
@@ -173,55 +226,42 @@ export async function POST(request: Request): Promise<Response> {
 
     return Response.json(
       {
-        isSimulated: true,
-        model: 'browser-speech-fallback',
+        isSimulated: false,
+        model: ttsResult.modelUsed,
         cueText: spokenText,
-        audioDataUrl: null,
-        mimeType: null,
-        tip,
-        ...(refundedWallet ? { wallet: refundedWallet } : {}),
-        failureReason: ttsResult.reason,
+        audioDataUrl,
+        mimeType: ttsResult.mimeType,
+        tip: `สร้างเสียงไกด์แบ่งจังหวะ (${bpm} BPM) ด้วย ${ttsResult.modelUsed} สำเร็จแล้ว`,
+        usage: ttsResult.usage,
+        ...(billing.active ? { wallet: billing.wallet } : {}),
       } satisfies TtsCueResponseBody,
       { status: 200 }
     );
-  }
+  } catch (err) {
+    const rawMsg = err instanceof Error ? err.message : String(err);
+    const safeMsg = rawMsg
+      .replace(/AIza[A-Za-z0-9_-]{8,}/g, '[REDACTED]')
+      .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [REDACTED]');
+    console.error('[tts-cue] unexpected failure:', safeMsg);
 
-  const audioDataUrl = `data:${ttsResult.mimeType};base64,${ttsResult.audioBase64}`;
+    const refundedWallet = !billingRefunded
+      ? await refundServerBillingOnFailure(
+          billing,
+          ttsCost,
+          'Auto-refund TTS Cue (internal-error)',
+          { modelId: requestedModel }
+        )
+      : undefined;
 
-  await recordServerFeatureEvent(
-    request,
-    {
-      eventName: 'ai_tts_vocal_cue',
-      category: 'ai',
-      songwriterStyle: typeof obj.songwriterStyle === 'string' ? obj.songwriterStyle : undefined,
-      thaiGenre,
-      featureVariant: vocalMode,
-      isSimulated: false,
-      creditsCost: ttsCost,
-      metadata: {
-        model: requestedModel,
-        vocalMode,
-        language,
-        voice,
+    return Response.json(
+      {
+        error: refundedWallet
+          ? `เซิร์ฟเวอร์ขัดข้องชั่วคราวระหว่างสร้างเสียงไกด์ (คืน ${ttsCost} เครดิตให้แล้วอัตโนมัติ)`
+          : 'เซิร์ฟเวอร์ขัดข้องชั่วคราวระหว่างสร้างเสียงไกด์ (ไม่หักเครดิต) กรุณาลองใหม่อีกครั้ง',
+        code: 'TTS_CUE_INTERNAL_ERROR',
+        ...(refundedWallet ? { wallet: refundedWallet } : {}),
       },
-    },
-    {
-      userId: billing.active && 'userId' in billing ? billing.userId : undefined,
-      skipAuthLookup: billing.active,
-    }
-  );
-
-  return Response.json(
-    {
-      isSimulated: false,
-      model: ttsResult.modelUsed,
-      cueText: spokenText,
-      audioDataUrl,
-      mimeType: ttsResult.mimeType,
-      tip: `สร้างเสียงไกด์แบ่งจังหวะ (${bpm} BPM) ด้วย ${ttsResult.modelUsed} สำเร็จแล้ว`,
-      usage: ttsResult.usage,
-      ...(billing.active ? { wallet: billing.wallet } : {}),
-    } satisfies TtsCueResponseBody,
-    { status: 200 }
-  );
+      { status: 500 }
+    );
+  }
 }

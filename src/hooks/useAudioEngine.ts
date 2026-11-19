@@ -22,6 +22,8 @@ export interface AudioEngineHookResult {
   isLoading: boolean;
   isReady: boolean;
   isPlaying: boolean;
+  isCountIn: boolean;
+  metronomeEnabled: boolean;
   loadProgress: number;
   activeBarIndex: number;
   loopRange: LoopRange | null;
@@ -32,6 +34,8 @@ export interface AudioEngineHookResult {
   seekToBar: (index: number) => void;
   initEngine: () => Promise<void>;
   setLoopRange: (range: LoopRange | null) => void;
+  setMetronomeEnabled: (enabled: boolean) => void;
+  previewChord: (chordSymbol: string) => void;
   setMixerVolume: (track: TrackId | 'vocal', vol: number) => void;
   setLeadDrive: (drive: LeadGuitarDrive) => void;
   setVocalFxPreset: (preset: VocalFxPreset) => void;
@@ -118,6 +122,7 @@ export function useAudioEngine(song: SongProject): AudioEngineHookResult {
     }
     eng.setGuitarAcoustics(song.guitarModel, song.stringGauge);
     eng.setAmbience3D(song.ambience3D || 'wood-studio');
+    eng.setMetronomeEnabled(Boolean(song.metronomeEnabled));
     eng.updateSong(song);
   }, [song]);
 
@@ -191,10 +196,27 @@ export function useAudioEngine(song: SongProject): AudioEngineHookResult {
     }
   }, []);
 
+  const setMetronomeEnabled = useCallback((enabled: boolean) => {
+    if (engineRef.current) {
+      engineRef.current.setMetronomeEnabled(enabled);
+    } else {
+      setStatus((s) => ({ ...s, metronomeEnabled: enabled }));
+    }
+  }, []);
+
+  const previewChord = useCallback(
+    (chordSymbol: string) => {
+      engineRef.current?.previewChord(chordSymbol, song);
+    },
+    [song]
+  );
+
   return {
     isLoading:      status.state === 'loading',
     isReady:        status.state === 'ready' || status.state === 'playing',
     isPlaying:      status.state === 'playing',
+    isCountIn:      Boolean(status.isCountIn),
+    metronomeEnabled: Boolean(status.metronomeEnabled ?? song.metronomeEnabled),
     loadProgress:   status.loadProgress,
     activeBarIndex: status.activeBarIndex,
     loopRange:      status.loopRange ?? null,
@@ -205,6 +227,8 @@ export function useAudioEngine(song: SongProject): AudioEngineHookResult {
     seekToBar,
     initEngine,
     setLoopRange,
+    setMetronomeEnabled,
+    previewChord,
     setMixerVolume,
     setLeadDrive,
     setVocalFxPreset,

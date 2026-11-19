@@ -79,6 +79,7 @@ import {
 import { trimAudioDataUrlLeadingSilence } from '@/lib/audioTrim';
 import { addAndActivateVocalTake, formatNextTakeName } from '@/lib/vocalBoothUtils';
 import { makeVocalTakeBlobKey, saveVocalBlob } from '@/lib/audioStorageIdb';
+import { addSnapshotToSong } from '@/lib/storage';
 import { playAudioDataUrl } from '@/lib/micRecorder';
 import {
   analyzeThaiSyllablePhonetics,
@@ -119,6 +120,8 @@ interface SectionBuilderProps {
   onToggleLoopRange?: (range: LoopRange | null) => void;
   onPlayBarFromIndex?: (globalBarIndex: number, songOverride?: SongProject) => void;
   onPlaySectionOnce?: (startBar: number, endBar: number, songOverride?: SongProject) => void;
+  onSeekToBar?: (globalBarIndex: number) => void;
+  onOpenRhymeDictionary?: () => void;
   onOpenKaraoke?: () => void;
   onCreditsChange?: (newBalance: number) => void;
   onOpenWallet?: () => void;
@@ -217,11 +220,15 @@ export function SectionBuilder({
   onToggleLoopRange,
   onPlayBarFromIndex,
   onPlaySectionOnce,
+  onSeekToBar,
+  onOpenRhymeDictionary,
   onOpenKaraoke,
   onCreditsChange,
   onOpenWallet,
 }: SectionBuilderProps) {
   const { t, lang } = useLanguage();
+  const [focusedBarId, setFocusedBarId] = useState<string | null>(null);
+  const [showAllBarTools, setShowAllBarTools] = useState(false);
   const [expandedInstrumentPanels, setExpandedInstrumentPanels] = useState<
     Record<string, boolean>
   >({});
@@ -1470,6 +1477,51 @@ export function SectionBuilder({
             </span>
           </button>
 
+          {onOpenRhymeDictionary && (
+            <button
+              type="button"
+              onClick={onOpenRhymeDictionary}
+              title={
+                lang === 'th'
+                  ? 'เปิดพจนานุกรมสัมผัสคำไทย 49 มาตราตัวสะกด (ฟรี 0 เครดิต)'
+                  : 'Open Thai Phonology & Rhyme Dictionary (Free 0 Cr)'
+              }
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 text-xs font-semibold transition cursor-pointer"
+            >
+              <span>
+                {lang === 'th'
+                  ? '📖 พจนานุกรมสัมผัสไทย (ฟรี 0 Cr)'
+                  : '📖 Thai Rhymes (0 Cr)'}
+              </span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setShowAllBarTools((cur) => !cur)}
+            aria-pressed={showAllBarTools}
+            title={
+              lang === 'th'
+                ? 'แสดงหรือซ่อนเครื่องมือแต่งคำร้อง/อารมณ์คอร์ดครบทุกห้องพร้อมกัน'
+                : 'Expand or collapse bar writing tools across all bars'
+            }
+            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-semibold transition cursor-pointer ${
+              showAllBarTools
+                ? 'bg-accent-50 border-accent-500 text-accent-text'
+                : 'bg-surface-2 border-hairline text-ink-700 hover:bg-surface-inset'
+            }`}
+          >
+            <span>
+              {showAllBarTools
+                ? lang === 'th'
+                  ? '🛠️ ซ่อนเครื่องมือรายห้อง'
+                  : '🛠️ Hide All Bar Tools'
+                : lang === 'th'
+                  ? '🛠️ แสดงเครื่องมือทุกห้อง'
+                  : '🛠️ Show All Bar Tools'}
+            </span>
+          </button>
+
           <button
             type="button"
             onClick={() => setIsCohesivePolishOpen(true)}
@@ -1879,8 +1931,35 @@ export function SectionBuilder({
                   )}
                 </div>
 
-                {/* Max 3 Primary Ghost Actions + Overflow ⋯ Menu */}
-                <div className="flex items-center gap-1.5 shrink-0 relative" data-studio-menu-root>
+                {/* Primary Free Tools + AI Menu + Transport Section Actions */}
+                <div className="flex flex-wrap items-center gap-1.5 shrink-0 relative" data-studio-menu-root>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOpenInlineAiSectionId(null);
+                      setSplitLyricsState({
+                        sectionId: section.id,
+                        rawText: section.bars
+                          .map((b) => b.lyrics)
+                          .filter(Boolean)
+                          .join('\n'),
+                      });
+                    }}
+                    title={
+                      lang === 'th'
+                        ? 'วางเนื้อร้องยาวๆ เพื่อตัดแบ่งลงห้องอัตโนมัติ (ฟรี 0 เครดิต)'
+                        : 'Paste full lyrics and split across bars automatically (0 Cr)'
+                    }
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 text-xs font-medium transition cursor-pointer"
+                  >
+                    <Scissors className="w-3.5 h-3.5" />
+                    <span>
+                      {lang === 'th'
+                        ? '📋 วางเนื้อร้องแบ่งห้อง (ฟรี 0 Cr)'
+                        : '📋 Paste Split (0 Cr)'}
+                    </span>
+                  </button>
+
                   {(onOpenInlineAiSection || onOpenAdvanceForSection) && (
                     <div className="relative">
                       <button
@@ -2001,8 +2080,8 @@ export function SectionBuilder({
                     }`}
                   >
                     <FileText className="w-3.5 h-3.5" />
-                    <span className="hidden lg:inline">
-                      {lang === 'th' ? '📝 แก้แบบแผ่นเดียว' : '📝 Sheet'}
+                    <span className="inline">
+                      {lang === 'th' ? '📝 แผ่นเดียว' : '📝 Sheet'}
                     </span>
                   </button>
 
@@ -2020,7 +2099,7 @@ export function SectionBuilder({
                       className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-emerald-200 bg-emerald-50 hover:bg-emerald-600 hover:text-white text-emerald-800 text-xs font-medium transition cursor-pointer"
                     >
                       <Play className="w-3.5 h-3.5" />
-                      <span className="hidden md:inline">
+                      <span className="inline">
                         {lang === 'th' ? '▶ เล่นท่อนนี้' : '▶ Play Section'}
                       </span>
                     </button>
@@ -2063,7 +2142,7 @@ export function SectionBuilder({
                       }`}
                     >
                       <Repeat className="w-3.5 h-3.5" />
-                      <span className="hidden md:inline">
+                      <span className="inline">
                         {lang === 'th' ? '🔁 ลูปท่อนนี้' : '🔁 Loop'}
                       </span>
                     </button>
@@ -3063,11 +3142,20 @@ export function SectionBuilder({
                   const noteCount = bar.melodyNotes?.length || 0;
                   const hasVocal = Boolean(bar.vocalAudio);
                   const isBarPopoverOpen = openBarPopoverId === bar.id;
+                  const barToolsVisible =
+                    showAllBarTools ||
+                    focusedBarId === bar.id ||
+                    isActive ||
+                    isRhymeOpen ||
+                    openVariationBarId === bar.id ||
+                    isBarPopoverOpen;
 
                   return (
                     <div
                       key={bar.id}
                       ref={isActive ? activeBarRef : null}
+                      onClick={() => setFocusedBarId(bar.id)}
+                      onFocusCapture={() => setFocusedBarId(bar.id)}
                       className={`group relative rounded-2xl border p-3.5 flex flex-col gap-2.5 transition-all ${
                         isActive
                           ? 'bg-accent-50/70 border-accent-500 ring-2 ring-accent-200 shadow-e2'
@@ -3076,14 +3164,39 @@ export function SectionBuilder({
                     >
                       {/* Bar Header */}
                       <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={`text-xs font-mono-tabular font-semibold ${
-                              isActive ? 'text-accent-text' : 'text-ink-400'
-                            }`}
-                          >
-                            {t.barLabel} {thisGlobalIndex + 1}
-                          </span>
+                        <div className="flex items-center gap-1.5">
+                          {onSeekToBar || onPlayBarFromIndex ? (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setFocusedBarId(bar.id);
+                                if (onSeekToBar) {
+                                  onSeekToBar(thisGlobalIndex);
+                                } else {
+                                  onPlayBarFromIndex?.(thisGlobalIndex, song);
+                                }
+                              }}
+                              title={
+                                lang === 'th'
+                                  ? `คลิกเพื่อกระโดดไปเล่นห้องที่ ${thisGlobalIndex + 1}`
+                                  : `Jump playback to Bar ${thisGlobalIndex + 1}`
+                              }
+                              className={`text-xs font-mono-tabular font-semibold px-1.5 py-0.5 rounded-md transition cursor-pointer hover:bg-accent-50 hover:text-accent-text ${
+                                isActive ? 'text-accent-text bg-accent-50' : 'text-ink-400'
+                              }`}
+                            >
+                              {t.barLabel} {thisGlobalIndex + 1}
+                            </button>
+                          ) : (
+                            <span
+                              className={`text-xs font-mono-tabular font-semibold ${
+                                isActive ? 'text-accent-text' : 'text-ink-400'
+                              }`}
+                            >
+                              {t.barLabel} {thisGlobalIndex + 1}
+                            </span>
+                          )}
                           {bar.playStyle !== 'normal' && (
                             <span className="px-1.5 py-0.5 rounded bg-surface-2 border border-hairline text-[10px] font-medium text-ink-700">
                               {bar.playStyle === 'let-ring'
@@ -3093,7 +3206,29 @@ export function SectionBuilder({
                           )}
                         </div>
 
-                        {isArranger ? (
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setFocusedBarId((cur) => (cur === bar.id ? null : bar.id));
+                            }}
+                            aria-expanded={barToolsVisible}
+                            title={
+                              lang === 'th'
+                                ? 'แสดง/ซ่อนเครื่องมือแต่งคำร้องในห้องนี้'
+                                : 'Toggle writing tools for this bar'
+                            }
+                            className={`px-1.5 py-0.5 rounded-md border text-[10px] font-medium transition cursor-pointer ${
+                              barToolsVisible
+                                ? 'bg-accent-50 border-accent-200 text-accent-text'
+                                : 'bg-surface-1 border-hairline text-ink-400 hover:text-ink-900'
+                            }`}
+                          >
+                            🛠️ {barToolsVisible ? (lang === 'th' ? 'ซ่อน' : 'Less') : (lang === 'th' ? 'เครื่องมือ' : 'Tools')}
+                          </button>
+
+                          {isArranger ? (
                           <div className="flex items-center gap-1">
                             <button
                               type="button"
@@ -3210,6 +3345,7 @@ export function SectionBuilder({
                             )}
                           </div>
                         )}
+                        </div>
                       </div>
 
                       {/* Chord Slot(s) */}
@@ -3260,7 +3396,7 @@ export function SectionBuilder({
                                 </div>
                                 <ChevronDown className="w-3.5 h-3.5 text-ink-400 group-hover/chord:text-accent-text shrink-0 ml-1" />
                               </button>
-                              {chordMoodHint && (
+                              {barToolsVisible && chordMoodHint && (
                                 <span
                                   title={chordMoodHint}
                                   className="inline-flex items-center max-w-full px-1.5 py-0.5 rounded-md bg-accent-50/70 border border-accent-200/70 text-[10px] text-accent-text font-medium truncate"
@@ -3284,7 +3420,8 @@ export function SectionBuilder({
                         className="w-full bg-surface-1 border border-hairline rounded-xl px-3 py-2 text-[15px] leading-relaxed text-ink-900 placeholder:text-ink-400 focus:outline-none focus:border-accent-500 focus:ring-2 focus:ring-accent-200 resize-none overflow-hidden transition"
                       />
 
-                      {/* Ending Syllable Phonology + Inline Previous-Bar Rhyme Helper + 3-Variations */}
+                      {/* Ending Syllable Phonology + Inline Previous-Bar Rhyme Helper + 3-Variations (Progressive Disclosure) */}
+                      {barToolsVisible && (
                       <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
                         {barPhonetics && (
                           <span
@@ -3382,6 +3519,7 @@ export function SectionBuilder({
                           </span>
                         </button>
                       </div>
+                      )}
 
                       {isRhymeOpen && prevBar && prevPhonetics && (
                         <div className="rounded-xl bg-surface-1 border border-accent-200 p-2 shadow-sm space-y-1.5 text-[11px]">
@@ -3638,7 +3776,7 @@ export function SectionBuilder({
                               }`}
                             >
                               <Repeat className="w-3 h-3" />
-                              <span className="hidden sm:inline">
+                              <span className="inline">
                                 {lang === 'th' ? '🔁 ลูปห้องนี้' : 'Loop'}
                               </span>
                             </button>
@@ -3667,7 +3805,6 @@ export function SectionBuilder({
                                   );
                                   updatedSongForPlayback = {
                                     ...song,
-                                    updatedAt: new Date().toISOString(),
                                     sections: song.sections.map((s) =>
                                       s.id === section.id
                                         ? {
@@ -3681,7 +3818,6 @@ export function SectionBuilder({
                                         : s
                                     ),
                                   };
-                                  onUpdateSong(() => updatedSongForPlayback);
                                 }
                                 onToggleLoopRange?.({
                                   startBar: thisGlobalIndex,
@@ -3694,8 +3830,8 @@ export function SectionBuilder({
                               }}
                               title={
                                 lang === 'th'
-                                  ? 'สร้างไกด์เมโลดี้ตามพยางค์และเปิดลูปฟังจังหวะคำร้องทันที (0 เครดิต)'
-                                  : 'Preview syllable rhythm guide loop (0 credits)'
+                                  ? 'พรีวิวฟังจังหวะคำร้องตามพยางค์ชั่วคราว (ไม่แก้ไฟล์เพลง · 0 เครดิต)'
+                                  : 'Preview syllable rhythm guide loop without mutating song (0 credits)'
                               }
                               className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium border border-emerald-200 bg-emerald-50 hover:bg-emerald-600 hover:text-white text-emerald-700 transition cursor-pointer"
                             >
@@ -3840,7 +3976,16 @@ export function SectionBuilder({
         song={song}
         creditBalance={getCreditBalance()}
         onClose={() => setIsCohesivePolishOpen(false)}
-        onApplySong={(updatedSong) => onUpdateSong(() => updatedSong)}
+        onApplySong={(updatedSong) => {
+          const { song: withSnap } = addSnapshotToSong(
+            song,
+            'Auto-backup: ก่อนเกลาทั้งเพลง (Cohesive Polish)'
+          );
+          onUpdateSong(() => ({
+            ...updatedSong,
+            snapshots: withSnap.snapshots,
+          }));
+        }}
         onCreditsChange={onCreditsChange}
         onOpenWallet={onOpenWallet}
       />

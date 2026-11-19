@@ -9,6 +9,11 @@ export interface Translations {
   appShortName: string;
   appDescription: string;
   autoSaved: string;
+  saveStateSaving: string;
+  saveStateSaved: string;
+  saveStateError: string;
+  manualSaveBtn: string;
+  saveCheckpointBtn: string;
   audioEngineBadge: string;
   close: string;
   cancel: string;
@@ -159,6 +164,11 @@ export const translations: Record<Language, Translations> = {
     appShortName: 'Demo Maker',
     appDescription: 'เว็บแอปสตูดิโอแต่งเพลงอะคูสติก 3D พร้อมโหมดคาราโอเกะสำหรับ iPad และแท็บเล็ต',
     autoSaved: 'บันทึกอัตโนมัติแล้ว',
+    saveStateSaving: 'รอ/กำลังบันทึก...',
+    saveStateSaved: 'บันทึกแล้ว',
+    saveStateError: 'บันทึกไม่สำเร็จ (พื้นที่เต็ม?)',
+    manualSaveBtn: 'บันทึก',
+    saveCheckpointBtn: 'ปักหมุดเวอร์ชัน',
     audioEngineBadge: '✓ 3D Acoustic Engine',
     close: 'ปิด',
     cancel: 'ยกเลิก',
@@ -296,6 +306,11 @@ export const translations: Record<Language, Translations> = {
     appShortName: 'Demo Maker',
     appDescription: 'Acoustic 3D songwriting studio and karaoke teleprompter for iPad and tablets',
     autoSaved: 'Auto-saved',
+    saveStateSaving: 'Saving...',
+    saveStateSaved: 'Saved',
+    saveStateError: 'Save failed (Storage full?)',
+    manualSaveBtn: 'Save',
+    saveCheckpointBtn: 'Checkpoint',
     audioEngineBadge: '✓ 3D Acoustic Engine',
     close: 'Close',
     cancel: 'Cancel',

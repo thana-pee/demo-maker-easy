@@ -9,11 +9,13 @@ import {
 } from '@/lib/aiPrompts';
 import {
   callGeminiJson,
+  GEMINI_MODEL_FLASH,
   GEMINI_MODEL_LITE,
   GEMINI_MODEL_MAIN,
+  GEMINI_MODEL_PRO,
   type GeminiTokenUsage,
 } from '@/lib/geminiClient';
-import { getEasyArchitectCreditCost } from '@/lib/creditManager';
+import { CREDIT_COST_TABLE, getEasyArchitectCreditCost } from '@/lib/creditManager';
 import {
   refundServerBillingOnFailure,
   tryServerBillingPreDeduct,
@@ -151,18 +153,28 @@ export async function POST(request: Request): Promise<Response> {
     customChords,
   };
 
+  const useProArgon = obj.useProArgon === true || obj.modelTier === 'pro-argon';
+  const modelToUse = useProArgon ? GEMINI_MODEL_PRO : GEMINI_MODEL_MAIN;
   const routeStartedAt = Date.now();
   const sectionCount = customStructure && customStructure.length > 0 ? customStructure.length : 5;
-  const architectCost = getEasyArchitectCreditCost(sectionCount);
-  const timeoutMs = sectionCount <= 5 ? 28_000 : 38_000;
+  const architectCost = useProArgon
+    ? CREDIT_COST_TABLE.aiProArgonArranger
+    : getEasyArchitectCreditCost(sectionCount);
+  const maxOutputTokens = useProArgon ? 32768 : sectionCount <= 5 ? 8192 : 12288;
+  const thinkingLevel = useProArgon ? 'medium' : 'low';
+  const timeoutMs = useProArgon ? 46_000 : sectionCount <= 5 ? 36_000 : 42_000;
+  const fallbackModels = useProArgon
+    ? [GEMINI_MODEL_MAIN, GEMINI_MODEL_FLASH]
+    : [GEMINI_MODEL_FLASH, GEMINI_MODEL_LITE];
   let billing: ServerBillingPreDeductResult = { active: false };
+  let billingRefunded = false;
 
   try {
     billing = await tryServerBillingPreDeduct(
       request,
       architectCost,
-      `Easy Mode Architect (${GEMINI_MODEL_MAIN}): ${topic.slice(0, 24)}`,
-      { modelId: GEMINI_MODEL_MAIN }
+      `Easy Mode Architect (${modelToUse}): ${topic.slice(0, 24)}`,
+      { requirePurchased: useProArgon, modelId: modelToUse }
     );
     if (billing.active && 'errorStatus' in billing) {
       return Response.json(
@@ -187,11 +199,12 @@ export async function POST(request: Request): Promise<Response> {
     });
 
     const gemini = await callGeminiJson<Record<string, unknown>>(userPrompt, {
-      model: GEMINI_MODEL_MAIN,
+      model: modelToUse,
+      fallbackModels,
       systemInstruction,
       responseSchema: ARCHITECT_RESPONSE_SCHEMA,
-      maxOutputTokens: 4096,
-      thinkingLevel: 'low',
+      maxOutputTokens,
+      thinkingLevel,
       timeoutMs,
     });
 
@@ -212,8 +225,9 @@ export async function POST(request: Request): Promise<Response> {
         billing,
         architectCost,
         `Auto-refund Easy Architect (${gemini.reason})`,
-        { modelId: GEMINI_MODEL_MAIN }
+        { modelId: modelToUse }
       );
+      billingRefunded = true;
 
       await recordServerFeatureEvent(
         request,
@@ -289,7 +303,7 @@ export async function POST(request: Request): Promise<Response> {
         });
 
       const selectedForPolish = selectPrioritySectionsForPolish(evaluatedSections, 3);
-      const remainingPolishBudgetMs = Math.max(0, 44_000 - (Date.now() - routeStartedAt));
+      const remainingPolishBudgetMs = Math.max(0, 50_000 - (Date.now() - routeStartedAt));
 
       if (selectedForPolish.length > 0 && remainingPolishBudgetMs >= 4_000) {
         rhymePassed = evaluatedSections
@@ -297,6 +311,7 @@ export async function POST(request: Request): Promise<Response> {
           .every((e) => e.passed);
         const polishPrompt = buildRhymePolishPrompt(
           selectedForPolish.map(({ item: { sec, validation, overflowBars } }) => ({
+            sectionId: sec.id,
             sectionName: sec.name,
             chords: sec.bars.map((b) => b.chords[0] ?? 'C'),
             lines: sec.bars.map((b) => b.lyrics),
@@ -308,28 +323,61 @@ export async function POST(request: Request): Promise<Response> {
         );
 
         const polishRes = await callGeminiJson<{
-          polishedSections?: Array<{ sectionName?: string; lines?: string[] }>;
+          polishedSections?: Array<{ sectionId?: string; sectionName?: string; lines?: string[] }>;
         }>(polishPrompt, {
           model: GEMINI_MODEL_LITE,
           systemInstruction: 'คุณคือบรรณาธิการคำร้องไทย แก้เฉพาะคำลงท้าย/ส่งสัมผัสและความกระชับของพยางค์ให้ลื่นไหลโดยคงความหมายและจำนวนวรรคเดิม',
           responseSchema: RHYME_POLISH_RESPONSE_SCHEMA,
-          maxOutputTokens: 1024,
-          thinkingLevel: 'minimal',
-          timeoutMs: Math.min(9_000, remainingPolishBudgetMs),
+          maxOutputTokens: 2048,
+          thinkingLevel: 'low',
+          timeoutMs: Math.min(10_000, remainingPolishBudgetMs),
         });
 
         if (polishRes.ok && Array.isArray(polishRes.data.polishedSections)) {
           totalUsage = addUsageTelemetry(totalUsage, polishRes.usage);
-          wasPolished = true;
-          const mapByName = new Map(
-            polishRes.data.polishedSections
-              .filter((p) => typeof p.sectionName === 'string' && Array.isArray(p.lines))
-              .map((p) => [p.sectionName as string, p.lines as string[]])
+          const validPolished = polishRes.data.polishedSections.filter(
+            (p): p is { sectionId?: string; sectionName?: string; lines: string[] } =>
+              Boolean(p && typeof p === 'object') &&
+              Array.isArray(p.lines) &&
+              p.lines.length > 0
           );
+          const mapById = new Map<string, string[]>();
+          const targetSectionIds = selectedForPolish.map((s) => s.item.sec.id);
+          const targetSecById = new Map(song.sections.map((s) => [s.id, s]));
+
+          const unmatchedPolished: Array<{ sectionName?: string; lines: string[] }> = [];
+          for (const p of validPolished) {
+            const rawId = typeof p.sectionId === 'string' ? p.sectionId.trim() : '';
+            if (rawId && targetSecById.has(rawId) && !mapById.has(rawId)) {
+              mapById.set(rawId, p.lines);
+            } else {
+              unmatchedPolished.push(p);
+            }
+          }
+
+          for (const p of unmatchedPolished) {
+            const nameToMatch = typeof p.sectionName === 'string' ? p.sectionName.trim() : '';
+            let matchedId = targetSectionIds.find(
+              (id) => !mapById.has(id) && targetSecById.get(id)?.name === nameToMatch
+            );
+            if (!matchedId && nameToMatch) {
+              matchedId = song.sections.find(
+                (s) => !mapById.has(s.id) && s.name === nameToMatch
+              )?.id;
+            }
+            if (!matchedId) {
+              matchedId = targetSectionIds.find((id) => !mapById.has(id));
+            }
+            if (matchedId) {
+              mapById.set(matchedId, p.lines);
+            }
+          }
+
+          wasPolished = mapById.size > 0;
           song = {
             ...song,
             sections: song.sections.map((sec) => {
-              const nextLines = mapByName.get(sec.name);
+              const nextLines = mapById.get(sec.id);
               if (!nextLines || nextLines.length === 0) return sec;
               return {
                 ...sec,
@@ -408,12 +456,14 @@ export async function POST(request: Request): Promise<Response> {
       .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [REDACTED]');
     console.error('[architect] unexpected failure:', safeMsg);
 
-    const refundedWallet = await refundServerBillingOnFailure(
-      billing,
-      architectCost,
-      'Auto-refund Easy Architect (internal-error)',
-      { modelId: GEMINI_MODEL_MAIN }
-    );
+    const refundedWallet = !billingRefunded
+      ? await refundServerBillingOnFailure(
+          billing,
+          architectCost,
+          'Auto-refund Easy Architect (internal-error)',
+          { modelId: modelToUse }
+        )
+      : undefined;
 
     return Response.json(
       {

@@ -12,6 +12,7 @@ import {
 import {
   refundServerBillingOnFailure,
   tryServerBillingPreDeduct,
+  type ServerBillingPreDeductResult,
   type WalletBalanceSummary,
 } from '@/lib/serverWallet';
 import { recordServerFeatureEvent } from '@/lib/serverAnalytics';
@@ -404,108 +405,143 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const lyriaCost = CREDIT_COST_TABLE.aiReferenceTrackLyria;
-  const billing = await tryServerBillingPreDeduct(
-    request,
-    lyriaCost,
-    `AI Reference Track (Lyria 3.5): ${title}`,
-    { requirePurchased: true, modelId: GEMINI_MODEL_MUSIC }
-  );
-  if (billing.active && 'errorStatus' in billing) {
-    return Response.json(
-      { error: billing.error, code: billing.errorCode },
-      { status: billing.errorStatus }
+  let billing: ServerBillingPreDeductResult = { active: false };
+  let billingRefunded = false;
+
+  try {
+    billing = await tryServerBillingPreDeduct(
+      request,
+      lyriaCost,
+      `AI Reference Track (Lyria 3.5): ${title}`,
+      { requirePurchased: true, modelId: GEMINI_MODEL_MUSIC }
     );
-  }
-
-  const musicRes = await callGeminiMusicAudio(promptUsed, { mimeType: 'audio/mp3' });
-
-  if (!musicRes.ok) {
-    let tip: string;
-    if (musicRes.reason === 'missing-key') {
-      tip =
-        'โหมดจำลอง (ยังไม่ได้ตั้งค่า GEMINI_API_KEY บนเซิร์ฟเวอร์) — ไม่หัก 8 เหรียญของคุณ และแสดง Prompt พร้อมเทียบกับไฟล์ MP3 ของวงดนตรีจริงได้ฟรี';
-    } else if (musicRes.reason === 'rate-limit') {
-      tip = 'โควตาคำขอ Lyria 3.5 API เต็มชั่วคราว (429) — ระบบไม่หัก 8 เหรียญ กรุณาลองใหม่ภายหลัง';
-    } else if (musicRes.reason === 'auth-error') {
-      tip = 'GEMINI_API_KEY ไม่มีสิทธิ์เรียก Lyria 3.5 — ระบบไม่หัก 8 เหรียญ';
-    } else {
-      tip = `${musicRes.failureReason} — ระบบคืนสิทธิ์เต็มโดยไม่หัก 8 เหรียญ`;
+    if (billing.active && 'errorStatus' in billing) {
+      return Response.json(
+        { error: billing.error, code: billing.errorCode },
+        { status: billing.errorStatus }
+      );
     }
 
-    const refundedWallet = await refundServerBillingOnFailure(
-      billing,
-      lyriaCost,
-      `Auto-refund Lyria 3.5 (${musicRes.reason})`,
-      { toPurchased: true, modelId: GEMINI_MODEL_MUSIC }
-    );
+    const musicRes = await callGeminiMusicAudio(promptUsed, {
+      mimeType: 'audio/mp3',
+      timeoutMs: 50_000,
+    });
 
+    if (!musicRes.ok) {
+      let tip: string;
+      if (musicRes.reason === 'missing-key') {
+        tip =
+          'โหมดจำลอง (ยังไม่ได้ตั้งค่า GEMINI_API_KEY บนเซิร์ฟเวอร์) — ไม่หัก 8 เหรียญของคุณ และแสดง Prompt พร้อมเทียบกับไฟล์ MP3 ของวงดนตรีจริงได้ฟรี';
+      } else if (musicRes.reason === 'rate-limit') {
+        tip = 'โควตาคำขอ Lyria 3.5 API เต็มชั่วคราว (429) — ระบบไม่หัก 8 เหรียญ กรุณาลองใหม่ภายหลัง';
+      } else if (musicRes.reason === 'auth-error') {
+        tip = 'GEMINI_API_KEY ไม่มีสิทธิ์เรียก Lyria 3.5 — ระบบไม่หัก 8 เหรียญ';
+      } else {
+        tip = `${musicRes.failureReason} — ระบบคืนสิทธิ์เต็มโดยไม่หัก 8 เหรียญ`;
+      }
+
+      const refundedWallet = await refundServerBillingOnFailure(
+        billing,
+        lyriaCost,
+        `Auto-refund Lyria 3.5 (${musicRes.reason})`,
+        { toPurchased: true, modelId: GEMINI_MODEL_MUSIC }
+      );
+      billingRefunded = true;
+
+      const body: ReferenceTrackResponseBody = {
+        isSimulated: true,
+        model: GEMINI_MODEL_MUSIC,
+        promptUsed,
+        audioDataUrl: null,
+        mimeType: null,
+        lyricsOrNotes: '',
+        tip,
+        ...(blueprintSummary ? { blueprintSummary } : {}),
+        ...(refundedWallet ? { wallet: refundedWallet } : {}),
+        failureReason: musicRes.reason,
+      };
+      const isSim = Boolean((body as { isSimulated?: boolean }).isSimulated);
+      await recordServerFeatureEvent(
+        request,
+        {
+          eventName: 'ai_reference_track_lyria',
+          category: 'ai',
+          songwriterStyle: sanitizedFullSong?.songwriterStyle,
+          thaiGenre: thaiGenre ?? sanitizedFullSong?.thaiGenre,
+          lyricDialect: sanitizedFullSong?.lyricDialect,
+          lyricEra: sanitizedFullSong?.lyricEra,
+          emotionalResolution: sanitizedFullSong?.emotionalResolution,
+          featureVariant: obj.instrumental ? 'instrumental' : 'vocal_mix',
+          isSimulated: isSim,
+          creditsCost: isSim ? 0 : lyriaCost,
+        },
+        {
+          userId: billing.active && 'userId' in billing ? billing.userId : undefined,
+          skipAuthLookup: billing.active,
+        }
+      );
+      return Response.json(body);
+    }
+
+    const audioDataUrl = `data:${musicRes.mimeType};base64,${musicRes.audioBase64}`;
     const body: ReferenceTrackResponseBody = {
-      isSimulated: true,
-      model: GEMINI_MODEL_MUSIC,
+      isSimulated: false,
+      model: musicRes.modelUsed || GEMINI_MODEL_MUSIC,
       promptUsed,
-      audioDataUrl: null,
-      mimeType: null,
-      lyricsOrNotes: '',
-      tip,
+      audioDataUrl,
+      mimeType: musicRes.mimeType,
+      lyricsOrNotes: musicRes.lyricsOrNotes,
       ...(blueprintSummary ? { blueprintSummary } : {}),
-      ...(refundedWallet ? { wallet: refundedWallet } : {}),
-      failureReason: musicRes.reason,
+      usage: musicRes.usage,
+      ...(billing.active ? { wallet: billing.wallet } : {}),
+      tip: 'สร้างแทร็กเสียงอ้างอิงจาก Lyria 3.5 สำเร็จ! ลองกดฟังเทียบมิติและโทนกับไฟล์ Export .MP3 ของวงคุณได้ทันที',
     };
     const isSim = Boolean((body as { isSimulated?: boolean }).isSimulated);
-  await recordServerFeatureEvent(
-    request,
-    {
-      eventName: 'ai_reference_track_lyria',
-      category: 'ai',
-      songwriterStyle: sanitizedFullSong?.songwriterStyle,
-      thaiGenre: thaiGenre ?? sanitizedFullSong?.thaiGenre,
-      lyricDialect: sanitizedFullSong?.lyricDialect,
-      lyricEra: sanitizedFullSong?.lyricEra,
-      emotionalResolution: sanitizedFullSong?.emotionalResolution,
-      featureVariant: obj.instrumental ? 'instrumental' : 'vocal_mix',
-      isSimulated: isSim,
-      creditsCost: isSim ? 0 : lyriaCost,
-    },
-    {
-      userId: billing.active && 'userId' in billing ? billing.userId : undefined,
-      skipAuthLookup: billing.active,
-    }
-  );
-  return Response.json(body);
-  }
+    await recordServerFeatureEvent(
+      request,
+      {
+        eventName: 'ai_reference_track_lyria',
+        category: 'ai',
+        songwriterStyle: sanitizedFullSong?.songwriterStyle,
+        thaiGenre: thaiGenre ?? sanitizedFullSong?.thaiGenre,
+        lyricDialect: sanitizedFullSong?.lyricDialect,
+        lyricEra: sanitizedFullSong?.lyricEra,
+        emotionalResolution: sanitizedFullSong?.emotionalResolution,
+        featureVariant: obj.instrumental ? 'instrumental' : 'vocal_mix',
+        isSimulated: isSim,
+        creditsCost: isSim ? 0 : lyriaCost,
+      },
+      {
+        userId: billing.active && 'userId' in billing ? billing.userId : undefined,
+        skipAuthLookup: billing.active,
+      }
+    );
+    return Response.json(body);
+  } catch (err) {
+    const rawMsg = err instanceof Error ? err.message : String(err);
+    const safeMsg = rawMsg
+      .replace(/AIza[A-Za-z0-9_-]{8,}/g, '[REDACTED]')
+      .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [REDACTED]');
+    console.error('[reference-track] unexpected failure:', safeMsg);
 
-  const audioDataUrl = `data:${musicRes.mimeType};base64,${musicRes.audioBase64}`;
-  const body: ReferenceTrackResponseBody = {
-    isSimulated: false,
-    model: musicRes.modelUsed || GEMINI_MODEL_MUSIC,
-    promptUsed,
-    audioDataUrl,
-    mimeType: musicRes.mimeType,
-    lyricsOrNotes: musicRes.lyricsOrNotes,
-    ...(blueprintSummary ? { blueprintSummary } : {}),
-    usage: musicRes.usage,
-    ...(billing.active ? { wallet: billing.wallet } : {}),
-    tip: 'สร้างแทร็กเสียงอ้างอิงจาก Lyria 3.5 สำเร็จ! ลองกดฟังเทียบมิติและโทนกับไฟล์ Export .MP3 ของวงคุณได้ทันที',
-  };
-  const isSim = Boolean((body as { isSimulated?: boolean }).isSimulated);
-  await recordServerFeatureEvent(
-    request,
-    {
-      eventName: 'ai_reference_track_lyria',
-      category: 'ai',
-      songwriterStyle: sanitizedFullSong?.songwriterStyle,
-      thaiGenre: thaiGenre ?? sanitizedFullSong?.thaiGenre,
-      lyricDialect: sanitizedFullSong?.lyricDialect,
-      lyricEra: sanitizedFullSong?.lyricEra,
-      emotionalResolution: sanitizedFullSong?.emotionalResolution,
-      featureVariant: obj.instrumental ? 'instrumental' : 'vocal_mix',
-      isSimulated: isSim,
-      creditsCost: isSim ? 0 : lyriaCost,
-    },
-    {
-      userId: billing.active && 'userId' in billing ? billing.userId : undefined,
-      skipAuthLookup: billing.active,
-    }
-  );
-  return Response.json(body);
+    const refundedWallet = !billingRefunded
+      ? await refundServerBillingOnFailure(
+          billing,
+          lyriaCost,
+          'Auto-refund Lyria 3.5 (internal-error)',
+          { toPurchased: true, modelId: GEMINI_MODEL_MUSIC }
+        )
+      : undefined;
+
+    return Response.json(
+      {
+        error: refundedWallet
+          ? `เซิร์ฟเวอร์ขัดข้องชั่วคราวระหว่างสร้างแทร็กอ้างอิง (คืน ${lyriaCost} เครดิตให้แล้วอัตโนมัติ)`
+          : 'เซิร์ฟเวอร์ขัดข้องชั่วคราวระหว่างสร้างแทร็กอ้างอิง (ไม่หักเครดิต) กรุณาลองใหม่อีกครั้ง',
+        code: 'REFERENCE_TRACK_INTERNAL_ERROR',
+        ...(refundedWallet ? { wallet: refundedWallet } : {}),
+      },
+      { status: 500 }
+    );
+  }
 }

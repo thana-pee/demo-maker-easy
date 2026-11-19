@@ -446,6 +446,8 @@ export async function atomicDeductCredits(
   trialCredits: number;
   purchasedCredits: number;
   balance: number;
+  deductedFromTrial?: number;
+  deductedFromPurchased?: number;
 }> {
   const config = options?.config ?? getServerBillingConfig();
   const headers = getServiceRoleHeaders(config);
@@ -502,12 +504,14 @@ export async function atomicDeductCredits(
         },
         config,
         fetchFn
-      );
+      ).catch(() => null);
       return {
         success: true,
         trialCredits: current.trialCredits,
         purchasedCredits: nextPurchased,
         balance: current.trialCredits + nextPurchased,
+        deductedFromTrial: 0,
+        deductedFromPurchased: roundedAmount,
       };
     }
 
@@ -541,12 +545,14 @@ export async function atomicDeductCredits(
       },
       config,
       fetchFn
-    );
+    ).catch(() => null);
     return {
       success: true,
       trialCredits: nextTrial,
       purchasedCredits: nextPurchased,
       balance: nextTrial + nextPurchased,
+      deductedFromTrial: fromTrial,
+      deductedFromPurchased: fromPurchased,
     };
   }
 
@@ -636,7 +642,7 @@ export async function atomicRefundCredits(
       },
       config,
       fetchFn
-    );
+    ).catch(() => null);
     return {
       success: true,
       trialCredits: nextTrial,
@@ -1370,8 +1376,53 @@ export interface WalletBalanceSummary {
 
 export type ServerBillingPreDeductResult =
   | { active: false }
-  | { active: true; userId: string; wallet: WalletBalanceSummary }
+  | {
+      active: true;
+      userId: string;
+      wallet: WalletBalanceSummary;
+      deductedFromTrial: number;
+      deductedFromPurchased: number;
+    }
   | { active: true; errorStatus: number; error: string; errorCode?: string };
+
+async function fetchLatestSpendSplitViaRest(
+  userId: string,
+  expectedAmount: number,
+  config: ServerBillingConfig,
+  fetchFn: FetchLike
+): Promise<{ deductedFromTrial: number; deductedFromPurchased: number } | null> {
+  try {
+    const headers = getServiceRoleHeaders(config);
+    const res = await fetchFn(
+      `${config.supabaseUrl}/rest/v1/credit_transactions?user_id=eq.${encodeURIComponent(
+        userId
+      )}&tx_type=eq.spend&order=created_at.desc&limit=1&select=amount,metadata`,
+      { headers }
+    );
+    if (!res.ok) return null;
+    const rows = (await res.json()) as Array<{
+      amount?: number;
+      metadata?: { from_trial?: unknown; from_purchased?: unknown };
+    }>;
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+    const tx = rows[0];
+    if (Math.abs(Number(tx?.amount ?? 0)) !== expectedAmount) return null;
+    const fromTrial = Number(tx?.metadata?.from_trial ?? NaN);
+    const fromPurchased = Number(tx?.metadata?.from_purchased ?? NaN);
+    if (
+      Number.isFinite(fromTrial) &&
+      Number.isFinite(fromPurchased) &&
+      fromTrial >= 0 &&
+      fromPurchased >= 0 &&
+      fromTrial + fromPurchased === expectedAmount
+    ) {
+      return { deductedFromTrial: fromTrial, deductedFromPurchased: fromPurchased };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Helper สำหรับ Advance AI routes:
@@ -1413,7 +1464,8 @@ export async function tryServerBillingPreDeduct(
     return { active: false };
   }
 
-  const auth = await verifySupabaseUserFromRequest(request, { config, fetchFn: options?.fetchFn });
+  const fetchFn = options?.fetchFn ?? fetch;
+  const auth = await verifySupabaseUserFromRequest(request, { config, fetchFn });
   if (!auth.ok) {
     return {
       active: true,
@@ -1423,11 +1475,16 @@ export async function tryServerBillingPreDeduct(
     };
   }
 
+  const roundedCost = Math.max(0, Math.round(cost));
+  const beforeWallet = !options?.requirePurchased
+    ? await fetchWalletRowViaRest(auth.user.id, config, fetchFn).catch(() => null)
+    : null;
+
   const deducted = await atomicDeductCredits(auth.user.id, cost, description, {
     requirePurchased: options?.requirePurchased,
     modelId: options?.modelId,
     config,
-    fetchFn: options?.fetchFn,
+    fetchFn,
   });
 
   if (!deducted.success) {
@@ -1442,6 +1499,46 @@ export async function tryServerBillingPreDeduct(
     };
   }
 
+  let deductedFromTrial = 0;
+  let deductedFromPurchased = 0;
+
+  if (
+    typeof deducted.deductedFromTrial === 'number' &&
+    typeof deducted.deductedFromPurchased === 'number'
+  ) {
+    deductedFromTrial = deducted.deductedFromTrial;
+    deductedFromPurchased = deducted.deductedFromPurchased;
+  } else if (options?.requirePurchased) {
+    deductedFromTrial = 0;
+    deductedFromPurchased = roundedCost;
+  } else if (deducted.trialCredits > 0) {
+    deductedFromTrial = roundedCost;
+    deductedFromPurchased = 0;
+  } else {
+    const txSplit = await fetchLatestSpendSplitViaRest(
+      auth.user.id,
+      roundedCost,
+      config,
+      fetchFn
+    );
+    if (txSplit) {
+      deductedFromTrial = txSplit.deductedFromTrial;
+      deductedFromPurchased = txSplit.deductedFromPurchased;
+    } else if (beforeWallet !== null) {
+      deductedFromTrial = Math.max(
+        0,
+        Math.min(roundedCost, beforeWallet.trialCredits - deducted.trialCredits)
+      );
+      deductedFromPurchased = Math.max(0, roundedCost - deductedFromTrial);
+    } else if (deducted.purchasedCredits > 0) {
+      deductedFromTrial = 0;
+      deductedFromPurchased = roundedCost;
+    } else {
+      deductedFromTrial = roundedCost;
+      deductedFromPurchased = 0;
+    }
+  }
+
   return {
     active: true,
     userId: auth.user.id,
@@ -1450,10 +1547,12 @@ export async function tryServerBillingPreDeduct(
       trialCredits: deducted.trialCredits,
       purchasedCredits: deducted.purchasedCredits,
     },
+    deductedFromTrial,
+    deductedFromPurchased,
   };
 }
 
-/** คืนเครดิตฝั่ง Server แบบปลอดภัยทันทีเมื่อ Gemini ล้มเหลว/คืนผลจำลอง */
+/** คืนเครดิตฝั่ง Server แบบปลอดภัยทันทีเมื่อ Gemini ล้มเหลว/คืนผลจำลอง โดยคืนตรงกระเป๋าเดิมที่ถูกหัก */
 export async function refundServerBillingOnFailure(
   billing: ServerBillingPreDeductResult,
   amount: number,
@@ -1464,9 +1563,73 @@ export async function refundServerBillingOnFailure(
     return undefined;
   }
 
-  const refunded = await atomicRefundCredits(billing.userId, amount, description, options).catch(
-    () => null
-  );
+  if (options?.toPurchased !== undefined) {
+    const refunded = await atomicRefundCredits(billing.userId, amount, description, options).catch(
+      () => null
+    );
+    if (!refunded?.success) {
+      return undefined;
+    }
+    return {
+      balance: refunded.balance,
+      trialCredits: refunded.trialCredits,
+      purchasedCredits: refunded.purchasedCredits,
+    };
+  }
+
+  const roundedAmount = Math.max(0, Math.round(amount));
+  const recordedTrial = Math.max(0, billing.deductedFromTrial ?? 0);
+  const recordedPurchased = Math.max(0, billing.deductedFromPurchased ?? 0);
+  const trialRefund = Math.min(roundedAmount, recordedTrial);
+  const purchasedRefund =
+    recordedPurchased > 0 ? Math.min(roundedAmount - trialRefund, recordedPurchased) : 0;
+  const remainder = Math.max(0, roundedAmount - trialRefund - purchasedRefund);
+  const finalTrial = trialRefund + (recordedPurchased > 0 && recordedTrial === 0 ? 0 : remainder);
+  const finalPurchased = purchasedRefund + (recordedPurchased > 0 && recordedTrial === 0 ? remainder : 0);
+
+  if (finalTrial > 0 && finalPurchased > 0) {
+    const trialRes = await atomicRefundCredits(
+      billing.userId,
+      finalTrial,
+      `${description} (trial)`,
+      { ...options, toPurchased: false }
+    ).catch(() => null);
+    const purchasedRes = await atomicRefundCredits(
+      billing.userId,
+      finalPurchased,
+      `${description} (purchased)`,
+      { ...options, toPurchased: true }
+    ).catch(() => null);
+    const latest = purchasedRes?.success ? purchasedRes : trialRes?.success ? trialRes : null;
+    if (!latest) {
+      return undefined;
+    }
+    return {
+      balance: latest.balance,
+      trialCredits: latest.trialCredits,
+      purchasedCredits: latest.purchasedCredits,
+    };
+  }
+
+  if (finalPurchased > 0) {
+    const refunded = await atomicRefundCredits(billing.userId, finalPurchased, description, {
+      ...options,
+      toPurchased: true,
+    }).catch(() => null);
+    if (!refunded?.success) {
+      return undefined;
+    }
+    return {
+      balance: refunded.balance,
+      trialCredits: refunded.trialCredits,
+      purchasedCredits: refunded.purchasedCredits,
+    };
+  }
+
+  const refunded = await atomicRefundCredits(billing.userId, roundedAmount, description, {
+    ...options,
+    toPurchased: false,
+  }).catch(() => null);
   if (!refunded?.success) {
     return undefined;
   }

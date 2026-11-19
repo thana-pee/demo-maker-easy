@@ -5,6 +5,8 @@ import {
   normalizeAudioMimeType,
 } from '@/lib/aiPrompts';
 import {
+  GEMINI_MODEL_FLASH,
+  GEMINI_MODEL_LITE,
   GEMINI_MODEL_MAIN,
   GEMINI_MODEL_TRANSCRIBE,
   callGeminiJson,
@@ -17,6 +19,7 @@ import { CREDIT_COST_TABLE } from '@/lib/creditManager';
 import {
   refundServerBillingOnFailure,
   tryServerBillingPreDeduct,
+  type ServerBillingPreDeductResult,
   type WalletBalanceSummary,
 } from '@/lib/serverWallet';
 import { recordServerFeatureEvent } from '@/lib/serverAnalytics';
@@ -239,110 +242,185 @@ export async function POST(request: Request): Promise<Response> {
   const includeTranscribePass = Boolean(obj.includeTranscribePass);
 
   const humCost = CREDIT_COST_TABLE.aiHumToSong;
-  const billing = await tryServerBillingPreDeduct(
-    request,
-    humCost,
-    `Hum-to-Song (${GEMINI_MODEL_MAIN}): ${durationSec.toFixed(1)}s`,
-    { modelId: GEMINI_MODEL_MAIN }
-  );
-  if (billing.active && 'errorStatus' in billing) {
-    return Response.json(
-      { error: billing.error, code: billing.errorCode },
-      { status: billing.errorStatus }
+  let billing: ServerBillingPreDeductResult = { active: false };
+  let billingRefunded = false;
+
+  try {
+    billing = await tryServerBillingPreDeduct(
+      request,
+      humCost,
+      `Hum-to-Song (${GEMINI_MODEL_MAIN}): ${durationSec.toFixed(1)}s`,
+      { modelId: GEMINI_MODEL_MAIN }
     );
-  }
+    if (billing.active && 'errorStatus' in billing) {
+      return Response.json(
+        { error: billing.error, code: billing.errorCode },
+        { status: billing.errorStatus }
+      );
+    }
 
-  let totalUsage: GeminiTokenUsage | undefined;
-  let transcribedHint = '';
-  let usedTranscribeModel = false;
+    let totalUsage: GeminiTokenUsage | undefined;
+    let transcribedHint = '';
+    let usedTranscribeModel = false;
 
-  if (includeTranscribePass) {
-    const transcribeRes = await callGeminiTranscribeAudio(base64, normalizedMime, {
-      model: GEMINI_MODEL_TRANSCRIBE,
+    if (includeTranscribePass) {
+      const transcribeRes = await callGeminiTranscribeAudio(base64, normalizedMime, {
+        model: GEMINI_MODEL_TRANSCRIBE,
+        timeoutMs: 12_000,
+      });
+      if (!transcribeRes.ok && transcribeRes.reason === 'missing-key') {
+        const refundedWallet = await refundServerBillingOnFailure(
+          billing,
+          humCost,
+          `Auto-refund Hum-to-Song (${transcribeRes.reason})`,
+          { modelId: GEMINI_MODEL_MAIN }
+        );
+        billingRefunded = true;
+        const fallbackInput: EasyArchitectInput = {
+          stylePreset,
+          vocalProfile,
+          tempoFeel: durationSec >= 24 ? 'slow' : 'medium',
+          topic: language === 'en' ? 'Hummed melody starter' : 'ไอเดียจากเสียงฮัมทำนอง',
+          language,
+        };
+        await recordServerFeatureEvent(
+          request,
+          {
+            eventName: 'ai_hum_to_song',
+            category: 'ai',
+            songwriterStyle: typeof obj.songwriterStyle === 'string' ? obj.songwriterStyle : undefined,
+            thaiGenre: getPresetConfig(stylePreset).thaiGenre,
+            featureVariant: stylePreset,
+            isSimulated: true,
+            creditsCost: 0,
+            metadata: { vocalProfile, language, stage: 'transcribe-fallback' },
+          },
+          {
+            userId: billing.active && 'userId' in billing ? billing.userId : undefined,
+            skipAuthLookup: billing.active,
+          }
+        );
+        return Response.json(
+          {
+            ...buildSimulatedHumResponse(
+              fallbackInput,
+              vocalProfile,
+              durationSec,
+              transcribeRes.reason,
+              transcribeRes.failureReason
+            ),
+            ...(refundedWallet ? { wallet: refundedWallet } : {}),
+          },
+          { status: 200 }
+        );
+      }
+      if (transcribeRes.ok) {
+        totalUsage = addUsageTelemetry(totalUsage, transcribeRes.usage);
+        transcribedHint = transcribeRes.transcript.trim().slice(0, 320);
+        usedTranscribeModel = true;
+      }
+    }
+
+    const userPrompt = buildHumToSongUserPrompt({
+      stylePreset,
+      vocalProfile,
+      language,
+      durationSec,
+      transcribedHint,
     });
-    if (!transcribeRes.ok && transcribeRes.reason === 'missing-key') {
+
+    const promptParts: GeminiInputPart[] = [
+      { type: 'text', text: userPrompt },
+      { type: 'audio', data: base64, mime_type: normalizedMime },
+    ];
+
+    const gemini = await callGeminiJson<Record<string, unknown>>(promptParts, {
+      model: GEMINI_MODEL_MAIN,
+      fallbackModels: [GEMINI_MODEL_FLASH, GEMINI_MODEL_LITE],
+      systemInstruction: buildHumToSongSystemPrompt(),
+      responseSchema: HUM_TO_SONG_RESPONSE_SCHEMA,
+      maxOutputTokens: 8192,
+      thinkingLevel: 'low',
+      timeoutMs: 38_000,
+    });
+
+    const architectInput: EasyArchitectInput = {
+      stylePreset,
+      vocalProfile,
+      tempoFeel: durationSec >= 24 ? 'slow' : 'medium',
+      topic:
+        transcribedHint ||
+        (language === 'en' ? 'Hummed melody starter' : 'ไอเดียจากเสียงฮัมทำนอง'),
+      language,
+    };
+
+    if (!gemini.ok) {
       const refundedWallet = await refundServerBillingOnFailure(
         billing,
         humCost,
-        `Auto-refund Hum-to-Song (${transcribeRes.reason})`,
+        `Auto-refund Hum-to-Song (${gemini.reason})`,
         { modelId: GEMINI_MODEL_MAIN }
       );
-      const fallbackInput: EasyArchitectInput = {
-        stylePreset,
-        vocalProfile,
-        tempoFeel: durationSec >= 24 ? 'slow' : 'medium',
-        topic: language === 'en' ? 'Hummed melody starter' : 'ไอเดียจากเสียงฮัมทำนอง',
-        language,
-      };
-      await recordServerFeatureEvent(request, {
-        eventName: 'ai_hum_to_song',
-        category: 'ai',
-        songwriterStyle: typeof obj.songwriterStyle === 'string' ? obj.songwriterStyle : undefined,
-        thaiGenre: getPresetConfig(stylePreset).thaiGenre,
-        featureVariant: stylePreset,
-        isSimulated: true,
-        creditsCost: 0,
-        metadata: { vocalProfile, language, stage: 'transcribe-fallback' },
-      });
+      billingRefunded = true;
+      await recordServerFeatureEvent(
+        request,
+        {
+          eventName: 'ai_hum_to_song',
+          category: 'ai',
+          songwriterStyle: typeof obj.songwriterStyle === 'string' ? obj.songwriterStyle : undefined,
+          thaiGenre: getPresetConfig(stylePreset).thaiGenre,
+          featureVariant: stylePreset,
+          isSimulated: true,
+          creditsCost: 0,
+          metadata: { vocalProfile, language, reason: gemini.reason },
+        },
+        {
+          userId: billing.active && 'userId' in billing ? billing.userId : undefined,
+          skipAuthLookup: billing.active,
+        }
+      );
       return Response.json(
         {
           ...buildSimulatedHumResponse(
-            fallbackInput,
+            architectInput,
             vocalProfile,
             durationSec,
-            transcribeRes.reason,
-            transcribeRes.failureReason
+            gemini.reason,
+            gemini.failureReason
           ),
           ...(refundedWallet ? { wallet: refundedWallet } : {}),
         },
         { status: 200 }
       );
     }
-    if (transcribeRes.ok) {
-      totalUsage = addUsageTelemetry(totalUsage, transcribeRes.usage);
-      transcribedHint = transcribeRes.transcript.trim().slice(0, 320);
-      usedTranscribeModel = true;
-    }
-  }
 
-  const userPrompt = buildHumToSongUserPrompt({
-    stylePreset,
-    vocalProfile,
-    language,
-    durationSec,
-    transcribedHint,
-  });
+    totalUsage = addUsageTelemetry(totalUsage, gemini.usage);
+    const rawTranscribed =
+      typeof gemini.data.transcribedLyrics === 'string' && gemini.data.transcribedLyrics.trim()
+        ? gemini.data.transcribedLyrics.trim()
+        : transcribedHint;
+    const rawConfidence =
+      typeof gemini.data.confidenceNote === 'string' && gemini.data.confidenceNote.trim()
+        ? gemini.data.confidenceNote.trim()
+        : `วิเคราะห์จากเสียงฮัม ${durationSec.toFixed(1)} วินาที`;
 
-  const promptParts: GeminiInputPart[] = [
-    { type: 'text', text: userPrompt },
-    { type: 'audio', data: base64, mime_type: normalizedMime },
-  ];
+    const sanitized = sanitizeArchitectSongProject(gemini.data, {
+      ...architectInput,
+      topic: rawTranscribed || architectInput.topic,
+    });
+    const song = enrichMissingGuideNotes(sanitized, vocalProfile);
 
-  const gemini = await callGeminiJson<Record<string, unknown>>(promptParts, {
-    model: GEMINI_MODEL_MAIN,
-    systemInstruction: buildHumToSongSystemPrompt(),
-    responseSchema: HUM_TO_SONG_RESPONSE_SCHEMA,
-    maxOutputTokens: 8192,
-    thinkingLevel: 'low',
-  });
+    const rawProducerNotes = gemini.data.producerNotes;
+    const producerNotes = Array.isArray(rawProducerNotes)
+      ? rawProducerNotes.filter((n): n is string => typeof n === 'string' && n.trim().length > 0).slice(0, 4)
+      : typeof rawProducerNotes === 'string' && rawProducerNotes.trim()
+        ? [rawProducerNotes.trim()]
+        : [`ถอดแนวทำนองและคีย์ ${song.baseKey} (${song.bpm} BPM) จากเสียงฮัมด้วย ${gemini.modelUsed}`];
 
-  const architectInput: EasyArchitectInput = {
-    stylePreset,
-    vocalProfile,
-    tempoFeel: durationSec >= 24 ? 'slow' : 'medium',
-    topic:
-      transcribedHint ||
-      (language === 'en' ? 'Hummed melody starter' : 'ไอเดียจากเสียงฮัมทำนอง'),
-    language,
-  };
+    const modelLabel = usedTranscribeModel
+      ? `${GEMINI_MODEL_TRANSCRIBE} + ${gemini.modelUsed}`
+      : gemini.modelUsed;
 
-  if (!gemini.ok) {
-    const refundedWallet = await refundServerBillingOnFailure(
-      billing,
-      humCost,
-      `Auto-refund Hum-to-Song (${gemini.reason})`,
-      { modelId: GEMINI_MODEL_MAIN }
-    );
     await recordServerFeatureEvent(
       request,
       {
@@ -351,97 +429,65 @@ export async function POST(request: Request): Promise<Response> {
         songwriterStyle: typeof obj.songwriterStyle === 'string' ? obj.songwriterStyle : undefined,
         thaiGenre: getPresetConfig(stylePreset).thaiGenre,
         featureVariant: stylePreset,
-        isSimulated: true,
-        creditsCost: 0,
-        metadata: { vocalProfile, language, reason: gemini.reason },
+        isSimulated: false,
+        creditsCost: humCost,
+        metadata: {
+          vocalProfile,
+          language,
+          usedTranscribeModel,
+          model: modelLabel,
+        },
       },
       {
         userId: billing.active && 'userId' in billing ? billing.userId : undefined,
         skipAuthLookup: billing.active,
       }
     );
+
     return Response.json(
       {
-        ...buildSimulatedHumResponse(
-          architectInput,
-          vocalProfile,
-          durationSec,
-          gemini.reason,
-          gemini.failureReason
-        ),
-        ...(refundedWallet ? { wallet: refundedWallet } : {}),
-      },
+        isSimulated: false,
+        model: modelLabel,
+        detected: {
+          bpm: song.bpm,
+          timeSignature: song.timeSignature,
+          baseKey: song.baseKey,
+        },
+        transcribedLyrics: rawTranscribed,
+        confidenceNote: rawConfidence,
+        song,
+        producerNotes,
+        tip: `แกะเสียงฮัมเป็นโครงเพลง "${song.title}" (${song.baseKey} · ${song.bpm} BPM · ${song.timeSignature}) สำเร็จแล้ว`,
+        usage: totalUsage,
+        ...(billing.active ? { wallet: billing.wallet } : {}),
+      } satisfies HumToSongResponseBody,
       { status: 200 }
     );
+  } catch (err) {
+    const rawMsg = err instanceof Error ? err.message : String(err);
+    const safeMsg = rawMsg
+      .replace(/AIza[A-Za-z0-9_-]{8,}/g, '[REDACTED]')
+      .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [REDACTED]');
+    console.error('[hum-to-song] unexpected failure:', safeMsg);
+
+    const refundedWallet = !billingRefunded
+      ? await refundServerBillingOnFailure(
+          billing,
+          humCost,
+          'Auto-refund Hum-to-Song (internal-error)',
+          { modelId: GEMINI_MODEL_MAIN }
+        )
+      : undefined;
+
+    return Response.json(
+      {
+        error: refundedWallet
+          ? `เซิร์ฟเวอร์ขัดข้องชั่วคราวระหว่างแกะเสียงฮัม (คืน ${humCost} เครดิตให้แล้วอัตโนมัติ)`
+          : 'เซิร์ฟเวอร์ขัดข้องชั่วคราวระหว่างแกะเสียงฮัม (ไม่หักเครดิต) กรุณาลองใหม่อีกครั้ง',
+        code: 'HUM_TO_SONG_INTERNAL_ERROR',
+        ...(refundedWallet ? { wallet: refundedWallet } : {}),
+      },
+      { status: 500 }
+    );
   }
-
-  totalUsage = addUsageTelemetry(totalUsage, gemini.usage);
-  const rawTranscribed =
-    typeof gemini.data.transcribedLyrics === 'string' && gemini.data.transcribedLyrics.trim()
-      ? gemini.data.transcribedLyrics.trim()
-      : transcribedHint;
-  const rawConfidence =
-    typeof gemini.data.confidenceNote === 'string' && gemini.data.confidenceNote.trim()
-      ? gemini.data.confidenceNote.trim()
-      : `วิเคราะห์จากเสียงฮัม ${durationSec.toFixed(1)} วินาที`;
-
-  const sanitized = sanitizeArchitectSongProject(gemini.data, {
-    ...architectInput,
-    topic: rawTranscribed || architectInput.topic,
-  });
-  const song = enrichMissingGuideNotes(sanitized, vocalProfile);
-
-  const rawProducerNotes = gemini.data.producerNotes;
-  const producerNotes = Array.isArray(rawProducerNotes)
-    ? rawProducerNotes.filter((n): n is string => typeof n === 'string' && n.trim().length > 0).slice(0, 4)
-    : typeof rawProducerNotes === 'string' && rawProducerNotes.trim()
-      ? [rawProducerNotes.trim()]
-      : [`ถอดแนวทำนองและคีย์ ${song.baseKey} (${song.bpm} BPM) จากเสียงฮัมด้วย ${gemini.modelUsed}`];
-
-  const modelLabel = usedTranscribeModel
-    ? `${GEMINI_MODEL_TRANSCRIBE} + ${gemini.modelUsed}`
-    : gemini.modelUsed;
-
-  await recordServerFeatureEvent(
-    request,
-    {
-      eventName: 'ai_hum_to_song',
-      category: 'ai',
-      songwriterStyle: typeof obj.songwriterStyle === 'string' ? obj.songwriterStyle : undefined,
-      thaiGenre: getPresetConfig(stylePreset).thaiGenre,
-      featureVariant: stylePreset,
-      isSimulated: false,
-      creditsCost: humCost,
-      metadata: {
-        vocalProfile,
-        language,
-        usedTranscribeModel,
-        model: modelLabel,
-      },
-    },
-    {
-      userId: billing.active && 'userId' in billing ? billing.userId : undefined,
-      skipAuthLookup: billing.active,
-    }
-  );
-
-  return Response.json(
-    {
-      isSimulated: false,
-      model: modelLabel,
-      detected: {
-        bpm: song.bpm,
-        timeSignature: song.timeSignature,
-        baseKey: song.baseKey,
-      },
-      transcribedLyrics: rawTranscribed,
-      confidenceNote: rawConfidence,
-      song,
-      producerNotes,
-      tip: `แกะเสียงฮัมเป็นโครงเพลง "${song.title}" (${song.baseKey} · ${song.bpm} BPM · ${song.timeSignature}) สำเร็จแล้ว`,
-      usage: totalUsage,
-      ...(billing.active ? { wallet: billing.wallet } : {}),
-    } satisfies HumToSongResponseBody,
-    { status: 200 }
-  );
 }

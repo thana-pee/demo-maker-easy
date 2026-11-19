@@ -12,12 +12,14 @@ import {
   CREDIT_COST_TABLE,
   applyServerWalletSnapshot,
   canAfford,
+  canUsePaidOnlyModel,
   deductCredits,
 } from '@/lib/creditManager';
 import { getAuthAccessToken, refreshAuthSession } from '@/lib/cloudSync';
 import { trackUsageEvent } from '@/lib/analytics';
 import { applyGenreBandArrangement } from '@/lib/songArchitect';
 import { generateLyricAlignedGuideMelody } from '@/lib/melodyUtils';
+import { stripVocalsFromSong } from '@/lib/storage';
 import { useLanguage } from '@/context/LanguageContext';
 import type { SongProject } from '@/types/song';
 
@@ -46,6 +48,8 @@ export const CohesivePolishModal: React.FC<CohesivePolishModalProps> = ({
   const [chordsRetentionPct, setChordsRetentionPct] = useState<100 | 70 | 30>(100);
   const [lockedSectionIds, setLockedSectionIds] = useState<string[]>([]);
   const [rebalanceBand, setRebalanceBand] = useState<boolean>(true);
+  const [useProArgon, setUseProArgon] = useState<boolean>(false);
+  const [needsTopUpError, setNeedsTopUpError] = useState<boolean>(false);
   const [isPolishing, setIsPolishing] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -54,16 +58,23 @@ export const CohesivePolishModal: React.FC<CohesivePolishModalProps> = ({
   const lockedSet = new Set(lockedSectionIds);
   const unlockedCount = song.sections.filter((s) => !lockedSet.has(s.id)).length;
   const isZeroCredit = lyricsRetentionPct === 100 && chordsRetentionPct === 100;
-  const cost = isZeroCredit
-    ? 0
-    : unlockedCount <= 3
+  const standardCost =
+    unlockedCount <= 3
       ? CREDIT_COST_TABLE.aiCohesivePolishPartial
       : CREDIT_COST_TABLE.aiCohesivePolishWhole;
+  const cost = isZeroCredit
+    ? 0
+    : useProArgon
+      ? CREDIT_COST_TABLE.aiProArgonArranger
+      : standardCost;
+  const proArgonGate = canUsePaidOnlyModel(CREDIT_COST_TABLE.aiProArgonArranger);
   const modelName = isZeroCredit
     ? 'Local Synth Engine'
-    : unlockedCount <= 3
-      ? 'Gemini 3.5 Flash Lite'
-      : 'Gemini 4 Hydrogen';
+    : useProArgon
+      ? 'Gemini 4 Argon (Pro)'
+      : unlockedCount <= 3
+        ? 'Gemini 3.5 Flash Lite'
+        : 'Gemini 4 Hydrogen';
 
   const toggleLockSection = (sectionId: string) => {
     setLockedSectionIds((prev) =>
@@ -71,11 +82,40 @@ export const CohesivePolishModal: React.FC<CohesivePolishModalProps> = ({
     );
   };
 
+  const restoreVocalsAndLocked = (polished: SongProject, original: SongProject): SongProject => {
+    const vocalByBarId = new Map<string, string>();
+    const originalSecById = new Map(original.sections.map((s) => [s.id, s]));
+    for (const sec of original.sections) {
+      for (const bar of sec.bars) {
+        if (bar.vocalAudio) vocalByBarId.set(bar.id, bar.vocalAudio);
+      }
+    }
+    return {
+      ...polished,
+      ...(original.vocalTakes !== undefined ? { vocalTakes: original.vocalTakes } : {}),
+      ...(original.snapshots !== undefined ? { snapshots: original.snapshots } : {}),
+      sections: polished.sections.map((sec) => {
+        if (lockedSet.has(sec.id)) {
+          return originalSecById.get(sec.id) ?? sec;
+        }
+        return {
+          ...sec,
+          bars: sec.bars.map((bar) => {
+            const vocal = vocalByBarId.get(bar.id);
+            return vocal ? { ...bar, vocalAudio: vocal } : bar;
+          }),
+        };
+      }),
+    };
+  };
+
   const handleExecutePolish = async () => {
     setErrorMsg(null);
+    setNeedsTopUpError(false);
 
     // 0 Credit Local Execution: immediately apply genre arrangement + resync melody
     if (isZeroCredit) {
+      const originalSecById = new Map(song.sections.map((s) => [s.id, s]));
       let resultSong = song;
       if (rebalanceBand) {
         resultSong = applyGenreBandArrangement(resultSong);
@@ -84,7 +124,7 @@ export const CohesivePolishModal: React.FC<CohesivePolishModalProps> = ({
         ...resultSong,
         updatedAt: new Date().toISOString(),
         sections: resultSong.sections.map((sec) => {
-          if (lockedSet.has(sec.id)) return sec;
+          if (lockedSet.has(sec.id)) return originalSecById.get(sec.id) ?? sec;
           return {
             ...sec,
             bars: sec.bars.map((bar, bIdx) => ({
@@ -118,8 +158,24 @@ export const CohesivePolishModal: React.FC<CohesivePolishModalProps> = ({
       return;
     }
 
-    // AI Execution (2 or 3 Credits)
-    if (!canAfford(cost)) {
+    // AI Execution (2-3 Credits Standard, or 10 Paid Credits Pro Argon)
+    if (useProArgon) {
+      const gate = canUsePaidOnlyModel(CREDIT_COST_TABLE.aiProArgonArranger);
+      if (!gate.allowed) {
+        setNeedsTopUpError(true);
+        setErrorMsg(
+          gate.reason === 'paid-credits-required'
+            ? lang === 'th'
+              ? `โหมด Pro Producer (Gemini 4 Argon) ต้องใช้เครดิตเติมเงินอย่างน้อย ${CREDIT_COST_TABLE.aiProArgonArranger} เครดิต (เครดิตทดลองใช้ไม่ได้)`
+              : `Pro Producer (Gemini 4 Argon) requires ${CREDIT_COST_TABLE.aiProArgonArranger} purchased credits (trial credits cannot be used).`
+            : lang === 'th'
+              ? `เครดิตเติมเงินไม่เพียงพอ (ต้องการ ${CREDIT_COST_TABLE.aiProArgonArranger} เครดิต)`
+              : `Insufficient purchased credits (${CREDIT_COST_TABLE.aiProArgonArranger} credits required).`
+        );
+        return;
+      }
+    } else if (!canAfford(cost)) {
+      setNeedsTopUpError(true);
       setErrorMsg(
         lang === 'th'
           ? `เครดิตไม่เพียงพอ (ต้องการ ${cost} เครดิต แต่คงเหลือ ${creditBalance} เครดิต)`
@@ -131,6 +187,10 @@ export const CohesivePolishModal: React.FC<CohesivePolishModalProps> = ({
     setIsPolishing(true);
 
     try {
+      const lightweightSong: SongProject = {
+        ...stripVocalsFromSong(song),
+        snapshots: undefined,
+      };
       const token = getAuthAccessToken();
       const sendReq = (authHeader?: string) =>
         fetch('/api/advance/cohesive-polish', {
@@ -140,11 +200,13 @@ export const CohesivePolishModal: React.FC<CohesivePolishModalProps> = ({
             ...(authHeader ? { Authorization: `Bearer ${authHeader}` } : {}),
           },
           body: JSON.stringify({
-            song,
+            song: lightweightSong,
             lyricsRetentionPct,
             chordsRetentionPct,
             lockedSectionIds,
             rebalanceBand,
+            useProArgon,
+            modelTier: useProArgon ? 'pro-argon' : 'standard',
           }),
         });
 
@@ -168,6 +230,9 @@ export const CohesivePolishModal: React.FC<CohesivePolishModalProps> = ({
         if (data.wallet && onCreditsChange) {
           const synced = applyServerWalletSnapshot(data.wallet);
           onCreditsChange(synced.balance);
+        }
+        if (res.status === 402) {
+          setNeedsTopUpError(true);
         }
         setErrorMsg(
           data.error ||
@@ -198,7 +263,7 @@ export const CohesivePolishModal: React.FC<CohesivePolishModalProps> = ({
         creditsCost: cost,
       });
 
-      onApplySong(data.song);
+      onApplySong(restoreVocalsAndLocked(data.song, song));
       onClose();
     } catch {
       setErrorMsg(
@@ -374,6 +439,66 @@ export const CohesivePolishModal: React.FC<CohesivePolishModalProps> = ({
             </div>
           </label>
 
+          {/* Section 4B: Pro Producer Mode Toggle (Gemini 4 Argon · 10 Paid Credits) */}
+          {!isZeroCredit && (
+            <div className="space-y-1.5">
+              <label
+                className={`flex items-start gap-2.5 p-3 rounded-2xl border cursor-pointer transition ${
+                  useProArgon
+                    ? 'bg-amber-50 border-amber-400 ring-1 ring-amber-400/30'
+                    : 'bg-surface-2/60 border-hairline hover:border-amber-300'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={useProArgon}
+                  onChange={(e) => {
+                    setUseProArgon(e.target.checked);
+                    setNeedsTopUpError(false);
+                  }}
+                  className="w-4 h-4 mt-0.5 rounded text-amber-500 focus:ring-amber-500"
+                />
+                <div className="flex-1">
+                  <div className="font-bold text-ink-900">
+                    {lang === 'th'
+                      ? `💎 โหมด Pro Producer (Gemini 4 Argon · ${CREDIT_COST_TABLE.aiProArgonArranger} เครดิต · เฉพาะเครดิตเติมเงิน)`
+                      : `💎 Pro Producer Mode (Gemini 4 Argon · ${CREDIT_COST_TABLE.aiProArgonArranger} Credits · Paid Credits Only)`}
+                  </div>
+                  <div className="text-[11px] text-ink-500 mt-0.5">
+                    {lang === 'th'
+                      ? `เทียบกับโหมดมาตรฐาน (${standardCost} เครดิต): คิดวิเคราะห์สัมผัสและคอร์ดส่งระดับลึก`
+                      : `Compared to standard (${standardCost} credits): deeper musical & rhyme reasoning.`}
+                  </div>
+                </div>
+              </label>
+              {useProArgon && !proArgonGate.allowed && (
+                <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-[11px] font-semibold flex items-center justify-between gap-2">
+                  <span>
+                    {proArgonGate.reason === 'paid-credits-required'
+                      ? lang === 'th'
+                        ? `คุณมีเฉพาะ Trial Credits — Gemini 4 Argon ใช้ได้เฉพาะ Purchased Credits (${CREDIT_COST_TABLE.aiProArgonArranger} Cr)`
+                        : `Trial-only balance — Gemini 4 Argon requires ${CREDIT_COST_TABLE.aiProArgonArranger} Purchased Credits.`
+                      : lang === 'th'
+                        ? `เครดิตเติมเงินไม่พอสำหรับ Gemini 4 Argon (${CREDIT_COST_TABLE.aiProArgonArranger} Cr)`
+                        : `Insufficient purchased credits for Gemini 4 Argon (${CREDIT_COST_TABLE.aiProArgonArranger} Cr).`}
+                  </span>
+                  {onOpenWallet && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose();
+                        onOpenWallet();
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-amber-500 text-white text-[11px] font-black cursor-pointer shrink-0"
+                    >
+                      {lang === 'th' ? 'เติมเครดิต' : 'Top Up'}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Pricing Banner */}
           <div
             className={`p-3.5 rounded-2xl border flex items-center justify-between gap-2 flex-wrap ${
@@ -419,18 +544,19 @@ export const CohesivePolishModal: React.FC<CohesivePolishModalProps> = ({
           {errorMsg && (
             <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 font-bold flex items-center justify-between gap-2">
               <span>{errorMsg}</span>
-              {!canAfford(cost) && onOpenWallet && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    onClose();
-                    onOpenWallet();
-                  }}
-                  className="px-2.5 py-1 rounded-lg bg-amber-500 text-white text-[11px] font-black cursor-pointer shrink-0"
-                >
-                  {lang === 'th' ? 'เติมเครดิต' : 'Top Up'}
-                </button>
-              )}
+              {(!canAfford(cost) || (useProArgon && !proArgonGate.allowed) || needsTopUpError) &&
+                onOpenWallet && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onOpenWallet();
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-amber-500 text-white text-[11px] font-black cursor-pointer shrink-0"
+                  >
+                    {lang === 'th' ? 'เติมเครดิต' : 'Top Up'}
+                  </button>
+                )}
             </div>
           )}
         </div>

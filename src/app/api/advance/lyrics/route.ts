@@ -9,12 +9,15 @@ import {
   buildLyricsSystemPrompt,
   buildLyricsUserPrompt,
   buildSingleBarVariationsUserPrompt,
+  getSyllableBudgetForBpm,
   LYRICS_DEEP_RESPONSE_SCHEMA,
   LYRICS_RESPONSE_SCHEMA,
   SINGLE_BAR_VARIATIONS_SCHEMA,
 } from '@/lib/aiPrompts';
 import {
   callGeminiJson,
+  GEMINI_MODEL_FAST_LITE,
+  GEMINI_MODEL_FLASH,
   GEMINI_MODEL_LITE,
   GEMINI_MODEL_MAIN,
   type GeminiTokenUsage,
@@ -24,6 +27,7 @@ import { generateLyricAlignedGuideMelody } from '@/lib/melodyUtils';
 import {
   refundServerBillingOnFailure,
   tryServerBillingPreDeduct,
+  type ServerBillingPreDeductResult,
   type WalletBalanceSummary,
 } from '@/lib/serverWallet';
 import { recordServerFeatureEvent } from '@/lib/serverAnalytics';
@@ -289,79 +293,207 @@ async function handleSingleBarVariations(
   const targetModel = GEMINI_MODEL_LITE;
   const creditCost = CREDIT_COST_TABLE.aiLyricsQuick;
 
-  const billing = await tryServerBillingPreDeduct(
-    request,
-    creditCost,
-    `AI Lyrics [single-bar:${singleBarIndex + 1}] (${targetModel}): ${body.sectionType}`,
-    { modelId: targetModel }
-  );
-  if (billing.active && 'errorStatus' in billing) {
-    return Response.json(
-      { error: billing.error, code: billing.errorCode },
-      { status: billing.errorStatus }
-    );
-  }
+  let billing: ServerBillingPreDeductResult = { active: false };
+  let billingRefunded = false;
 
-  const systemInstruction = buildLyricsSystemPrompt({
-    bpm: body.bpm,
-    timeSignature: body.timeSignature,
-    sectionType: body.sectionType,
-    barCount: Math.max(2, body.bars?.length || body.barCount || 4),
-    thaiGenre: body.thaiGenre,
-    lyricEra: body.lyricEra,
-    lyricDialect: body.lyricDialect,
-    songwriterStyle: body.songwriterStyle,
-    emotionalResolution: body.emotionalResolution,
-    polishExistingDraft: Boolean(existingBarText),
-  });
-
-  const userPrompt = buildSingleBarVariationsUserPrompt({
-    mood: body.mood,
-    topic: body.topic,
-    chordProgression: chords,
-    existingLyrics: existingLines,
-    sectionType: body.sectionType,
-    bpm: body.bpm,
-    timeSignature: body.timeSignature,
-    previousSectionLyrics: body.previousSectionLyrics,
-    mode: 'quick',
-    barCount: body.bars?.length || body.barCount || 4,
-    bars: body.bars,
-    thaiGenre: body.thaiGenre,
-    lyricEra: body.lyricEra,
-    lyricDialect: body.lyricDialect,
-    songwriterStyle: body.songwriterStyle,
-    emotionalResolution: body.emotionalResolution,
-    songTitle: body.songTitle,
-    singleBarIndex,
-  });
-
-  const gemini = await callGeminiJson<GeminiLyricsPayload>(userPrompt, {
-    model: targetModel,
-    systemInstruction,
-    responseSchema: SINGLE_BAR_VARIATIONS_SCHEMA,
-    maxOutputTokens: 1024,
-    thinkingLevel: 'minimal',
-  });
-
-  if (!gemini.ok) {
-    let tipOverride: string | undefined;
-    if (gemini.reason === 'rate-limit') {
-      tipOverride =
-        'โควตาคำขอ Gemini API เต็มชั่วคราว (429) — แสดงผล 3 ตัวเลือกจำลองแทนและไม่หักเครดิตของคุณ';
-    } else if (gemini.reason === 'auth-error') {
-      tipOverride =
-        'GEMINI_API_KEY ไม่ถูกต้องหรือไม่มีสิทธิ์เข้าถึงโมเดล — แสดงผล 3 ตัวเลือกจำลองแทนและไม่หักเครดิต';
-    } else if (gemini.reason !== 'missing-key') {
-      tipOverride = `${gemini.failureReason} — แสดงผล 3 ตัวเลือกจำลองแทนอย่างปลอดภัย (ไม่หักเครดิต)`;
-    }
-
-    const refundedWallet = await refundServerBillingOnFailure(
-      billing,
+  try {
+    billing = await tryServerBillingPreDeduct(
+      request,
       creditCost,
-      `Auto-refund Single-Bar Variations (${gemini.reason})`,
+      `AI Lyrics [single-bar:${singleBarIndex + 1}] (${targetModel}): ${body.sectionType}`,
       { modelId: targetModel }
     );
+    if (billing.active && 'errorStatus' in billing) {
+      return Response.json(
+        { error: billing.error, code: billing.errorCode },
+        { status: billing.errorStatus }
+      );
+    }
+
+    const systemInstruction = buildLyricsSystemPrompt({
+      bpm: body.bpm,
+      timeSignature: body.timeSignature,
+      sectionType: body.sectionType,
+      barCount: Math.max(2, body.bars?.length || body.barCount || 4),
+      thaiGenre: body.thaiGenre,
+      lyricEra: body.lyricEra,
+      lyricDialect: body.lyricDialect,
+      songwriterStyle: body.songwriterStyle,
+      emotionalResolution: body.emotionalResolution,
+      polishExistingDraft: Boolean(existingBarText),
+    });
+
+    const userPrompt = buildSingleBarVariationsUserPrompt({
+      mood: body.mood,
+      topic: body.topic,
+      chordProgression: chords,
+      existingLyrics: existingLines,
+      sectionType: body.sectionType,
+      bpm: body.bpm,
+      timeSignature: body.timeSignature,
+      previousSectionLyrics: body.previousSectionLyrics,
+      mode: 'quick',
+      barCount: body.bars?.length || body.barCount || 4,
+      bars: body.bars,
+      thaiGenre: body.thaiGenre,
+      lyricEra: body.lyricEra,
+      lyricDialect: body.lyricDialect,
+      songwriterStyle: body.songwriterStyle,
+      emotionalResolution: body.emotionalResolution,
+      songTitle: body.songTitle,
+      singleBarIndex,
+    });
+
+    const gemini = await callGeminiJson<GeminiLyricsPayload>(userPrompt, {
+      model: targetModel,
+      fallbackModels: [GEMINI_MODEL_FAST_LITE],
+      systemInstruction,
+      responseSchema: SINGLE_BAR_VARIATIONS_SCHEMA,
+      maxOutputTokens: 1024,
+      thinkingLevel: 'minimal',
+      timeoutMs: 15_000,
+    });
+
+    if (!gemini.ok) {
+      let tipOverride: string | undefined;
+      if (gemini.reason === 'rate-limit') {
+        tipOverride =
+          'โควตาคำขอ Gemini API เต็มชั่วคราว (429) — แสดงผล 3 ตัวเลือกจำลองแทนและไม่หักเครดิตของคุณ';
+      } else if (gemini.reason === 'auth-error') {
+        tipOverride =
+          'GEMINI_API_KEY ไม่ถูกต้องหรือไม่มีสิทธิ์เข้าถึงโมเดล — แสดงผล 3 ตัวเลือกจำลองแทนและไม่หักเครดิต';
+      } else if (gemini.reason !== 'missing-key') {
+        tipOverride = `${gemini.failureReason} — แสดงผล 3 ตัวเลือกจำลองแทนอย่างปลอดภัย (ไม่หักเครดิต)`;
+      }
+
+      const refundedWallet = await refundServerBillingOnFailure(
+        billing,
+        creditCost,
+        `Auto-refund Single-Bar Variations (${gemini.reason})`,
+        { modelId: targetModel }
+      );
+      billingRefunded = true;
+      await recordServerFeatureEvent(
+        request,
+        {
+          eventName: 'ai_lyrics_single_bar',
+          category: 'ai',
+          songwriterStyle: body.songwriterStyle,
+          thaiGenre: body.thaiGenre,
+          lyricDialect: body.lyricDialect,
+          lyricEra: body.lyricEra,
+          emotionalResolution: body.emotionalResolution,
+          featureVariant: body.sectionType,
+          isSimulated: true,
+          creditsCost: 0,
+          metadata: { mode: body.mode ?? 'quick', reason: gemini.reason },
+        },
+        {
+          userId: billing.active && 'userId' in billing ? billing.userId : undefined,
+          skipAuthLookup: billing.active,
+        }
+      );
+      return buildSimulatedFallback(tipOverride, gemini.reason, refundedWallet);
+    }
+
+    const rawVariations = Array.isArray(gemini.data.variations)
+      ? gemini.data.variations
+          .filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+          .map((v) => v.trim())
+      : [];
+
+    const uniqueVariations: string[] = [];
+    for (const v of rawVariations) {
+      if (!uniqueVariations.includes(v)) uniqueVariations.push(v);
+    }
+
+    if (uniqueVariations.length < 2) {
+      const refundedWallet = await refundServerBillingOnFailure(
+        billing,
+        creditCost,
+        'Auto-refund Single-Bar Variations (insufficient-variations)',
+        { modelId: targetModel }
+      );
+      billingRefunded = true;
+      await recordServerFeatureEvent(
+        request,
+        {
+          eventName: 'ai_lyrics_single_bar',
+          category: 'ai',
+          songwriterStyle: body.songwriterStyle,
+          thaiGenre: body.thaiGenre,
+          lyricDialect: body.lyricDialect,
+          lyricEra: body.lyricEra,
+          emotionalResolution: body.emotionalResolution,
+          featureVariant: body.sectionType,
+          isSimulated: true,
+          creditsCost: 0,
+          metadata: { mode: body.mode ?? 'quick', reason: 'parse-error' },
+        },
+        {
+          userId: billing.active && 'userId' in billing ? billing.userId : undefined,
+          skipAuthLookup: billing.active,
+        }
+      );
+      return buildSimulatedFallback(
+        'ผลลัพธ์จาก AI ได้ตัวเลือกสำหรับห้องนี้ไม่ครบ — สลับเป็น 3 ตัวเลือกจำลองอัตโนมัติ (ไม่หักเครดิต)',
+        'parse-error',
+        refundedWallet
+      );
+    }
+
+    if (uniqueVariations.length < 3) {
+      const simPad = buildSimulatedSingleBarVariations({
+        mood: body.mood,
+        topic: body.topic,
+        chord: targetChord,
+        sectionType: body.sectionType,
+        singleBarIndex,
+        prevLine,
+        nextLine,
+        existingBarText,
+        thaiGenre: body.thaiGenre,
+        lyricDialect: body.lyricDialect,
+        songwriterStyle: body.songwriterStyle,
+        emotionalResolution: body.emotionalResolution,
+      });
+      for (const candidate of simPad.variations) {
+        if (uniqueVariations.length >= 3) break;
+        if (!uniqueVariations.includes(candidate)) uniqueVariations.push(candidate);
+      }
+    }
+
+    const finalVariations = uniqueVariations.slice(0, 3);
+    const rhymeNotes = Array.isArray(gemini.data.rhymeNotes)
+      ? gemini.data.rhymeNotes.filter((n): n is string => typeof n === 'string' && n.trim().length > 0)
+      : [];
+    const summaryTip =
+      typeof gemini.data.tip === 'string' && gemini.data.tip.trim().length > 0
+        ? gemini.data.tip.trim()
+        : `สร้าง 3 ตัวเลือกสำหรับห้อง ${singleBarIndex + 1} โดย ${gemini.modelUsed} แล้ว`;
+
+    const lines: AdvanceLyricLine[] = finalVariations.map((text) => ({
+      chord: targetChord,
+      text,
+      syllables: countThaiEnglishSyllables(text),
+      phonetics: analyzeThaiSyllablePhonetics(text),
+    }));
+
+    const result: AdvanceLyricsResponseBody = {
+      isSimulated: false,
+      model: gemini.modelUsed,
+      sectionType: body.sectionType,
+      singleBarIndex,
+      chordsUsed: [targetChord],
+      variations: finalVariations,
+      lines,
+      fullLyrics: finalVariations.join('\n'),
+      tip: summaryTip,
+      rhymeNotes,
+      suggestedChords: [targetChord],
+      usage: gemini.usage,
+      ...(billing.active ? { wallet: billing.wallet } : {}),
+    };
     await recordServerFeatureEvent(
       request,
       {
@@ -373,116 +505,43 @@ async function handleSingleBarVariations(
         lyricEra: body.lyricEra,
         emotionalResolution: body.emotionalResolution,
         featureVariant: body.sectionType,
-        isSimulated: true,
-        creditsCost: 0,
-        metadata: { mode: body.mode ?? 'quick', reason: gemini.reason },
+        isSimulated: false,
+        creditsCost: creditCost,
+        metadata: { mode: body.mode ?? 'quick', model: gemini.modelUsed },
       },
       {
         userId: billing.active && 'userId' in billing ? billing.userId : undefined,
         skipAuthLookup: billing.active,
       }
     );
-    return buildSimulatedFallback(tipOverride, gemini.reason, refundedWallet);
-  }
+    return Response.json(result, { status: 200 });
+  } catch (err) {
+    const rawMsg = err instanceof Error ? err.message : String(err);
+    const safeMsg = rawMsg
+      .replace(/AIza[A-Za-z0-9_-]{8,}/g, '[REDACTED]')
+      .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [REDACTED]');
+    console.error('[lyrics/single-bar] unexpected failure:', safeMsg);
 
-  const rawVariations = Array.isArray(gemini.data.variations)
-    ? gemini.data.variations
-        .filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
-        .map((v) => v.trim())
-    : [];
+    const refundedWallet = !billingRefunded
+      ? await refundServerBillingOnFailure(
+          billing,
+          creditCost,
+          'Auto-refund Single-Bar Variations (internal-error)',
+          { modelId: targetModel }
+        )
+      : undefined;
 
-  const uniqueVariations: string[] = [];
-  for (const v of rawVariations) {
-    if (!uniqueVariations.includes(v)) uniqueVariations.push(v);
-  }
-
-  if (uniqueVariations.length === 0) {
-    const refundedWallet = await refundServerBillingOnFailure(
-      billing,
-      creditCost,
-      'Auto-refund Single-Bar Variations (parse-error)',
-      { modelId: targetModel }
+    return Response.json(
+      {
+        error: refundedWallet
+          ? `เซิร์ฟเวอร์ขัดข้องชั่วคราวระหว่างแต่งเนื้อเพลงรายห้อง (คืน ${creditCost} เครดิตให้แล้วอัตโนมัติ)`
+          : 'เซิร์ฟเวอร์ขัดข้องชั่วคราวระหว่างแต่งเนื้อเพลงรายห้อง (ไม่หักเครดิต) กรุณาลองใหม่อีกครั้ง',
+        code: 'LYRICS_INTERNAL_ERROR',
+        ...(refundedWallet ? { wallet: refundedWallet } : {}),
+      },
+      { status: 500 }
     );
-    return buildSimulatedFallback(
-      'ผลลัพธ์จาก AI ไม่พบตัวเลือกสำหรับห้องนี้ — สลับเป็น 3 ตัวเลือกจำลองอัตโนมัติ (ไม่หักเครดิต)',
-      'parse-error',
-      refundedWallet
-    );
   }
-
-  if (uniqueVariations.length < 3) {
-    const simPad = buildSimulatedSingleBarVariations({
-      mood: body.mood,
-      topic: body.topic,
-      chord: targetChord,
-      sectionType: body.sectionType,
-      singleBarIndex,
-      prevLine,
-      nextLine,
-      existingBarText,
-      thaiGenre: body.thaiGenre,
-      lyricDialect: body.lyricDialect,
-      songwriterStyle: body.songwriterStyle,
-      emotionalResolution: body.emotionalResolution,
-    });
-    for (const candidate of simPad.variations) {
-      if (uniqueVariations.length >= 3) break;
-      if (!uniqueVariations.includes(candidate)) uniqueVariations.push(candidate);
-    }
-  }
-
-  const finalVariations = uniqueVariations.slice(0, 3);
-  const rhymeNotes = Array.isArray(gemini.data.rhymeNotes)
-    ? gemini.data.rhymeNotes.filter((n): n is string => typeof n === 'string' && n.trim().length > 0)
-    : [];
-  const summaryTip =
-    typeof gemini.data.tip === 'string' && gemini.data.tip.trim().length > 0
-      ? gemini.data.tip.trim()
-      : `สร้าง 3 ตัวเลือกสำหรับห้อง ${singleBarIndex + 1} โดย ${gemini.modelUsed} แล้ว`;
-
-  const lines: AdvanceLyricLine[] = finalVariations.map((text) => ({
-    chord: targetChord,
-    text,
-    syllables: countThaiEnglishSyllables(text),
-    phonetics: analyzeThaiSyllablePhonetics(text),
-  }));
-
-  const result: AdvanceLyricsResponseBody = {
-    isSimulated: false,
-    model: gemini.modelUsed,
-    sectionType: body.sectionType,
-    singleBarIndex,
-    chordsUsed: [targetChord],
-    variations: finalVariations,
-    lines,
-    fullLyrics: finalVariations.join('\n'),
-    tip: summaryTip,
-    rhymeNotes,
-    suggestedChords: [targetChord],
-    usage: gemini.usage,
-    ...(billing.active ? { wallet: billing.wallet } : {}),
-  };
-  await recordServerFeatureEvent(
-    request,
-    {
-      eventName: 'ai_lyrics_single_bar',
-      category: 'ai',
-      songwriterStyle: body.songwriterStyle,
-      thaiGenre: body.thaiGenre,
-      lyricDialect: body.lyricDialect,
-      lyricEra: body.lyricEra,
-      emotionalResolution: body.emotionalResolution,
-      featureVariant: body.sectionType,
-      isSimulated: false,
-      creditsCost: creditCost,
-      metadata: { mode: body.mode ?? 'quick', model: gemini.modelUsed },
-    },
-    {
-      userId: billing.active && 'userId' in billing ? billing.userId : undefined,
-      skipAuthLookup: billing.active,
-    }
-  );
-  return Response.json(result, { status: 200 });
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -634,258 +693,309 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const targetModel = mode === 'deep' ? GEMINI_MODEL_MAIN : GEMINI_MODEL_LITE;
+  const fallbackModels =
+    mode === 'deep'
+      ? [GEMINI_MODEL_FLASH, GEMINI_MODEL_LITE]
+      : [GEMINI_MODEL_FAST_LITE];
   const creditCost =
     mode === 'deep' ? CREDIT_COST_TABLE.aiSectionDeepMelody : CREDIT_COST_TABLE.aiLyricsQuick;
 
-  const billing = await tryServerBillingPreDeduct(
-    request,
-    creditCost,
-    `AI Lyrics [${mode}] (${targetModel}): ${sectionType}`,
-    { modelId: targetModel }
-  );
-  if (billing.active && 'errorStatus' in billing) {
-    return Response.json(
-      { error: billing.error, code: billing.errorCode },
-      { status: billing.errorStatus }
+  let billing: ServerBillingPreDeductResult = { active: false };
+  let billingRefunded = false;
+
+  try {
+    billing = await tryServerBillingPreDeduct(
+      request,
+      creditCost,
+      `AI Lyrics [${mode}] (${targetModel}): ${sectionType}`,
+      { modelId: targetModel }
     );
-  }
-
-  const systemInstruction = buildLyricsSystemPrompt({
-    bpm,
-    timeSignature,
-    sectionType,
-    barCount: expectedBars,
-    thaiGenre,
-    lyricEra,
-    lyricDialect,
-    songwriterStyle,
-    emotionalResolution,
-    polishExistingDraft,
-  });
-  const userPrompt = buildLyricsUserPrompt({
-    mood,
-    topic,
-    chordProgression,
-    existingLyrics:
-      bars && bars.some((b) => b.existingLyrics)
-        ? bars.map((b) => b.existingLyrics || '')
-        : existingLyrics
-          ? existingLyrics.split('\n')
-          : [],
-    sectionType,
-    bpm,
-    timeSignature,
-    previousSectionLyrics,
-    mode,
-    barCount: expectedBars,
-    bars,
-    thaiGenre,
-    lyricEra,
-    lyricDialect,
-    songwriterStyle,
-    emotionalResolution,
-    songTitle,
-    allPriorSections,
-    polishExistingDraft,
-  });
-
-  const gemini = await callGeminiJson<GeminiLyricsPayload>(userPrompt, {
-    model: targetModel,
-    systemInstruction,
-    responseSchema: mode === 'deep' ? LYRICS_DEEP_RESPONSE_SCHEMA : LYRICS_RESPONSE_SCHEMA,
-    maxOutputTokens: mode === 'deep' ? 4096 : 2048,
-    thinkingLevel: mode === 'deep' ? 'low' : 'minimal',
-  });
-
-  if (!gemini.ok) {
-    let tipOverride: string | undefined;
-    if (gemini.reason === 'rate-limit') {
-      tipOverride =
-        'โควตาคำขอ Gemini API เต็มชั่วคราว (429) — แสดงผลโหมดจำลองแทนและไม่หักเครดิตของคุณ';
-    } else if (gemini.reason === 'auth-error') {
-      tipOverride =
-        'GEMINI_API_KEY ไม่ถูกต้องหรือไม่มีสิทธิ์เข้าถึงโมเดล — แสดงผลโหมดจำลองแทนและไม่หักเครดิต';
-    } else if (gemini.reason !== 'missing-key') {
-      tipOverride = `${gemini.failureReason} — แสดงผลโหมดจำลองแทนอย่างปลอดภัย (ไม่หักเครดิต)`;
+    if (billing.active && 'errorStatus' in billing) {
+      return Response.json(
+        { error: billing.error, code: billing.errorCode },
+        { status: billing.errorStatus }
+      );
     }
 
-    const refundedWallet = await refundServerBillingOnFailure(
-      billing,
-      creditCost,
-      `Auto-refund AI Lyrics (${gemini.reason})`,
-      { modelId: targetModel }
-    );
-
-    await recordServerFeatureEvent(
-      request,
-      {
-        eventName: mode === 'deep' ? 'ai_lyrics_deep' : 'ai_lyrics_quick',
-        category: 'ai',
-        songwriterStyle,
-        thaiGenre,
-        lyricDialect,
-        lyricEra,
-        emotionalResolution,
-        featureVariant: sectionType,
-        isSimulated: true,
-        creditsCost: 0,
-        metadata: { mode, reason: gemini.reason },
-      },
-      {
-        userId: billing.active && 'userId' in billing ? billing.userId : undefined,
-        skipAuthLookup: billing.active,
-      }
-    );
-
-    return Response.json(
-      {
-        ...buildSimulatedLyrics(payload, tipOverride, gemini.reason),
-        ...(refundedWallet ? { wallet: refundedWallet } : {}),
-      },
-      { status: 200 }
-    );
-  }
-
-  const rawLines = Array.isArray(gemini.data.lines)
-    ? gemini.data.lines.filter((l): l is string => typeof l === 'string' && l.trim().length > 0)
-    : [];
-
-  if (rawLines.length === 0) {
-    const refundedWallet = await refundServerBillingOnFailure(
-      billing,
-      creditCost,
-      'Auto-refund AI Lyrics (parse-error)',
-      { modelId: targetModel }
-    );
-
-    await recordServerFeatureEvent(
-      request,
-      {
-        eventName: mode === 'deep' ? 'ai_lyrics_deep' : 'ai_lyrics_quick',
-        category: 'ai',
-        songwriterStyle,
-        thaiGenre,
-        lyricDialect,
-        lyricEra,
-        emotionalResolution,
-        featureVariant: sectionType,
-        isSimulated: true,
-        creditsCost: 0,
-        metadata: { mode, reason: 'parse-error' },
-      },
-      {
-        userId: billing.active && 'userId' in billing ? billing.userId : undefined,
-        skipAuthLookup: billing.active,
-      }
-    );
-
-    return Response.json(
-      {
-        ...buildSimulatedLyrics(
-          payload,
-          'ผลลัพธ์จาก AI ไม่ครบ 4 วรรค — สลับเป็นโหมดจำลองอัตโนมัติ (ไม่หักเครดิต)',
-          'parse-error'
-        ),
-        ...(refundedWallet ? { wallet: refundedWallet } : {}),
-      },
-      { status: 200 }
-    );
-  }
-
-  const suggestedChords = Array.isArray(gemini.data.suggestedChords)
-    ? gemini.data.suggestedChords.filter(
-        (c): c is string => typeof c === 'string' && c.trim().length > 0
-      )
-    : [];
-  const rhymeNotes = Array.isArray(gemini.data.rhymeNotes)
-    ? gemini.data.rhymeNotes.filter(
-        (n): n is string => typeof n === 'string' && n.trim().length > 0
-      )
-    : [];
-
-  const chords = chordProgression.length > 0 ? chordProgression : ['C', 'G', 'Am', 'F'];
-  const lines: AdvanceLyricLine[] = rawLines.slice(0, expectedBars).map((text, idx) => {
-    const cleanText = text.trim();
-    return {
-      chord: bars?.[idx]?.chord || chords[idx % chords.length],
-      text: cleanText,
-      syllables: countThaiEnglishSyllables(cleanText),
-      phonetics: analyzeThaiSyllablePhonetics(cleanText),
-    };
-  });
-
-  const summaryTip =
-    rhymeNotes.length > 0
-      ? rhymeNotes.join(' • ')
-      : typeof gemini.data.tip === 'string' && gemini.data.tip.trim().length > 0
-        ? gemini.data.tip.trim()
-        : `สร้างโดย ${gemini.modelUsed} ให้เข้ากับคอร์ดและจังหวะ ${bpm} BPM แล้ว`;
-
-  let melodyNotesPerBar: MelodyNote[][] | undefined;
-  if (mode === 'deep') {
-    const rawGroups = Array.isArray(gemini.data.melodyNotesPerBar)
-      ? gemini.data.melodyNotesPerBar
-      : [];
-    melodyNotesPerBar = lines.map((line, idx) => {
-      const clamped = clampMelodyNotesForBar(rawGroups[idx]);
-      const chord2 = bars?.[idx]?.chordsPerBar === 2 ? bars[idx].chord2 : undefined;
-      if (clamped.length > 0) {
-        return clamped;
-      }
-      return generateLyricAlignedGuideMelody({
-        lyrics: line.text,
-        chord1: line.chord,
-        chord2,
-        totalSteps: 16,
-        stepsPerBeat: 4,
-        barIndex: idx,
-        sectionType,
-      });
+    const systemInstruction = buildLyricsSystemPrompt({
+      bpm,
+      timeSignature,
+      sectionType,
+      barCount: expectedBars,
+      thaiGenre,
+      lyricEra,
+      lyricDialect,
+      songwriterStyle,
+      emotionalResolution,
+      polishExistingDraft,
     });
-  }
+    const userPrompt = buildLyricsUserPrompt({
+      mood,
+      topic,
+      chordProgression,
+      existingLyrics:
+        bars && bars.some((b) => b.existingLyrics)
+          ? bars.map((b) => b.existingLyrics || '')
+          : existingLyrics
+            ? existingLyrics.split('\n')
+            : [],
+      sectionType,
+      bpm,
+      timeSignature,
+      previousSectionLyrics,
+      mode,
+      barCount: expectedBars,
+      bars,
+      thaiGenre,
+      lyricEra,
+      lyricDialect,
+      songwriterStyle,
+      emotionalResolution,
+      songTitle,
+      allPriorSections,
+      polishExistingDraft,
+    });
 
-  const result: AdvanceLyricsResponseBody = {
-    isSimulated: false,
-    model: gemini.modelUsed,
-    sectionType,
-    chordsUsed: chords,
-    lines,
-    fullLyrics: lines.map((l) => l.text).join('\n'),
-    tip: summaryTip,
-    rhymeNotes,
-    suggestedChords: suggestedChords.length > 0 ? suggestedChords : lines.map((l) => l.chord),
-    rhymeValidation: validateThaiLyricCouplets(
-      lines.map((l) => l.text),
-      { bpm, timeSignature }
-    ),
-    ...(melodyNotesPerBar ? { melodyNotesPerBar } : {}),
-    usage: gemini.usage,
-    ...(billing.active ? { wallet: billing.wallet } : {}),
-  };
-  await recordServerFeatureEvent(
-    request,
-    {
-      eventName: mode === 'deep' ? 'ai_lyrics_deep' : 'ai_lyrics_quick',
-      category: 'ai',
+    const gemini = await callGeminiJson<GeminiLyricsPayload>(userPrompt, {
+      model: targetModel,
+      fallbackModels,
+      systemInstruction,
+      responseSchema: mode === 'deep' ? LYRICS_DEEP_RESPONSE_SCHEMA : LYRICS_RESPONSE_SCHEMA,
+      maxOutputTokens: mode === 'deep' ? 6144 : 2048,
+      thinkingLevel: 'low',
+      timeoutMs: mode === 'deep' ? 32_000 : 22_000,
+    });
+
+    if (!gemini.ok) {
+      let tipOverride: string | undefined;
+      if (gemini.reason === 'rate-limit') {
+        tipOverride =
+          'โควตาคำขอ Gemini API เต็มชั่วคราว (429) — แสดงผลโหมดจำลองแทนและไม่หักเครดิตของคุณ';
+      } else if (gemini.reason === 'auth-error') {
+        tipOverride =
+          'GEMINI_API_KEY ไม่ถูกต้องหรือไม่มีสิทธิ์เข้าถึงโมเดล — แสดงผลโหมดจำลองแทนและไม่หักเครดิต';
+      } else if (gemini.reason !== 'missing-key') {
+        tipOverride = `${gemini.failureReason} — แสดงผลโหมดจำลองแทนอย่างปลอดภัย (ไม่หักเครดิต)`;
+      }
+
+      const refundedWallet = await refundServerBillingOnFailure(
+        billing,
+        creditCost,
+        `Auto-refund AI Lyrics (${gemini.reason})`,
+        { modelId: targetModel }
+      );
+      billingRefunded = true;
+
+      await recordServerFeatureEvent(
+        request,
+        {
+          eventName: mode === 'deep' ? 'ai_lyrics_deep' : 'ai_lyrics_quick',
+          category: 'ai',
+          songwriterStyle,
+          thaiGenre,
+          lyricDialect,
+          lyricEra,
+          emotionalResolution,
+          featureVariant: sectionType,
+          isSimulated: true,
+          creditsCost: 0,
+          metadata: { mode, reason: gemini.reason },
+        },
+        {
+          userId: billing.active && 'userId' in billing ? billing.userId : undefined,
+          skipAuthLookup: billing.active,
+        }
+      );
+
+      return Response.json(
+        {
+          ...buildSimulatedLyrics(payload, tipOverride, gemini.reason),
+          ...(refundedWallet ? { wallet: refundedWallet } : {}),
+        },
+        { status: 200 }
+      );
+    }
+
+    const rawLines = Array.isArray(gemini.data.lines)
+      ? gemini.data.lines.filter((l): l is string => typeof l === 'string' && l.trim().length > 0)
+      : [];
+
+    if (rawLines.length < Math.min(2, expectedBars)) {
+      const refundedWallet = await refundServerBillingOnFailure(
+        billing,
+        creditCost,
+        'Auto-refund AI Lyrics (insufficient-lines)',
+        { modelId: targetModel }
+      );
+      billingRefunded = true;
+
+      await recordServerFeatureEvent(
+        request,
+        {
+          eventName: mode === 'deep' ? 'ai_lyrics_deep' : 'ai_lyrics_quick',
+          category: 'ai',
+          songwriterStyle,
+          thaiGenre,
+          lyricDialect,
+          lyricEra,
+          emotionalResolution,
+          featureVariant: sectionType,
+          isSimulated: true,
+          creditsCost: 0,
+          metadata: { mode, reason: 'parse-error' },
+        },
+        {
+          userId: billing.active && 'userId' in billing ? billing.userId : undefined,
+          skipAuthLookup: billing.active,
+        }
+      );
+
+      return Response.json(
+        {
+          ...buildSimulatedLyrics(
+            payload,
+            'ผลลัพธ์จาก AI ไม่ครบตามจำนวนวรรค — สลับเป็นโหมดจำลองอัตโนมัติ (ไม่หักเครดิต)',
+            'parse-error'
+          ),
+          ...(refundedWallet ? { wallet: refundedWallet } : {}),
+        },
+        { status: 200 }
+      );
+    }
+
+    const suggestedChords = Array.isArray(gemini.data.suggestedChords)
+      ? gemini.data.suggestedChords.filter(
+          (c): c is string => typeof c === 'string' && c.trim().length > 0
+        )
+      : [];
+    const rhymeNotes = Array.isArray(gemini.data.rhymeNotes)
+      ? gemini.data.rhymeNotes.filter(
+          (n): n is string => typeof n === 'string' && n.trim().length > 0
+        )
+      : [];
+
+    const chords = chordProgression.length > 0 ? chordProgression : ['C', 'G', 'Am', 'F'];
+    const lines: AdvanceLyricLine[] = rawLines.slice(0, expectedBars).map((text, idx) => {
+      const cleanText = text.trim();
+      return {
+        chord: bars?.[idx]?.chord || chords[idx % chords.length],
+        text: cleanText,
+        syllables: countThaiEnglishSyllables(cleanText),
+        phonetics: analyzeThaiSyllablePhonetics(cleanText),
+      };
+    });
+
+    const summaryTip =
+      rhymeNotes.length > 0
+        ? rhymeNotes.join(' • ')
+        : typeof gemini.data.tip === 'string' && gemini.data.tip.trim().length > 0
+          ? gemini.data.tip.trim()
+          : `สร้างโดย ${gemini.modelUsed} ให้เข้ากับคอร์ดและจังหวะ ${bpm} BPM แล้ว`;
+
+    let melodyNotesPerBar: MelodyNote[][] | undefined;
+    if (mode === 'deep') {
+      const rawGroups = Array.isArray(gemini.data.melodyNotesPerBar)
+        ? gemini.data.melodyNotesPerBar
+        : [];
+      melodyNotesPerBar = lines.map((line, idx) => {
+        const clamped = clampMelodyNotesForBar(rawGroups[idx]);
+        const chord2 = bars?.[idx]?.chordsPerBar === 2 ? bars[idx].chord2 : undefined;
+        if (clamped.length > 0) {
+          return clamped;
+        }
+        return generateLyricAlignedGuideMelody({
+          lyrics: line.text,
+          chord1: line.chord,
+          chord2,
+          totalSteps: 16,
+          stepsPerBeat: 4,
+          barIndex: idx,
+          sectionType,
+        });
+      });
+    }
+
+    const sectionBudget = getSyllableBudgetForBpm(bpm, timeSignature, {
+      sectionType,
       songwriterStyle,
       thaiGenre,
-      lyricDialect,
-      lyricEra,
-      emotionalResolution,
-      featureVariant: sectionType,
+    });
+
+    const result: AdvanceLyricsResponseBody = {
       isSimulated: false,
-      creditsCost: mode === 'deep' ? 2 : 1,
-      metadata: {
-        mode,
-        barCount: expectedBars,
-        polishExistingDraft,
-        model: gemini.modelUsed,
+      model: gemini.modelUsed,
+      sectionType,
+      chordsUsed: chords,
+      lines,
+      fullLyrics: lines.map((l) => l.text).join('\n'),
+      tip: summaryTip,
+      rhymeNotes,
+      suggestedChords: suggestedChords.length > 0 ? suggestedChords : lines.map((l) => l.chord),
+      rhymeValidation: validateThaiLyricCouplets(
+        lines.map((l) => l.text),
+        {
+          bpm,
+          timeSignature,
+          minSyllables: sectionBudget.min,
+          maxSyllables: sectionBudget.max,
+          enforceSyllableBudget: true,
+        }
+      ),
+      ...(melodyNotesPerBar ? { melodyNotesPerBar } : {}),
+      usage: gemini.usage,
+      ...(billing.active ? { wallet: billing.wallet } : {}),
+    };
+    await recordServerFeatureEvent(
+      request,
+      {
+        eventName: mode === 'deep' ? 'ai_lyrics_deep' : 'ai_lyrics_quick',
+        category: 'ai',
+        songwriterStyle,
+        thaiGenre,
+        lyricDialect,
+        lyricEra,
+        emotionalResolution,
+        featureVariant: sectionType,
+        isSimulated: false,
+        creditsCost: creditCost,
+        metadata: {
+          mode,
+          barCount: expectedBars,
+          polishExistingDraft,
+          model: gemini.modelUsed,
+        },
       },
-    },
-    {
-      userId: billing.active && 'userId' in billing ? billing.userId : undefined,
-      skipAuthLookup: billing.active,
-    }
-  );
-  return Response.json(result, { status: 200 });
+      {
+        userId: billing.active && 'userId' in billing ? billing.userId : undefined,
+        skipAuthLookup: billing.active,
+      }
+    );
+    return Response.json(result, { status: 200 });
+  } catch (err) {
+    const rawMsg = err instanceof Error ? err.message : String(err);
+    const safeMsg = rawMsg
+      .replace(/AIza[A-Za-z0-9_-]{8,}/g, '[REDACTED]')
+      .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [REDACTED]');
+    console.error('[lyrics] unexpected failure:', safeMsg);
+
+    const refundedWallet = !billingRefunded
+      ? await refundServerBillingOnFailure(
+          billing,
+          creditCost,
+          'Auto-refund AI Lyrics (internal-error)',
+          { modelId: targetModel }
+        )
+      : undefined;
+
+    return Response.json(
+      {
+        error: refundedWallet
+          ? `เซิร์ฟเวอร์ขัดข้องชั่วคราวระหว่างแต่งเนื้อเพลง (คืน ${creditCost} เครดิตให้แล้วอัตโนมัติ)`
+          : 'เซิร์ฟเวอร์ขัดข้องชั่วคราวระหว่างแต่งเนื้อเพลง (ไม่หักเครดิต) กรุณาลองใหม่อีกครั้ง',
+        code: 'LYRICS_INTERNAL_ERROR',
+        ...(refundedWallet ? { wallet: refundedWallet } : {}),
+      },
+      { status: 500 }
+    );
+  }
 }

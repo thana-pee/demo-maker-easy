@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState } from 'react';
-import { getDiatonicChords, parseChord } from '@/lib/chordUtils';
+import type { SongProject } from '@/types/song';
+import { getDiatonicChords, parseChord, transposeChord } from '@/lib/chordUtils';
 
 const SLASH_BASS_NOTES = ['E', 'F#', 'G', 'A', 'B', 'C', 'D'] as const;
 
@@ -9,6 +10,8 @@ interface ChordPickerModalProps {
   isOpen: boolean;
   baseKey: string;
   currentChord: string;
+  song?: SongProject;
+  onPreviewChord?: (chord: string) => void;
   onSelectChord: (chord: string) => void;
   onClose: () => void;
 }
@@ -17,6 +20,8 @@ export const ChordPickerModal: React.FC<ChordPickerModalProps> = ({
   isOpen,
   baseKey,
   currentChord,
+  song,
+  onPreviewChord,
   onSelectChord,
   onClose,
 }) => {
@@ -28,34 +33,56 @@ export const ChordPickerModal: React.FC<ChordPickerModalProps> = ({
   const activeRaw = (customInput.trim() || currentChord || 'C').trim();
   const baseChord = activeRaw.split('/')[0].trim() || 'C';
   const { bass: currentBass } = parseChord(activeRaw);
+  const transposeSemitones = song?.transposeSemitones ?? 0;
+  const soundingChord =
+    transposeSemitones !== 0 ? transposeChord(activeRaw, transposeSemitones) : activeRaw;
+
+  const handleChooseChord = (chord: string) => {
+    onPreviewChord?.(chord);
+    onSelectChord(chord);
+  };
 
   const handleCustomSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (customInput.trim()) {
-      onSelectChord(customInput.trim());
+      handleChooseChord(customInput.trim());
       setCustomInput('');
     }
   };
 
   const handleAttachSlashBass = (bassNote: string | null) => {
-    onSelectChord(bassNote ? `${baseChord}/${bassNote}` : baseChord);
+    const nextChord = bassNote ? `${baseChord}/${bassNote}` : baseChord;
+    onPreviewChord?.(nextChord);
+    onSelectChord(nextChord);
     setCustomInput('');
   };
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/45 backdrop-blur-xs flex items-center justify-center p-4">
       <div className="bg-surface-1 rounded-3xl border border-hairline shadow-e3 max-w-md w-full p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
-        <div className="flex items-center justify-between border-b border-hairline pb-3">
+        <div className="flex items-center justify-between border-b border-hairline pb-3 gap-2">
           <div>
             <h3 className="font-bold text-lg text-ink-900">เลือกคอร์ดในคีย์ {baseKey}</h3>
             <p className="text-xs text-ink-400">คอร์ดมาตรฐานตามสเกล (Diatonic) เล่นแล้วไม่เพี้ยนแน่นอน</p>
           </div>
-          <button
-            onClick={onClose}
-            className="w-8 h-8 rounded-full bg-surface-2 hover:bg-surface-inset text-ink-700 flex items-center justify-center font-bold transition cursor-pointer"
-          >
-            ✕
-          </button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {onPreviewChord && (
+              <button
+                type="button"
+                onClick={() => onPreviewChord(activeRaw)}
+                title={`ฟังเสียงคอร์ด ${soundingChord}`}
+                className="px-2.5 py-1.5 rounded-xl bg-accent-50 hover:bg-accent-200/70 text-accent-text text-xs font-semibold border border-accent-200 transition cursor-pointer"
+              >
+                🔊 ฟังเสียงคอร์ด
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="w-8 h-8 rounded-full bg-surface-2 hover:bg-surface-inset text-ink-700 flex items-center justify-center font-bold transition cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
         </div>
 
         {/* Diatonic Chord Grid */}
@@ -65,7 +92,7 @@ export const ChordPickerModal: React.FC<ChordPickerModalProps> = ({
             return (
               <button
                 key={chord}
-                onClick={() => onSelectChord(chord)}
+                onClick={() => handleChooseChord(chord)}
                 className={`py-3 px-2 rounded-2xl font-bold font-mono-tabular text-base transition flex flex-col items-center justify-center gap-0.5 border cursor-pointer ${
                   isSelected
                     ? 'bg-accent-500 text-white border-accent-500 shadow-e2 scale-102'

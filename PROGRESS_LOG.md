@@ -23,6 +23,9 @@
 | **5F** | ✅ DONE | 2026-11-14 | Google OAuth Sign-In, Server Postgres Wallet & PromptPay Auto-Slip Billing |
 | **7F** | ✅ DONE | 2026-11-15 | Sprint D Anti-Rush Lyric Budget, Bar-1 Vocal Alignment, MP3 Blob Fix & `gemini-4-hydrogen` Live QA |
 | **7G** | ✅ DONE | 2026-11-15 | Sprint E Edge-Breath Strip, Section Melodic TTS, 1-Click Full-Song AI Vocals & IDB JSON Import |
+| **8A** | ✅ DONE | 2026-11-18 | Multi-Model Tiering, `v1beta` Parity, Pro Argon Mode (10 Cr) & Bulletproof Split-Wallet Refund |
+| **8B** | ✅ DONE | 2026-11-18 | Prompt Engineering, 16-Step Hum-to-Song & Cohesive Polish Fixes |
+| **8C** | ✅ DONE | 2026-11-18 | Studio Save Engine (Auto + Manual Save Ctrl+S + Auto-Checkpoints) & IDB Audio Fix |
 
 ---
 
@@ -713,4 +716,108 @@ Implemented holistic product fixes targeting full-song AI vocal completeness, cl
 Tests & Gates:
 - `npm test` (`npx tsx --test tests/*.test.ts`) → `186/186` passing (0 failed, 0 skipped)
 - `npx eslint . --max-warnings=0` → 0 errors, 0 warnings
+- `npm run build` → Next.js 16.4.6 (Turbopack) + TypeScript exited with code 0
+
+---
+
+### [Phase 8A] Multi-Model Tiering, `v1beta` Parity, Pro Argon Mode & Bulletproof Wallet Refund (2026-11-18)
+Implemented Phase 8A per `PHASE_8_MASTER_PLAN.md` (`$0.00` offline/mock execution):
+- **Gemini Client Model Tiering, `v1beta` Parity & Balanced JSON Recovery (`src/lib/geminiClient.ts`)**:
+  - Exported `GEMINI_MODEL_FAST_LITE` (`gemini-3.1-flash-lite`), `GEMINI_MODEL_FLASH` (`gemini-3.8-flash`), and `GEMINI_MODEL_CARBON` (`gemini-4-carbon`) while preserving all existing model constants.
+  - Added `fallbackModels?: string[]` loop in `callGeminiJson` (retrying on `rate-limit`, `network-error`, `http-error`, `incomplete-output`, and `parse-error`; skipping fallback on `auth-error` / `missing-key`), updated `resolveThinkingLevel` and `resolveMaxOutputTokens` per model serving caps, and upgraded `extractJsonFromText` with balanced `{...}`/`[...]` scanning.
+  - Enforced `{ apiVersion: 'v1beta' }`, `runWithAbortTimeout`, and `:generateContent` fallbacks across `callGeminiJson`, `callGeminiTranscribeAudio` (`12_000` ms), `callGeminiTtsAudio` (`35_000` ms), and `callGeminiMusicAudio` (`50_000` ms).
+- **Thai TTS Model Enforcement (`src/app/api/advance/tts-cue/route.ts`, `src/components/AdvanceModeModal.tsx`)**:
+  - Enforced `GEMINI_MODEL_TTS` (`gemini-3.8-flash-tts`) for all Thai requests (`language === 'th'`, `/[ก-๙]/`, `vocalMode === 'singing-demo'`, or `modelTier === 'pro-tts'`), restricting `gemini-3.8-flash-lite-tts` fallback strictly to English guide mode.
+  - Updated `handleSingLineWithAi` in `AdvanceModeModal.tsx` to pass `modelTier: 'pro-tts'`, `sectionType`, and `baseKey`.
+- **Bulletproof Split-Wallet Refund & Outer `try/catch` Guards (`src/lib/serverWallet.ts`, `src/app/api/advance/*/route.ts`)**:
+  - Tracked exact `deductedFromTrial` and `deductedFromPurchased` pockets in `tryServerBillingPreDeduct` (preserving legacy RPC-only `404`/`{}` test mocks) and refunded the exact pocket(s) in `refundServerBillingOnFailure`.
+  - Wrapped all 7 AI routes (`architect`, `cohesive-polish`, `director`, `hum-to-song`, `lyrics`, `reference-track`, `tts-cue`) in outer `try/catch` guards with double-refund protection, empty-patch/insufficient-line auto-refunds in `director` and `lyrics`, and Table 0.2 model/token/timeout/fallback configurations.
+- **`gemini-4-argon` Pro Mode (`src/app/api/advance/architect/route.ts`, `src/app/api/advance/cohesive-polish/route.ts`, `src/components/EasyModeStarterModal.tsx`, `src/components/CohesivePolishModal.tsx`)**:
+  - Added 10-Credit Paid-Only (`requirePurchased: true`) Pro Argon Mode (`useProArgon` / `modelTier: 'pro-argon'`) with UI switches gated by `canUsePaidOnlyModel(walletBreakdown)` in both `EasyModeStarterModal.tsx` and `CohesivePolishModal.tsx`.
+- **Tests (`tests/phase8a.test.ts`)**:
+  - Added offline unit & integration test suite `tests/phase8a.test.ts`.
+
+Tests & Gates:
+- `npm test` (`npx tsx --test tests/*.test.ts`) → `219/219` passing (0 failed, 0 skipped)
+- `npx eslint . --max-warnings=0` → 0 errors, 0 warnings
+- `npm run build` → Next.js 16.4.6 (Turbopack) + TypeScript exited with code 0
+
+---
+
+### [Phase 8B] Prompt Engineering, 16-Step Hum-to-Song & Cohesive Polish Fixes (2026-11-19)
+Implemented Phase 8B per `PHASE_8_MASTER_PLAN.md` (`$0.00` offline/mock execution):
+- **16-Step Hum-to-Song & Schema Alignment (`src/lib/aiPrompts.ts`, `src/lib/songArchitect.ts`)**:
+  - Updated `buildHumToSongSystemPrompt()` to use `0-15` steps for `4/4`, `0-11` steps for `3/4`/`6/8`, and `durationSteps (1-16)`.
+  - Aligned `HUM_TO_SONG_RESPONSE_SCHEMA` `playStyle` enum to `['normal', 'let-ring', 'break']`, changed `producerNotes` to an array of strings, and removed nested `maxItems` constraints.
+  - Updated `sanitizeArchitectSongProject()` to clamp `melodyNotes` step/duration bounds safely per time signature (`16` steps in `4/4`, `12` steps in `3/4` & `6/8`) while supporting `0..7`, `0..11`, and `0..15`.
+- **Dynamic Syllable Budgets, Melody Prompt Alignment, Lyrics Enforcement & Director Enums (`src/lib/aiPrompts.ts`, `src/app/api/advance/lyrics/route.ts`)**:
+  - Replaced hardcoded `"4-6 พยางค์"` syllable text in `buildEasyArchitectSystemPrompt()`, `buildEasyArchitectUserPrompt()`, and `buildCohesivePolishSystemPrompt()` with dynamic `getSyllableBudgetForBpm()` guidance while preserving the `74 BPM 4/4` `'5-8 พยางค์'` invariant.
+  - Removed the contradictory `melodyNotes` requirement from `buildEasyArchitectUserPrompt()` so it aligns with `buildEasyArchitectSystemPrompt()`.
+  - Updated `POST /api/advance/lyrics` to pass `minSyllables`, `maxSyllables`, and `enforceSyllableBudget: true` into `validateThaiLyricCouplets()`.
+  - Updated `buildDirectorSystemPrompt()` enum descriptions to include all Phase 7C styles (`lukthung-bounce`, `rock-power`, `fuzz`, `lukthung-groove`, `rnb-syncopated`, `rnb-neo-chord`, `rock-organ-pad`, `lukthung-3cha`, `rnb-pocket`, `rock-drive`).
+- **Duplicate Section Rhyme Polish Mapping (`src/app/api/advance/architect/route.ts`, `src/lib/aiPrompts.ts`)**:
+  - Added `sectionId` to `buildRhymePolishPrompt()`, `RHYME_POLISH_RESPONSE_SCHEMA`, and `POST /api/advance/architect` polish payload, matching returned `polishedSections` by `sectionId` first with an ordered 1-to-1 fallback so duplicate-named sections (e.g., two `Chorus` sections) never overwrite each other.
+- **Cohesive Polish Safety (`src/app/api/advance/cohesive-polish/route.ts`, `src/components/CohesivePolishModal.tsx`)**:
+  - Guaranteed 100% immutability of `lockedSectionIds` (`instruments`, `intensity`, `bars`, `lyrics`, `chords`) across local 0-credit, fallback, and live AI paths—including after `applyGenreBandArrangement()`.
+  - Preserved Slash Chords (`/Bass`), validated chord tokens against invalid outputs (`N.C.`), fixed unlocked-section index alignment when earlier sections are locked, and blocked empty `""` AI strings from erasing existing lyrics.
+  - Stripped vocals (`stripVocalsFromSong`) and `snapshots` in `CohesivePolishModal.tsx` before submitting to `/api/advance/cohesive-polish` to prevent 413 payloads, restoring vocals and locked sections on apply.
+- **Tests (`tests/phase8b.test.ts`)**:
+  - Added 5 offline unit & integration tests covering Hum-to-Song 16-step/12-step grid & schemas, dynamic BPM/style syllable budgets, Director Phase 7C enums, `sectionId`-keyed Architect Rhyme Polish, and Cohesive Polish locked-section/slash-chord/payload-strip guarantees.
+
+---
+
+### [Phase 8C] Studio Save Engine (Auto + Manual Save `Ctrl+S` + Auto-Checkpoints) & IDB Audio Fix (2026-11-19)
+Implemented Phase 8C per `PHASE_8_MASTER_PLAN.md` (`$0.00` offline/mock execution):
+- **IDB Dirty-Check & Full Vocal Duplication (`src/lib/audioStorageIdb.ts`, `src/lib/storage.ts`)**:
+  - Added `computeVocalDataSignature()` / `writtenSignatureByKey` cache and `hasUnpersistedVocals()` in `audioStorageIdb.ts` so unchanged vocal blobs are not re-written to IndexedDB on every lyric edit.
+  - Added `SaveSongOptions` (`setActive`, `preserveUpdatedAt`, `skipIdbPersist`) and boolean status return on `saveSong()`, plus `duplicateSongWithVocals()` (hydrating and cloning both `bar.vocalAudio` and `vocalTakes` under new unique IDs into IDB) and `resolveSafeSharedSong()` (preventing `?song=` share links from overwriting colliding local song IDs), while seeding empty storage with unique `demo-song-...` IDs.
+- **Studio Save Engine, Keyboard Shortcuts & Auto-Checkpoints (`src/app/page.tsx`, `src/components/TransportBar.tsx`, `src/components/SongLibraryModal.tsx`, `src/components/SectionBuilder.tsx`, `src/lib/i18n.ts`)**:
+  - Replaced static `Auto-saved` text in `TransportBar.tsx` with live `LocalSaveState` (`dirty` / `saving` / `saved HH:mm` / `error`), added **Manual Save (`Ctrl/Cmd+S`)** and **Save Checkpoint (`Ctrl/Cmd+Shift+S`)** buttons & global shortcuts (working even inside text inputs), and added symmetrical `th`/`en` i18n keys.
+  - Eliminated Phantom Auto-Save on load/IDB hydration via `isHydratingOrLoadingRef` & `lastPersistedSongKeyRef`, synced `updatedAt` in React state on real edits, flushed pending saves on `visibilitychange`, `pagehide`, and song switching, preserved Undo/Redo history on same-song metadata/snapshot updates, and created automatic checkpoints before Preset, Easy Mode, AI Lyrics, AI Director, and Cohesive Polish mutations.
+  - Updated `SongLibraryModal.tsx` to use `duplicateSongWithVocals`, `generateUniqueId('demo-song')`, and preserve `vocalTakes` on active-song updates.
+- **Tests (`tests/phase8c.test.ts`)**:
+  - Added 5 offline tests covering `duplicateSongWithVocals`, IDB dirty-check write avoidance, `saveSong` `preserveUpdatedAt` & quota error return, `resolveSafeSharedSong` collision guard, and Studio Save Engine UI/hook contracts.
+
+Tests & Gates:
+- `npm test` (`npx tsx --test tests/*.test.ts`) → `229/229` passing (0 failed, 0 skipped; includes all 219 prior tests + 5 Phase 8B + 5 Phase 8C)
+- `npx eslint . --max-warnings=0` → 0 errors, 0 warnings across the entire repository
+- `npm run build` → Next.js 16.4.6 (Turbopack) + TypeScript exited with code 0
+- Standalone Dev Server (`NEXT_PUBLIC_BILLING_MODE=standalone npm run dev`) → `http://localhost:3000/` returned `HTTP 200` (`602315` bytes), stopped cleanly with port `3000` free
+
+---
+
+### [Phase 8D] Resilient Cloud Sync, Tombstone Delete & Multi-Device Conflict Guard (2026-11-19)
+Implemented Phase 8D per `PHASE_8_MASTER_PLAN.md` (`$0.00` offline/mock execution):
+- **Tombstone Delete & Last-Song Recovery (`src/lib/storage.ts`, `src/lib/cloudSync.ts`, `src/components/SongLibraryModal.tsx`)**:
+  - Added `DELETED_SONGS_KEY` / `DELETED_SONGS_TOMBSTONE_KEY`, `getDeletedSongTombstones()`, `recordDeletedSongTombstone()`, and `clearDeletedSongTombstone()`, clearing tombstones on `saveSong()` / `importSongsJSON()` and enabling deletion of even the last remaining song (generating a fresh unique-ID default demo).
+  - Added `deleteSongFromCloud()`, updated `mergeSongLists(local, cloud, tombstones)` to block tombstoned cloud resurrection, and propagated `DELETE /rest/v1/songs` during `syncLibraryNow()`.
+- **Non-Destructive Conflict Snapshots, 401 Single-Flight Refresh & Schema Sanitization (`src/lib/cloudSync.ts`)**:
+  - Updated `mergeSongLists()` with `buildSongSyncDigest()` conflict detection that preserves the older diverging version as an `Auto-backup: Sync Conflict (...)` `SongSnapshot` rather than overwriting silently.
+  - Added `fetchSupabaseWithRefresh()` (single-flight 401 refresh lock), `fetchSongsFromCloudDetailed()` (distinguishing HTTP/network error from empty cloud), `sanitizeCloudSongProject()` (repairing partial cloud JSON), omitted `created_at` overwrite in `syncSongToCloud()`, guarded Guest users from RLS sync calls, protected raw local storage edits without auto-seeding side effects in `persistMergedSongsToLocal()`, and persisted pulled cloud songs when a partial upload fails.
+- **Auto-Sync, Honest Initial Status & Vocal Asset Notice (`src/app/page.tsx`, `src/components/AccountSyncModal.tsx`)**:
+  - Wired honest initial `syncStatus` (`'synced'` only when `getLastSyncedAt()` exists + initial/sign-in sync), 3-second debounced `getCloudConfig().autoSyncEnabled` background sync, Sign Out timestamp clearing, an honest cross-device IndexedDB vocal storage note (recommending `.JSON` backup in Account modal), and Dark Mode semantic tokens on `AccountSyncModal.tsx`.
+- **Tests (`tests/phase8d.test.ts`)**:
+  - Added 5 offline tests covering Tombstone Delete & last-song recovery, Non-Destructive Conflict Snapshots, single-flight HTTP 401 refresh & HTTP 500 push-abort / Guest RLS guard, `sanitizeCloudSongProject`, and UI/Page Phase 8D contracts.
+
+---
+
+### [Phase 8E] User-Centric UX/UI Overhaul, Smart Undo/Redo, Chord Audition & Dark/Touch Polish (2026-11-19)
+Implemented Phase 8E per `PHASE_8_MASTER_PLAN.md` (`$0.00` offline/mock execution):
+- **Non-Destructive Presets & Coalesced Undo/Redo (`src/lib/sectionUtils.ts`, `src/app/page.tsx`)**:
+  - Added `applyProgressionPresetToSection()` preserving existing bar IDs, lyrics, `melodyNotes`, `vocalAudio`, `playStyle`, and extra bars when applying chord progression presets.
+  - Added `buildSongHistoryFingerprint()` (covering lightweight `vocalTakes` & `vocalAudio` signatures, `vocalLatencyOffsetMs`, `countInEnabled`, `metronomeEnabled`, guitar acoustics, `folder`, `statusTag`) and `pushCoalescedUndoHistory()` (`1200ms` window) so rapid BPM/lyric edits collapse into clean Undo steps without burning history capacity.
+- **Audio Engine, Chord Audition, Metronome & Transport Polish (`src/types/song.ts`, `src/lib/audioEngine.ts`, `src/hooks/useAudioEngine.ts`, `src/components/ChordPickerModal.tsx`, `src/components/SoundCustomizerPanel.tsx`, `src/components/TransportBar.tsx`)**:
+  - Exposed real `isCountIn` state, dedicated `clickSynth` (audible even when drums are muted) + `metronomeEnabled` playback clicks, and `previewChord(chordSymbol, song?)` via `getGuitarVoicing()` + `transposeChord()`.
+  - Added `🔊 ฟังเสียงคอร์ด` audition button & click preview in `ChordPickerModal.tsx`; inline `▶`/`⏸`/`⏹` transport buttons + non-destructive per-track `S` (Solo) toggle across all 7 tracks in `SoundCustomizerPanel.tsx`; and Soundfont loading state (`"กำลังโหลดเสียงเครื่องดนตรี..."`), Metronome toggle, BPM `50–180` numeric input + `🥁 Tap Tempo`, `✨ Easy Mode` & `➕ เพลงใหม่` quick buttons, plus modal-aware `Escape` handling in `TransportBar.tsx`.
+- **Progressive Bar Tools, Free Tools, Non-Mutating AI Previews, Dark Mode & Touch Fixes (`src/components/SectionBuilder.tsx`, `src/components/EasyModeStarterModal.tsx`, `src/components/AdvanceModeModal.tsx`, `src/components/MiniPianoRollModal.tsx`, `src/components/VocalRecorderModal.tsx`)**:
+  - Added Progressive Bar Tool Disclosure (`focusedBarId`, `showAllBarTools`, `🛠️`), surfaced 0-Cr tools outside AI menu (`📖 พจนานุกรมสัมผัสไทย (ฟรี 0 Cr)` & `📋 วางเนื้อร้องแบ่งห้อง (ฟรี 0 Cr)`), clickable `Bar #` (`seekToBar`), mobile-readable section/bar labels, and non-mutating `🔊 ฟังจังหวะคำร้อง` preview in `SectionBuilder.tsx`.
+  - Defaulted `EasyModeStarterModal.tsx` apply mode to `'new-song'` (with optional `'overwrite-current'` + Auto-Checkpoint).
+  - Updated `AdvanceModeModal.tsx` so `handleSingLineWithAi()` stores preview audio without auto-mutating the song until clicking `💾 บันทึกเสียงนี้ลงห้อง`.
+  - Made `MiniPianoRollModal.tsx` `-`/`+` note duration buttons touch-visible (`opacity-100 sm:opacity-0 sm:group-hover:opacity-100`) and converted `AdvanceModeModal.tsx`, `MiniPianoRollModal.tsx`, and `VocalRecorderModal.tsx` to semantic Dark Mode tokens (`bg-surface-1`, `bg-surface-2`, `text-ink-900`, `border-hairline`).
+- **Tests (`tests/phase8e.test.ts`)**:
+  - Added 5 offline unit & contract tests covering non-destructive `applyProgressionPresetToSection`, `buildSongHistoryFingerprint` + 1200ms coalesced Undo, `AudioEngine`/hook contracts, Transport/Mixer/ChordPicker controls, and SectionBuilder/Modal UX & Dark Mode tokens.
+
+Tests & Gates:
+- `npm test` (`npx tsx --test tests/*.test.ts`) → `239/239` passing (0 failed, 0 skipped; includes all 186 baseline tests + prior phases + 5 Phase 8A + 5 Phase 8B + 5 Phase 8C + 5 Phase 8D + 5 Phase 8E)
+- `npx eslint . --max-warnings=0` → 0 errors, 0 warnings across the entire repository
 - `npm run build` → Next.js 16.4.6 (Turbopack) + TypeScript exited with code 0

@@ -245,25 +245,25 @@ export const VocalRecorderModal: React.FC<VocalRecorderModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-950/65 backdrop-blur-xs animate-in fade-in duration-150">
-      <div className="bg-white w-full max-w-xl rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col">
+      <div className="bg-surface-1 w-full max-w-xl rounded-3xl shadow-2xl border border-hairline overflow-hidden flex flex-col">
         {/* Header */}
-        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-rose-50/70 via-amber-50/40 to-white">
+        <div className="px-6 py-4 border-b border-hairline flex items-center justify-between bg-gradient-to-r from-rose-500/10 via-amber-500/5 to-surface-1">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-rose-600 text-white flex items-center justify-center text-lg shadow-sm font-black">
               🎙️
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="font-black text-base sm:text-lg text-slate-900">
+                <h3 className="font-black text-base sm:text-lg text-ink-900">
                   {lang === 'th' ? 'อัดเสียงร้องสด / ฮัมไกด์ (Vocal Scratchpad)' : 'Vocal Scratchpad (Mic Recording)'}
                 </h3>
-                <span className="px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 font-black text-xs">
+                <span className="px-2.5 py-0.5 rounded-full bg-rose-500/15 text-rec-500 font-black text-xs">
                   {lang === 'th' ? `ห้องที่ ${globalBarIndex + 1}` : `Bar ${globalBarIndex + 1}`}
                 </span>
               </div>
-              <div className="text-xs text-slate-500 font-medium">
+              <div className="text-xs text-ink-400 font-medium">
                 {section.name} • {lang === 'th' ? 'คอร์ด: ' : 'Chord: '}{' '}
-                <span className="font-bold text-slate-800">
+                <span className="font-bold text-ink-900">
                   {chord1} {chord2 ? `→ ${chord2}` : ''}
                 </span>
               </div>
@@ -272,7 +272,7 @@ export const VocalRecorderModal: React.FC<VocalRecorderModalProps> = ({
 
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center font-bold text-sm transition cursor-pointer"
+            className="w-8 h-8 rounded-full bg-surface-inset hover:bg-surface-2 text-ink-700 flex items-center justify-center font-bold text-sm transition cursor-pointer"
           >
             ✕
           </button>
@@ -281,15 +281,15 @@ export const VocalRecorderModal: React.FC<VocalRecorderModalProps> = ({
         {/* Content Body */}
         <div className="p-6 space-y-6">
           {/* Lyrics Prompt Box */}
-          <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/90 space-y-1">
-            <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+          <div className="p-4 rounded-2xl bg-surface-2 border border-hairline space-y-1">
+            <div className="text-[11px] font-bold text-ink-400 uppercase tracking-wider">
               {lang === 'th' ? 'เนื้อร้องประจำห้องนี้' : 'Bar Lyrics'}
             </div>
-            <div className="text-base sm:text-lg font-bold text-slate-800">
+            <div className="text-base sm:text-lg font-bold text-ink-900">
               {bar.lyrics ? (
                 `“${bar.lyrics}”`
               ) : (
-                <span className="text-slate-400 italic">
+                <span className="text-ink-400 italic">
                   {lang === 'th' ? 'ยังไม่มีเนื้อร้อง (ฮัมทำนองได้ตามใจชอบ)' : 'No lyrics (feel free to hum or sing)'}
                 </span>
               )}
@@ -298,20 +298,20 @@ export const VocalRecorderModal: React.FC<VocalRecorderModalProps> = ({
 
           {/* Error Message if any */}
           {errorMessage && (
-            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs font-bold text-rose-700 flex items-center gap-2">
+            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs font-bold text-rec-500 flex items-center gap-2">
               <span>⚠️</span>
               <span>{errorMessage}</span>
             </div>
           )}
 
           {/* Recording & VU Meter Center Stage */}
-          <div className="flex flex-col items-center justify-center p-6 rounded-2xl border border-slate-200 bg-gradient-to-b from-slate-50/50 to-white space-y-4">
+          <div className="flex flex-col items-center justify-center p-6 rounded-2xl border border-hairline bg-gradient-to-b from-surface-2 to-surface-1 space-y-4">
             {/* Countdown Overlay */}
             {countdownNum !== null ? (
               <div className="text-5xl font-black text-rose-600 animate-ping">{countdownNum}</div>
             ) : isRecording ? (
               <div className="flex flex-col items-center gap-2">
-                <div className="flex items-center gap-2 text-rose-600 font-bold text-sm animate-pulse">
+                <div className="flex items-center gap-2 text-rec-500 font-bold text-sm animate-pulse">
                   <span className="w-3 h-3 rounded-full bg-rose-600 inline-block"></span>
                   <span>
                     {lang === 'th' ? 'กำลังอัดเสียง... ' : 'Recording... '}
@@ -319,7 +319,7 @@ export const VocalRecorderModal: React.FC<VocalRecorderModalProps> = ({
                   </span>
                 </div>
                 {/* Live VU Meter Bar */}
-                <div className="w-48 sm:w-64 h-3 bg-slate-200 rounded-full overflow-hidden p-0.5 border border-slate-300">
+                <div className="w-48 sm:w-64 h-3 bg-surface-inset rounded-full overflow-hidden p-0.5 border border-hairline">
                   <div
                     style={{ width: `${vuLevel}%` }}
                     className={`h-full rounded-full transition-all duration-75 ${
@@ -330,7 +330,7 @@ export const VocalRecorderModal: React.FC<VocalRecorderModalProps> = ({
               </div>
             ) : (
               <div className="text-center">
-                <div className="text-xs text-slate-500 font-medium">
+                <div className="text-xs text-ink-700 font-medium">
                   {recordedDataUrl
                     ? lang === 'th'
                       ? '✨ มีเสียงร้องบันทึกอยู่ในห้องนี้แล้ว สามารถกดฟังหรือกดอัดทับใหม่ได้'
@@ -348,7 +348,7 @@ export const VocalRecorderModal: React.FC<VocalRecorderModalProps> = ({
                 <button
                   type="button"
                   onClick={handleStopRecording}
-                  className="px-6 py-3 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-black text-sm transition shadow-lg flex items-center gap-2 cursor-pointer"
+                  className="px-6 py-3 rounded-2xl bg-slate-900 hover:bg-slate-800 border border-white/15 text-white font-black text-sm transition shadow-lg flex items-center gap-2 cursor-pointer"
                 >
                   <span className="w-3 h-3 rounded-xs bg-rose-500 inline-block"></span>
                   <span>{lang === 'th' ? '⏹ หยุดบันทึก' : '⏹ Stop Recording'}</span>
@@ -376,9 +376,9 @@ export const VocalRecorderModal: React.FC<VocalRecorderModalProps> = ({
 
           {/* Review & Audition Controls (Shown when recording exists) */}
           {recordedDataUrl && !isRecording && (
-            <div className="space-y-4 pt-2 border-t border-slate-100">
+            <div className="space-y-4 pt-2 border-t border-hairline">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-xs font-bold text-slate-700">
+                <span className="text-xs font-bold text-ink-700">
                   {lang === 'th' ? '🎧 ทดลองฟังเสียงร้อง:' : '🎧 Audition Vocals:'}
                 </span>
                 <div className="flex items-center gap-2">
@@ -387,8 +387,8 @@ export const VocalRecorderModal: React.FC<VocalRecorderModalProps> = ({
                     onClick={handlePlayVocalOnly}
                     className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
                       isPlayingVocalOnly
-                        ? 'bg-rose-100 border-rose-300 text-rose-800'
-                        : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-700'
+                        ? 'bg-rose-500/15 border-rose-500/40 text-rec-500'
+                        : 'bg-surface-1 border-hairline hover:bg-surface-2 text-ink-700'
                     }`}
                   >
                     <span>
@@ -425,7 +425,7 @@ export const VocalRecorderModal: React.FC<VocalRecorderModalProps> = ({
                   <button
                     type="button"
                     onClick={handleDeleteVocal}
-                    className="p-1.5 text-slate-400 hover:text-rose-600 transition"
+                    className="p-1.5 text-ink-400 hover:text-rec-500 transition"
                     title={lang === 'th' ? 'ลบเสียงร้องห้องนี้' : 'Delete vocal'}
                   >
                     🗑️
@@ -434,12 +434,12 @@ export const VocalRecorderModal: React.FC<VocalRecorderModalProps> = ({
               </div>
 
               {/* Latency Offset Slider */}
-              <div className="p-3.5 rounded-2xl bg-indigo-50/50 border border-indigo-100 space-y-2">
+              <div className="p-3.5 rounded-2xl bg-accent-50 border border-accent-200 space-y-2">
                 <div className="flex items-center justify-between text-xs">
-                  <span className="font-bold text-indigo-950 flex items-center gap-1">
+                  <span className="font-bold text-ink-900 flex items-center gap-1">
                     {lang === 'th' ? '⚡ ชดเชยเสียงหน่วง (Latency Offset)' : '⚡ Latency Offset'}
                   </span>
-                  <span className="font-mono font-bold text-indigo-700">
+                  <span className="font-mono font-bold text-accent-text">
                     {latencyOffsetMs > 0 ? `+${latencyOffsetMs}` : latencyOffsetMs} ms
                   </span>
                 </div>
@@ -452,9 +452,9 @@ export const VocalRecorderModal: React.FC<VocalRecorderModalProps> = ({
                   onChange={(e) => setLatencyOffsetMs(parseInt(e.target.value, 10))}
                   className="w-full accent-indigo-600 cursor-pointer"
                 />
-                <div className="flex items-center justify-between text-[10px] text-slate-500 font-medium">
+                <div className="flex items-center justify-between text-[10px] text-ink-400 font-medium">
                   <span>{lang === 'th' ? '◀ ขยับให้เร็วขึ้น (-150ms)' : '◀ Earlier (-150ms)'}</span>
-                  <span className="text-slate-400">{lang === 'th' ? '0ms ตรงบีท' : '0ms On-beat'}</span>
+                  <span className="text-ink-400">{lang === 'th' ? '0ms ตรงบีท' : '0ms On-beat'}</span>
                   <span>{lang === 'th' ? 'ขยับให้ช้าลง (+150ms) ▶' : 'Later (+150ms) ▶'}</span>
                 </div>
               </div>
@@ -463,11 +463,11 @@ export const VocalRecorderModal: React.FC<VocalRecorderModalProps> = ({
         </div>
 
         {/* Footer Actions */}
-        <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between">
+        <div className="px-6 py-4 border-t border-hairline bg-surface-2 flex items-center justify-between">
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 rounded-xl border border-slate-200 text-slate-700 font-bold hover:bg-white transition cursor-pointer text-xs"
+            className="px-4 py-2 rounded-xl border border-hairline text-ink-700 font-bold hover:bg-surface-1 transition cursor-pointer text-xs"
           >
             {lang === 'th' ? 'ยกเลิก' : 'Cancel'}
           </button>

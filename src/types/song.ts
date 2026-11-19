@@ -163,6 +163,7 @@ export interface SongProject {
   transposeSemitones: number;          // -6 ถึง +6 (เปลี่ยนระดับเสียงจริง)
   capoFret: number;                    // 0 ถึง 7 (เปลี่ยนการแสดงผลฟอร์มคอร์ดสำหรับเล่นกีตาร์ตาม)
   countInEnabled: boolean;             // เปิด/ปิดเสียงเคาะนับเข้าเพลง 1 ห้อง
+  metronomeEnabled?: boolean;          // เปิด/ปิดเสียงคลิกจังหวะต่อเนื่องระหว่างเล่น
   guitarModel: GuitarModel;
   stringGauge: StringGauge;
   ambience3D: Ambience3DMode;

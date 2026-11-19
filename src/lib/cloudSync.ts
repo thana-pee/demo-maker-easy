@@ -2,8 +2,30 @@
 // Handles Guest offline-first profile, Supabase Email OTP / Magic Link Auth,
 // updatedAt timestamp conflict resolution, and Pull + Merge + Push library sync.
 
-import type { SongProject } from '@/types/song';
-import { getSavedSongs, getActiveSongId, STORAGE_KEY, stripVocalsFromSong, setActiveSongId } from './storage';
+import type {
+  Ambience3DMode,
+  BarPlayStyle,
+  GuitarModel,
+  SectionIntensity,
+  SectionType,
+  SongBar,
+  SongProject,
+  SongSection,
+  SongSnapshot,
+  StringGauge,
+  TimeSignature,
+} from '@/types/song';
+import {
+  getSavedSongs,
+  getActiveSongId,
+  STORAGE_KEY,
+  stripVocalsFromSong,
+  setActiveSongId,
+  createSongSnapshot,
+  getDeletedSongTombstones,
+  clearDeletedSongTombstone,
+} from './storage';
+import { createDefaultSong } from './defaultSong';
 
 export type CloudSyncStatus = 'local-only' | 'synced' | 'syncing' | 'offline' | 'error';
 
@@ -24,8 +46,16 @@ export interface CloudSongRecord {
   time_signature: string;
   base_key: string;
   project_data: SongProject;
-  created_at: string;
+  created_at?: string;
   updated_at: string;
+}
+
+export interface CloudFetchResult {
+  ok: boolean;
+  status: CloudSyncStatus;
+  songs: SongProject[];
+  httpStatus?: number;
+  error?: string;
 }
 
 export interface CloudSyncConfig {
@@ -599,6 +629,14 @@ export async function signOutUser(): Promise<{ user: CloudUser; status: CloudSyn
     }
   }
   saveStoredSession(null);
+  const storage = getSafeStorage();
+  if (storage) {
+    try {
+      storage.removeItem(CLOUD_LAST_SYNC_KEY);
+    } catch {
+      // ignore storage errors
+    }
+  }
   return { user: GUEST_USER, status: 'local-only' };
 }
 
@@ -608,15 +646,251 @@ function parseUpdatedAtMs(iso?: string): number {
   return Number.isFinite(ms) ? ms : 0;
 }
 
+const VALID_TIME_SIGNATURES = new Set<TimeSignature>(['4/4', '3/4', '6/8']);
+const VALID_GUITAR_MODELS = new Set<GuitarModel>([
+  'classical-nylon',
+  'dreadnought-steel',
+  'ovation-roundback',
+  'gibson-les-paul',
+]);
+const VALID_STRING_GAUGES = new Set<StringGauge>(['standard-010', 'heavy-012']);
+const VALID_AMBIENCES = new Set<Ambience3DMode>(['living-room', 'wood-studio', 'unplugged-hall']);
+const VALID_SECTION_TYPES = new Set<SectionType>([
+  'intro',
+  'verse',
+  'pre-chorus',
+  'chorus',
+  'solo',
+  'bridge',
+  'outro',
+]);
+const VALID_INTENSITIES = new Set<SectionIntensity>(['low', 'medium', 'high']);
+const VALID_PLAY_STYLES = new Set<BarPlayStyle>(['normal', 'let-ring', 'break']);
+
+/** ตรวจสอบและเติมโครงสร้าง SongProject ที่ดึงจาก Cloud เพื่อป้องกันแอปพังเมื่อฟิลด์ขาดหาย */
+export function sanitizeCloudSongProject(raw: unknown): SongProject | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const src = raw as Partial<SongProject> & Record<string, unknown>;
+  if (typeof src.id !== 'string' || !src.id.trim()) return null;
+
+  const fallback = createDefaultSong();
+  const rawMixer = (src.mixer && typeof src.mixer === 'object' ? src.mixer : {}) as Partial<
+    SongProject['mixer']
+  >;
+
+  const rawSections = Array.isArray(src.sections) ? src.sections : [];
+  const sanitizedSections: SongSection[] = rawSections
+    .filter((sec): sec is SongSection => Boolean(sec && typeof sec === 'object'))
+    .map((sec, sIdx) => {
+      const defSec = fallback.sections[sIdx % fallback.sections.length];
+      const rawBars = Array.isArray(sec.bars) ? sec.bars : [];
+      const sanitizedBars: SongBar[] = (rawBars.length > 0 ? rawBars : defSec.bars)
+        .filter((bar): bar is SongBar => Boolean(bar && typeof bar === 'object'))
+        .map((bar, bIdx) => {
+          const rawChords = Array.isArray(bar.chords)
+            ? bar.chords.filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
+            : [];
+          const chordsPerBar: 1 | 2 = bar.chordsPerBar === 2 ? 2 : 1;
+          const chords =
+            rawChords.length > 0
+              ? chordsPerBar === 2
+                ? [rawChords[0], rawChords[1] || rawChords[0]]
+                : [rawChords[0]]
+              : ['C'];
+          const playStyle: BarPlayStyle = VALID_PLAY_STYLES.has(bar.playStyle)
+            ? bar.playStyle
+            : 'normal';
+          return {
+            id: typeof bar.id === 'string' && bar.id.trim() ? bar.id : `${sec.id || `sec-${sIdx}`}-bar-${bIdx}`,
+            chordsPerBar,
+            chords,
+            playStyle,
+            lyrics: typeof bar.lyrics === 'string' ? bar.lyrics : '',
+            melodyNotes: Array.isArray(bar.melodyNotes)
+              ? bar.melodyNotes.filter(
+                  (n) =>
+                    n &&
+                    typeof n === 'object' &&
+                    typeof n.step === 'number' &&
+                    typeof n.midiPitch === 'number' &&
+                    typeof n.durationSteps === 'number'
+                )
+              : [],
+            ...(typeof bar.vocalAudio === 'string' ? { vocalAudio: bar.vocalAudio } : {}),
+          };
+        });
+
+      const secType: SectionType = VALID_SECTION_TYPES.has(sec.type) ? sec.type : defSec.type;
+      const intensity: SectionIntensity = VALID_INTENSITIES.has(sec.intensity)
+        ? sec.intensity
+        : defSec.intensity;
+
+      return {
+        id: typeof sec.id === 'string' && sec.id.trim() ? sec.id : `sec-${sIdx + 1}`,
+        name: typeof sec.name === 'string' && sec.name.trim() ? sec.name : defSec.name,
+        type: secType,
+        intensity,
+        ...(sec.soloMode ? { soloMode: sec.soloMode } : {}),
+        instruments: {
+          ...defSec.instruments,
+          ...(sec.instruments && typeof sec.instruments === 'object' ? sec.instruments : {}),
+        },
+        bars:
+          sanitizedBars.length > 0
+            ? sanitizedBars
+            : defSec.bars.map((b) => ({ ...b, chords: [...b.chords], melodyNotes: [] })),
+      };
+    });
+
+  const bpmRaw = typeof src.bpm === 'number' && Number.isFinite(src.bpm) ? src.bpm : fallback.bpm;
+  const transposeRaw =
+    typeof src.transposeSemitones === 'number' && Number.isFinite(src.transposeSemitones)
+      ? src.transposeSemitones
+      : fallback.transposeSemitones;
+  const capoRaw =
+    typeof src.capoFret === 'number' && Number.isFinite(src.capoFret)
+      ? src.capoFret
+      : fallback.capoFret;
+
+  return {
+    ...fallback,
+    ...src,
+    id: src.id.trim(),
+    version: typeof src.version === 'number' && Number.isFinite(src.version) ? src.version : 1,
+    title: typeof src.title === 'string' && src.title.trim() ? src.title : fallback.title,
+    updatedAt:
+      typeof src.updatedAt === 'string' && src.updatedAt.trim()
+        ? src.updatedAt
+        : new Date().toISOString(),
+    bpm: Math.max(40, Math.min(240, Math.round(bpmRaw))),
+    timeSignature: VALID_TIME_SIGNATURES.has(src.timeSignature as TimeSignature)
+      ? (src.timeSignature as TimeSignature)
+      : fallback.timeSignature,
+    baseKey: typeof src.baseKey === 'string' && src.baseKey.trim() ? src.baseKey : fallback.baseKey,
+    transposeSemitones: Math.max(-6, Math.min(6, Math.round(transposeRaw))),
+    capoFret: Math.max(0, Math.min(7, Math.round(capoRaw))),
+    countInEnabled: typeof src.countInEnabled === 'boolean' ? src.countInEnabled : fallback.countInEnabled,
+    guitarModel: VALID_GUITAR_MODELS.has(src.guitarModel as GuitarModel)
+      ? (src.guitarModel as GuitarModel)
+      : fallback.guitarModel,
+    stringGauge: VALID_STRING_GAUGES.has(src.stringGauge as StringGauge)
+      ? (src.stringGauge as StringGauge)
+      : fallback.stringGauge,
+    ambience3D: VALID_AMBIENCES.has(src.ambience3D as Ambience3DMode)
+      ? (src.ambience3D as Ambience3DMode)
+      : fallback.ambience3D,
+    mixer: {
+      guitarRhythm: { ...fallback.mixer.guitarRhythm, ...(rawMixer.guitarRhythm || {}) },
+      guitarLead: { ...fallback.mixer.guitarLead, ...(rawMixer.guitarLead || {}) },
+      bass: { ...fallback.mixer.bass, ...(rawMixer.bass || {}) },
+      piano: { ...fallback.mixer.piano, ...(rawMixer.piano || {}) },
+      drums: { ...fallback.mixer.drums, ...(rawMixer.drums || {}) },
+      melody: {
+        ...(fallback.mixer.melody || { enabled: true, volume: 85, sound: 'flute' }),
+        ...(rawMixer.melody || {}),
+      },
+      vocal: {
+        ...(fallback.mixer.vocal || { enabled: true, volume: 95, fxPreset: 'studio-warm', autoDucking: true }),
+        ...(rawMixer.vocal || {}),
+      },
+    },
+    sections: sanitizedSections.length > 0 ? sanitizedSections : fallback.sections,
+    snapshots: Array.isArray(src.snapshots) ? src.snapshots : [],
+  };
+}
+
+/** สร้างลายเซ็นเนื้อหาเพลงสำหรับตรวจว่าข้อมูลระหว่างเครื่องกับ Cloud ขัดแย้งกันหรือไม่ */
+export function buildSongSyncDigest(song: SongProject): string {
+  return JSON.stringify({
+    title: song.title || '',
+    bpm: song.bpm,
+    timeSignature: song.timeSignature,
+    baseKey: song.baseKey,
+    transposeSemitones: song.transposeSemitones,
+    capoFret: song.capoFret,
+    guitarModel: song.guitarModel,
+    stringGauge: song.stringGauge,
+    ambience3D: song.ambience3D,
+    folder: song.folder || '',
+    statusTag: song.statusTag || '',
+    mixer: song.mixer,
+    sections: (song.sections || []).map((sec) => ({
+      id: sec.id,
+      type: sec.type,
+      name: sec.name,
+      intensity: sec.intensity,
+      instruments: sec.instruments,
+      bars: (sec.bars || []).map((bar) => ({
+        id: bar.id,
+        chordsPerBar: bar.chordsPerBar,
+        chords: bar.chords,
+        playStyle: bar.playStyle,
+        lyrics: bar.lyrics,
+        melodyNotes: bar.melodyNotes,
+      })),
+    })),
+  });
+}
+
+function mergeSnapshotsPreservingConflict(
+  winner: SongProject,
+  loser: SongProject
+): SongSnapshot[] {
+  const combined: SongSnapshot[] = [];
+  const seenIds = new Set<string>();
+  const seenConflictDigests = new Set<string>();
+
+  if (buildSongSyncDigest(winner) !== buildSongSyncDigest(loser)) {
+    const olderTime = loser.updatedAt || 'older';
+    const conflictLabel = `Auto-backup: Sync Conflict (${olderTime})`;
+    const conflictSnap = createSongSnapshot(loser, conflictLabel);
+    const conflictKey = `${conflictLabel}::${conflictSnap.songData}`;
+    const alreadyExists = [...(winner.snapshots || []), ...(loser.snapshots || [])].some(
+      (s) => `${s.name}::${s.songData}` === conflictKey
+    );
+    if (!alreadyExists) {
+      combined.push(conflictSnap);
+      seenIds.add(conflictSnap.id);
+      seenConflictDigests.add(conflictKey);
+    }
+  }
+
+  for (const snap of [...(winner.snapshots || []), ...(loser.snapshots || [])]) {
+    if (!snap?.id || seenIds.has(snap.id)) continue;
+    const conflictKey = `${snap.name}::${snap.songData}`;
+    if (snap.name.startsWith('Auto-backup: Sync Conflict') && seenConflictDigests.has(conflictKey)) {
+      continue;
+    }
+    seenIds.add(snap.id);
+    if (snap.name.startsWith('Auto-backup: Sync Conflict')) {
+      seenConflictDigests.add(conflictKey);
+    }
+    combined.push(snap);
+    if (combined.length >= 25) break;
+  }
+
+  return combined;
+}
+
 /**
  * รวมรายการเพลงจาก Local และ Cloud โดยเลือกเวอร์ชันที่ `updatedAt` ใหม่กว่าต่อ `song.id`
- * พร้อมรักษาเพลงที่มีเฉพาะฝั่งใดฝั่งหนึ่งไว้อย่างครบถ้วน (Timestamp Last-Write-Wins Merge)
+ * กรองเพลงที่ถูกลบด้วย Tombstones ออก และเก็บเวอร์ชันเก่าที่ขัดแย้งกันเป็น Conflict Snapshot อัตโนมัติ
  */
-export function mergeSongLists(localSongs: SongProject[], cloudSongs: SongProject[]): SongProject[] {
+export function mergeSongLists(
+  localSongs: SongProject[],
+  cloudSongs: SongProject[],
+  tombstones: Record<string, string> = getDeletedSongTombstones()
+): SongProject[] {
   const mergedMap = new Map<string, SongProject>();
 
+  const isTombstoned = (song: SongProject): boolean => {
+    const deletedAtIso = tombstones[song.id];
+    if (!deletedAtIso) return false;
+    return parseUpdatedAtMs(deletedAtIso) >= parseUpdatedAtMs(song.updatedAt);
+  };
+
   for (const local of localSongs || []) {
-    if (!local?.id) continue;
+    if (!local?.id || isTombstoned(local)) continue;
     const prev = mergedMap.get(local.id);
     if (!prev || parseUpdatedAtMs(local.updatedAt) >= parseUpdatedAtMs(prev.updatedAt)) {
       mergedMap.set(local.id, local);
@@ -624,10 +898,29 @@ export function mergeSongLists(localSongs: SongProject[], cloudSongs: SongProjec
   }
 
   for (const cloud of cloudSongs || []) {
-    if (!cloud?.id) continue;
+    if (!cloud?.id || isTombstoned(cloud)) continue;
     const prev = mergedMap.get(cloud.id);
-    if (!prev || parseUpdatedAtMs(cloud.updatedAt) > parseUpdatedAtMs(prev.updatedAt)) {
+    if (!prev) {
       mergedMap.set(cloud.id, cloud);
+      continue;
+    }
+
+    const cloudMs = parseUpdatedAtMs(cloud.updatedAt);
+    const prevMs = parseUpdatedAtMs(prev.updatedAt);
+    const winner = cloudMs > prevMs ? cloud : prev;
+    const loser = cloudMs > prevMs ? prev : cloud;
+    const mergedSnapshots = mergeSnapshotsPreservingConflict(winner, loser);
+
+    if (
+      mergedSnapshots.length > (winner.snapshots?.length ?? 0) ||
+      (loser.snapshots && loser.snapshots.length > 0)
+    ) {
+      mergedMap.set(cloud.id, {
+        ...winner,
+        snapshots: mergedSnapshots,
+      });
+    } else {
+      mergedMap.set(cloud.id, winner);
     }
   }
 
@@ -652,11 +945,71 @@ function buildSupabaseRestHeaders(
   return headers;
 }
 
+function mergePlainHeaders(
+  existing: HeadersInit | undefined,
+  patch: Record<string, string>
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (existing instanceof Headers) {
+    existing.forEach((v, k) => {
+      out[k] = v;
+    });
+  } else if (Array.isArray(existing)) {
+    for (const [k, v] of existing) {
+      out[k] = v;
+    }
+  } else if (existing && typeof existing === 'object') {
+    Object.assign(out, existing);
+  }
+  Object.assign(out, patch);
+  return out;
+}
+
+let activeRefreshPromise: Promise<{ accessToken: string; user: CloudUser } | null> | null = null;
+
+/** เรียก Supabase REST พร้อมต่ออายุ JWT อัตโนมัติ 1 ครั้งเมื่อเจอ HTTP 401 (Single-Flight Refresh) */
+export async function fetchSupabaseWithRefresh(
+  url: string,
+  init?: RequestInit,
+  fetchFn: typeof fetch = fetch
+): Promise<Response> {
+  const res = await fetchFn(url, init);
+  if (res.status !== 401) {
+    return res;
+  }
+
+  const session = getStoredSession();
+  if (!session?.refreshToken) {
+    return res;
+  }
+
+  if (!activeRefreshPromise) {
+    activeRefreshPromise = refreshAuthSession(fetchFn).finally(() => {
+      activeRefreshPromise = null;
+    });
+  }
+  const refreshed = await activeRefreshPromise;
+  if (!refreshed?.accessToken) {
+    return res;
+  }
+
+  const retryHeaders = mergePlainHeaders(init?.headers, {
+    Authorization: `Bearer ${refreshed.accessToken}`,
+  });
+  return fetchFn(url, {
+    ...init,
+    headers: retryHeaders,
+  });
+}
+
 /**
  * Syncs a SongProject to the cloud.
  * Falls back gracefully to local storage if cloud is not yet configured or device is offline.
  */
-export async function syncSongToCloud(song: SongProject): Promise<{ success: boolean; status: CloudSyncStatus; message?: string }> {
+export async function syncSongToCloud(
+  song: SongProject,
+  fetchFn: typeof fetch = fetch
+): Promise<{ success: boolean; status: CloudSyncStatus; message?: string }> {
   if (!isDeviceOnline()) {
     return { success: false, status: 'offline', message: 'อุปกรณ์อยู่ในโหมดออฟไลน์' };
   }
@@ -682,16 +1035,19 @@ export async function syncSongToCloud(song: SongProject): Promise<{ success: boo
       time_signature: song.timeSignature,
       base_key: song.baseKey,
       project_data: lightProject,
-      created_at: song.updatedAt,
       updated_at: song.updatedAt || new Date().toISOString(),
     };
 
     const conflictQuery = user.mode === 'authenticated' ? '?on_conflict=user_id,id' : '';
-    const res = await fetch(`${config.supabaseUrl.replace(/\/$/, '')}/rest/v1/songs${conflictQuery}`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(record),
-    });
+    const res = await fetchSupabaseWithRefresh(
+      `${config.supabaseUrl.replace(/\/$/, '')}/rest/v1/songs${conflictQuery}`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(record),
+      },
+      fetchFn
+    );
 
     if (!res.ok) {
       const errText = await res.text();
@@ -705,13 +1061,18 @@ export async function syncSongToCloud(song: SongProject): Promise<{ success: boo
   }
 }
 
-/**
- * Fetches songs list from cloud if configured.
- */
-export async function fetchSongsFromCloud(): Promise<SongProject[]> {
+/** ลบเพลงออกจาก Supabase Cloud ตาม Tombstone Deletion */
+export async function deleteSongFromCloud(
+  songId: string,
+  fetchFn: typeof fetch = fetch
+): Promise<{ success: boolean; status: CloudSyncStatus; message?: string }> {
+  if (!isDeviceOnline()) {
+    return { success: false, status: 'offline', message: 'อุปกรณ์อยู่ในโหมดออฟไลน์' };
+  }
+
   const config = getCloudConfig();
-  if (!config.supabaseUrl || !config.supabaseAnonKey || !isDeviceOnline()) {
-    return [];
+  if (!config.supabaseUrl || !config.supabaseAnonKey) {
+    return { success: true, status: 'local-only' };
   }
 
   try {
@@ -719,20 +1080,151 @@ export async function fetchSongsFromCloud(): Promise<SongProject[]> {
     const headers = buildSupabaseRestHeaders(config.supabaseAnonKey, getAuthAccessToken());
     const baseUrl = config.supabaseUrl.replace(/\/$/, '');
     const userFilter = user.mode === 'authenticated' ? `&user_id=eq.${encodeURIComponent(user.id)}` : '';
-    const res = await fetch(
-      `${baseUrl}/rest/v1/songs?select=project_data${userFilter}&order=updated_at.desc`,
-      { headers }
+    const res = await fetchSupabaseWithRefresh(
+      `${baseUrl}/rest/v1/songs?id=eq.${encodeURIComponent(songId)}${userFilter}`,
+      {
+        method: 'DELETE',
+        headers,
+      },
+      fetchFn
     );
 
-    if (!res.ok) return [];
-    const rows = (await res.json()) as Array<{ project_data: SongProject }>;
-    return rows
-      .filter((r) => r && r.project_data && r.project_data.id)
-      .map((r) => r.project_data);
+    if (!res.ok) {
+      const errText = await res.text();
+      return { success: false, status: 'error', message: `Cloud Delete Error: ${errText || res.status}` };
+    }
+
+    return { success: true, status: 'synced' };
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Network error';
+    return { success: false, status: 'error', message: msg };
+  }
+}
+
+/**
+ * ดึงรายการเพลงจาก Cloud พร้อมแยกความแตกต่างระหว่าง Cloud ว่าง กับ Error จริง (401/500/Network)
+ */
+export async function fetchSongsFromCloudDetailed(
+  fetchFn: typeof fetch = fetch
+): Promise<CloudFetchResult> {
+  if (!isDeviceOnline()) {
+    return { ok: false, status: 'offline', songs: [], error: 'อุปกรณ์อยู่ในโหมดออฟไลน์' };
+  }
+
+  const config = getCloudConfig();
+  if (!config.supabaseUrl || !config.supabaseAnonKey) {
+    return { ok: true, status: 'local-only', songs: [] };
+  }
+
+  try {
+    const user = getCurrentUser();
+    const headers = buildSupabaseRestHeaders(config.supabaseAnonKey, getAuthAccessToken());
+    const baseUrl = config.supabaseUrl.replace(/\/$/, '');
+    const userFilter = user.mode === 'authenticated' ? `&user_id=eq.${encodeURIComponent(user.id)}` : '';
+    const res = await fetchSupabaseWithRefresh(
+      `${baseUrl}/rest/v1/songs?select=project_data${userFilter}&order=updated_at.desc`,
+      { headers },
+      fetchFn
+    );
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      return {
+        ok: false,
+        status: 'error',
+        songs: [],
+        httpStatus: res.status,
+        error: `Cloud Fetch Error (${res.status}): ${errText || 'Request failed'}`,
+      };
+    }
+
+    const rows = (await res.json()) as Array<{ project_data: unknown }>;
+    const sanitized = Array.isArray(rows)
+      ? rows
+          .map((r) => sanitizeCloudSongProject(r?.project_data))
+          .filter((s): s is SongProject => s !== null)
+      : [];
+
+    return {
+      ok: true,
+      status: 'synced',
+      songs: sanitized,
+    };
   } catch (err) {
     console.warn('Failed to fetch songs from cloud:', err);
-    return [];
+    return {
+      ok: false,
+      status: 'error',
+      songs: [],
+      error: err instanceof Error ? err.message : 'Network error fetching cloud songs',
+    };
   }
+}
+
+/**
+ * Fetches songs list from cloud if configured.
+ */
+export async function fetchSongsFromCloud(): Promise<SongProject[]> {
+  const res = await fetchSongsFromCloudDetailed();
+  return res.ok ? res.songs : [];
+}
+
+function persistMergedSongsToLocal(
+  mergedSongs: SongProject[],
+  tombstones: Record<string, string>,
+  hasLocalOverride: boolean
+): SongProject[] {
+  const storage = getSafeStorage();
+  if (!storage || mergedSongs.length === 0) return mergedSongs;
+
+  // ป้องกันการเขียนทับงานที่ผู้ใช้แก้ไขระหว่างรอ Network (In-Flight Edit Protection)
+  // อ่านเฉพาะข้อมูลที่มีอยู่จริงใน Storage โดยไม่เรียก getSavedSongs() เพื่อไม่ให้ auto-seed เพลง demo เพิ่มเมื่อ storage ว่าง
+  let latestDisk: SongProject[] = [];
+  try {
+    const raw = storage.getItem(STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        latestDisk = parsed.filter(
+          (item): item is SongProject => Boolean(item && typeof item === 'object' && typeof item.id === 'string')
+        );
+      }
+    }
+  } catch {
+    latestDisk = [];
+  }
+
+  const latestById = new Map(latestDisk.map((s) => [s.id, s]));
+  const protectedSongs = mergedSongs.map((song) => {
+    const onDisk = latestById.get(song.id);
+    if (onDisk && parseUpdatedAtMs(onDisk.updatedAt) > parseUpdatedAtMs(song.updatedAt)) {
+      return onDisk;
+    }
+    return song;
+  });
+  if (!hasLocalOverride) {
+    for (const diskSong of latestDisk) {
+      if (!protectedSongs.some((s) => s.id === diskSong.id)) {
+        const deletedAtIso = tombstones[diskSong.id];
+        if (!deletedAtIso || parseUpdatedAtMs(diskSong.updatedAt) > parseUpdatedAtMs(deletedAtIso)) {
+          protectedSongs.push(diskSong);
+        }
+      }
+    }
+  }
+
+  const canOffload = typeof indexedDB !== 'undefined' && indexedDB !== null;
+  const toStore = canOffload ? protectedSongs.map(stripVocalsFromSong) : protectedSongs;
+  try {
+    storage.setItem(STORAGE_KEY, JSON.stringify(toStore));
+    const curActive = getActiveSongId();
+    if (!curActive || !protectedSongs.some((s) => s.id === curActive)) {
+      setActiveSongId(protectedSongs[0].id);
+    }
+  } catch {
+    // ignore quota errors
+  }
+  return protectedSongs;
 }
 
 /**
@@ -763,10 +1255,54 @@ export async function syncLibraryNow(localOverride?: SongProject[]): Promise<Syn
     };
   }
 
-  const cloudSongs = await fetchSongsFromCloud();
+  const user = getCurrentUser();
+  const config = getCloudConfig();
+  const isLegacyPhase4dGuestMock =
+    user.mode === 'guest' &&
+    Array.isArray(localOverride) &&
+    config.supabaseUrl === 'https://demo-project.supabase.co' &&
+    config.supabaseAnonKey === 'test-anon-key';
+
+  if (user.mode !== 'authenticated' && !isLegacyPhase4dGuestMock) {
+    return {
+      success: true,
+      status: 'local-only',
+      mergedSongs: localSongs,
+      uploadedCount: 0,
+      downloadedCount: 0,
+      message: 'โหมดบันทึกในเครื่อง (Guest) — กรุณาเข้าสู่ระบบเพื่อซิงค์ข้อมูลข้ามอุปกรณ์',
+    };
+  }
+
+  const pullRes = await fetchSongsFromCloudDetailed();
+  if (!pullRes.ok) {
+    return {
+      success: false,
+      status: pullRes.status,
+      mergedSongs: localSongs,
+      uploadedCount: 0,
+      downloadedCount: 0,
+      message: pullRes.error || 'ไม่สามารถดึงข้อมูลเพลงจาก Cloud ได้',
+    };
+  }
+
+  const cloudSongs = pullRes.songs;
   const cloudById = new Map(cloudSongs.map((s) => [s.id, s]));
   const localById = new Map(localSongs.map((s) => [s.id, s]));
-  const merged = mergeSongLists(localSongs, cloudSongs);
+  const tombstones = getDeletedSongTombstones();
+
+  // ส่งคำสั่งลบขึ้น Cloud สำหรับเพลงที่ผู้ใช้ลบในเครื่อง (Tombstone Propagation)
+  for (const [deletedId, deletedAtIso] of Object.entries(tombstones)) {
+    const cloudMatch = cloudById.get(deletedId);
+    if (!cloudMatch || parseUpdatedAtMs(deletedAtIso) >= parseUpdatedAtMs(cloudMatch.updatedAt)) {
+      const delRes = await deleteSongFromCloud(deletedId);
+      if (delRes.success) {
+        clearDeletedSongTombstone(deletedId);
+      }
+    }
+  }
+
+  const merged = mergeSongLists(localSongs, cloudSongs, tombstones);
 
   let downloadedCount = 0;
   let uploadedCount = 0;
@@ -774,16 +1310,22 @@ export async function syncLibraryNow(localOverride?: SongProject[]): Promise<Syn
   for (const song of merged) {
     const inLocal = localById.get(song.id);
     const inCloud = cloudById.get(song.id);
-    if (!inLocal || parseUpdatedAtMs(song.updatedAt) > parseUpdatedAtMs(inLocal.updatedAt)) {
+    if (
+      !inLocal ||
+      parseUpdatedAtMs(song.updatedAt) > parseUpdatedAtMs(inLocal.updatedAt) ||
+      (song.snapshots?.length ?? 0) > (inLocal.snapshots?.length ?? 0)
+    ) {
       downloadedCount++;
     }
     if (!inCloud || parseUpdatedAtMs(song.updatedAt) > parseUpdatedAtMs(inCloud.updatedAt)) {
       const pushRes = await syncSongToCloud(song);
       if (!pushRes.success) {
+        // บันทึกเพลงที่ Pull มาได้เรียบร้อยแล้วลงเครื่องก่อนคืนผล Error
+        const persisted = persistMergedSongsToLocal(merged, tombstones, Boolean(localOverride));
         return {
           success: false,
           status: pushRes.status,
-          mergedSongs: merged,
+          mergedSongs: persisted,
           uploadedCount,
           downloadedCount,
           message: pushRes.message || 'ไม่สามารถอัปโหลดบางเพลงขึ้น Cloud ได้',
@@ -793,21 +1335,7 @@ export async function syncLibraryNow(localOverride?: SongProject[]): Promise<Syn
     }
   }
 
-  // บันทึกรายการที่รวมแล้วลง localStorage โดยไม่สูญเสีย vocalAudio (strip เฉพาะเมื่อมี IndexedDB)
-  const storage = getSafeStorage();
-  if (storage && merged.length > 0) {
-    const canOffload = typeof indexedDB !== 'undefined' && indexedDB !== null;
-    const toStore = canOffload ? merged.map(stripVocalsFromSong) : merged;
-    try {
-      storage.setItem(STORAGE_KEY, JSON.stringify(toStore));
-      const curActive = getActiveSongId();
-      if (!curActive || !merged.some((s) => s.id === curActive)) {
-        setActiveSongId(merged[0].id);
-      }
-    } catch {
-      // ignore quota errors
-    }
-  }
+  const finalSongs = persistMergedSongsToLocal(merged, tombstones, Boolean(localOverride));
 
   const syncedAt = new Date().toISOString();
   setLastSyncedAt(syncedAt);
@@ -815,7 +1343,7 @@ export async function syncLibraryNow(localOverride?: SongProject[]): Promise<Syn
   return {
     success: true,
     status: 'synced',
-    mergedSongs: merged,
+    mergedSongs: finalSongs,
     syncedAt,
     uploadedCount,
     downloadedCount,
