@@ -512,9 +512,11 @@ export default function Home() {
           }
         }
       }
+      if (!active) return;
+      const latestUser = getCurrentUser();
       if (!navigator.onLine) {
         setSyncStatus('offline');
-      } else if (resolvedUser.mode === 'authenticated' && isCloudConfigured()) {
+      } else if (latestUser.mode === 'authenticated' && isCloudConfigured()) {
         setSyncStatus(savedLastSync ? 'synced' : 'local-only');
         await handleSyncNow();
       } else {

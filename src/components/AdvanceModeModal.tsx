@@ -1193,9 +1193,36 @@ export const AdvanceModeModal: React.FC<AdvanceModeModalProps> = ({
     onClose();
   };
 
+  useEffect(() => {
+    const isBusy = isGenerating || isApplyingDirector || isGeneratingRef || isVerifyingSlip;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !isBusy) {
+        e.preventDefault();
+        vocalPreviewAudioRef.current?.pause();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isGenerating, isApplyingDirector, isGeneratingRef, isVerifyingSlip, onClose]);
+
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/50 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-surface-1 text-ink-900 rounded-3xl border border-hairline shadow-e3 max-w-2xl w-full p-5 sm:p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150 max-h-[92vh] flex flex-col">
+    <div
+      className="fixed inset-0 z-50 bg-slate-950/50 backdrop-blur-xs flex items-center justify-center p-4"
+      onClick={(e) => {
+        if (
+          e.target === e.currentTarget &&
+          !(isGenerating || isApplyingDirector || isGeneratingRef || isVerifyingSlip)
+        ) {
+          handleCloseModal();
+        }
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        className="bg-surface-1 text-ink-900 rounded-3xl border border-hairline shadow-e3 max-w-3xl w-full p-5 sm:p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150 max-h-[92vh] flex flex-col"
+      >
         {/* Header + Credit Chip */}
         <div className="flex items-start justify-between gap-3 border-b border-hairline pb-3 shrink-0">
           <div>
@@ -1227,61 +1254,66 @@ export const AdvanceModeModal: React.FC<AdvanceModeModalProps> = ({
         </div>
 
         {/* Sub-Tabs */}
-        <div className="flex items-center gap-1.5 bg-surface-inset p-1 rounded-2xl border border-hairline shrink-0 overflow-x-auto">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-1 bg-surface-inset p-1 rounded-2xl border border-hairline shrink-0">
           <button
             type="button"
             onClick={() => setActiveTab('rhyme')}
-            className={`flex-1 px-3 py-2 rounded-xl font-bold text-xs sm:text-sm transition cursor-pointer whitespace-nowrap ${
+            className={`flex flex-col items-center justify-center px-2 py-1.5 rounded-xl text-center leading-tight transition cursor-pointer ${
               activeTab === 'rhyme'
                 ? 'bg-surface-1 text-accent-text shadow-xs'
                 : 'text-ink-700 hover:text-ink-900'
             }`}
           >
-            🎵 {lang === 'th' ? 'คำสัมผัสไทย (0 เครดิต)' : 'Thai Rhyme (0 Credits)'}
+            <span className="text-xs font-bold">🎵 {lang === 'th' ? 'คำสัมผัสไทย' : 'Thai Rhyme'}</span>
+            <span className="text-[10px] font-semibold opacity-75">{lang === 'th' ? '0 เครดิต' : '0 Credits'}</span>
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('ai-lyrics')}
-            className={`flex-1 px-3 py-2 rounded-xl font-bold text-xs sm:text-sm transition cursor-pointer whitespace-nowrap ${
+            className={`flex flex-col items-center justify-center px-2 py-1.5 rounded-xl text-center leading-tight transition cursor-pointer ${
               activeTab === 'ai-lyrics'
                 ? 'bg-surface-1 text-accent-text shadow-xs'
                 : 'text-ink-700 hover:text-ink-900'
             }`}
           >
-            ✨ {lang === 'th' ? 'AI Lyric Co-Pilot (1 เครดิต)' : 'AI Lyrics (1 Credit)'}
+            <span className="text-xs font-bold">✨ {lang === 'th' ? 'AI แต่งเนื้อ' : 'AI Lyrics'}</span>
+            <span className="text-[10px] font-semibold opacity-75">{lang === 'th' ? '1–2 เครดิต' : '1–2 Cr'}</span>
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('ai-director')}
-            className={`shrink-0 px-3 py-2 rounded-xl font-bold text-xs sm:text-sm transition cursor-pointer whitespace-nowrap ${
+            className={`flex flex-col items-center justify-center px-2 py-1.5 rounded-xl text-center leading-tight transition cursor-pointer ${
               activeTab === 'ai-director'
                 ? 'bg-surface-1 text-accent-text shadow-xs'
                 : 'text-ink-700 hover:text-ink-900'
             }`}
           >
-            🪄 {lang === 'th' ? 'AI สั่งตั้งค่าแอป (0-1 เครดิต)' : 'AI Studio Director (0-1 Cr)'}
+            <span className="text-xs font-bold">🪄 {lang === 'th' ? 'สั่งตั้งค่า AI' : 'AI Director'}</span>
+            <span className="text-[10px] font-semibold opacity-75">{lang === 'th' ? '0–1 เครดิต' : '0–1 Cr'}</span>
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('reference')}
-            className={`shrink-0 px-3 py-2 rounded-xl font-bold text-xs sm:text-sm transition cursor-pointer whitespace-nowrap ${
+            className={`flex flex-col items-center justify-center px-2 py-1.5 rounded-xl text-center leading-tight transition cursor-pointer ${
               activeTab === 'reference'
                 ? 'bg-surface-1 text-warn-500 shadow-xs'
                 : 'text-ink-700 hover:text-ink-900'
             }`}
           >
-            🎧 {lang === 'th' ? 'AI เทียบเสียง (8 เหรียญ)' : 'AI Reference (8 Cr)'}
+            <span className="text-xs font-bold">🎧 {lang === 'th' ? 'เทียบเสียง AI' : 'Reference'}</span>
+            <span className="text-[10px] font-semibold opacity-75">{lang === 'th' ? '8 เหรียญ' : '8 Cr'}</span>
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('wallet')}
-            className={`shrink-0 px-3 py-2 rounded-xl font-bold text-xs sm:text-sm transition cursor-pointer whitespace-nowrap ${
+            className={`col-span-2 sm:col-span-1 flex flex-col items-center justify-center px-2 py-1.5 rounded-xl text-center leading-tight transition cursor-pointer ${
               activeTab === 'wallet'
                 ? 'bg-surface-1 text-warn-500 shadow-xs'
                 : 'text-ink-700 hover:text-ink-900'
             }`}
           >
-            💳 {lang === 'th' ? 'เติมเครดิต / ประวัติ' : 'Wallet & Top-Up'}
+            <span className="text-xs font-bold">💳 {lang === 'th' ? 'เติมเครดิต' : 'Wallet'}</span>
+            <span className="text-[10px] font-semibold opacity-75">{lang === 'th' ? 'ประวัติ' : 'Top-Up'}</span>
           </button>
         </div>
 

@@ -311,15 +311,15 @@ export const TransportBar: React.FC<TransportBarProps> = ({
       >
         {/* ROW 1: AppTopBar (hidden in Zen Mode) */}
         {!isZenMode && (
-          <div className="max-w-7xl mx-auto h-14 px-3 sm:px-6 flex items-center justify-between gap-2 sm:gap-4">
+          <div className="max-w-7xl mx-auto h-14 px-3 sm:px-6 flex items-center justify-between gap-2 lg:gap-3">
             {/* Left: Library + Inline Editable Title + Save Status */}
-            <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0 flex-1 md:flex-initial">
+            <div className="flex items-center gap-1 sm:gap-1.5 min-w-0 flex-1 overflow-hidden">
               <button
                 type="button"
                 onClick={onOpenLibraryModal}
                 title={t.mySongs}
                 aria-label={t.mySongs}
-                className="w-9 h-9 rounded-xl flex items-center justify-center text-ink-700 hover:text-ink-900 hover:bg-surface-inset transition cursor-pointer shrink-0"
+                className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center text-ink-700 hover:text-ink-900 hover:bg-surface-inset transition cursor-pointer shrink-0"
               >
                 <Library className="w-[18px] h-[18px]" strokeWidth={1.75} />
               </button>
@@ -332,11 +332,11 @@ export const TransportBar: React.FC<TransportBarProps> = ({
                   onUpdateSong((prev) => ({ ...prev, title: newTitle }));
                 }}
                 aria-label={lang === 'th' ? 'ชื่อเพลง' : 'Song title'}
-                className="font-semibold text-base sm:text-lg tracking-[-0.01em] text-ink-900 bg-transparent hover:bg-surface-inset focus:bg-surface-1 focus:outline-none focus:ring-2 focus:ring-accent-200 rounded-lg px-2 py-1 min-w-0 w-32 sm:w-44 lg:w-52 truncate transition"
+                className="font-semibold text-sm sm:text-base tracking-[-0.01em] text-ink-900 bg-transparent hover:bg-surface-inset focus:bg-surface-1 focus:outline-none focus:ring-2 focus:ring-accent-200 rounded-lg px-2 py-1 min-w-0 flex-1 max-w-[155px] xl:max-w-[165px] truncate transition"
               />
 
               <span
-                className={`hidden sm:inline-flex items-center gap-1.5 text-xs whitespace-nowrap shrink-0 ${
+                className={`hidden sm:inline-flex items-center gap-1.5 text-[11px] whitespace-nowrap shrink-0 ${
                   localSaveState === 'error'
                     ? 'text-rec-500 font-semibold'
                     : localSaveState === 'dirty' || localSaveState === 'saving'
@@ -347,7 +347,7 @@ export const TransportBar: React.FC<TransportBarProps> = ({
                 data-save-state={localSaveState}
               >
                 <span className={`w-1.5 h-1.5 rounded-full ${saveDotClass}`} />
-                <span className="hidden lg:inline">{saveStatusText}</span>
+                <span className="hidden xl:inline max-w-[104px] truncate">{saveStatusText}</span>
               </span>
 
               {onManualSave && (
@@ -356,14 +356,13 @@ export const TransportBar: React.FC<TransportBarProps> = ({
                   onClick={() => void onManualSave()}
                   title={lang === 'th' ? 'บันทึกทันที (Ctrl+S)' : 'Save now (Ctrl+S)'}
                   aria-label={lang === 'th' ? 'บันทึกทันที (Ctrl+S)' : 'Save now (Ctrl+S)'}
-                  className={`h-8 px-2 rounded-lg text-xs font-medium inline-flex items-center gap-1 transition cursor-pointer shrink-0 ${
+                  className={`w-8 h-8 rounded-lg inline-flex items-center justify-center transition cursor-pointer shrink-0 ${
                     localSaveState === 'dirty'
                       ? 'bg-amber-50 text-amber-800 border border-amber-300 hover:bg-amber-100'
                       : 'text-ink-700 hover:text-ink-900 hover:bg-surface-inset'
                   }`}
                 >
                   <Save className="w-3.5 h-3.5" strokeWidth={1.75} />
-                  <span className="hidden xl:inline">{t.manualSaveBtn}</span>
                 </button>
               )}
 
@@ -373,10 +372,9 @@ export const TransportBar: React.FC<TransportBarProps> = ({
                   onClick={() => onSaveCheckpoint()}
                   title={lang === 'th' ? 'ปักหมุดเวอร์ชัน (Ctrl+Shift+S)' : 'Save Checkpoint (Ctrl+Shift+S)'}
                   aria-label={lang === 'th' ? 'ปักหมุดเวอร์ชัน (Ctrl+Shift+S)' : 'Save Checkpoint (Ctrl+Shift+S)'}
-                  className="hidden sm:inline-flex h-8 px-2 rounded-lg text-xs font-medium text-ink-700 hover:text-ink-900 hover:bg-surface-inset items-center gap-1 transition cursor-pointer shrink-0"
+                  className="hidden lg:inline-flex w-8 h-8 rounded-lg text-ink-700 hover:text-ink-900 hover:bg-surface-inset items-center justify-center transition cursor-pointer shrink-0"
                 >
                   <Camera className="w-3.5 h-3.5" strokeWidth={1.75} />
-                  <span className="hidden xl:inline">{t.saveCheckpointBtn}</span>
                 </button>
               )}
             </div>
@@ -396,7 +394,7 @@ export const TransportBar: React.FC<TransportBarProps> = ({
                     role="tab"
                     aria-selected={isSelected}
                     onClick={() => onSwitchMode(mode.id)}
-                    className={`h-8 px-3 rounded-[9px] text-sm font-medium inline-flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
+                    className={`h-8 px-2.5 lg:px-3 rounded-[9px] text-xs lg:text-sm font-medium inline-flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
                       isSelected
                         ? 'bg-surface-1 text-accent-text font-semibold shadow-xs'
                         : 'text-ink-700 hover:text-ink-900'
@@ -410,10 +408,10 @@ export const TransportBar: React.FC<TransportBarProps> = ({
             </div>
 
             {/* Right: Actions Cluster */}
-            <div className="flex items-center justify-end gap-1 sm:gap-1.5 shrink-0">
+            <div className="flex items-center justify-end gap-1 shrink-0">
               {/* Studio History Undo / Redo (Ctrl+Z / Ctrl+Y) */}
               {(onUndo || onRedo) && (
-                <div className="inline-flex items-center gap-0.5 mr-0.5">
+                <div className="hidden lg:inline-flex items-center gap-0.5">
                   <button
                     type="button"
                     disabled={!canUndo}
@@ -442,10 +440,10 @@ export const TransportBar: React.FC<TransportBarProps> = ({
                   type="button"
                   onClick={onOpenEasyMode}
                   title={lang === 'th' ? 'สร้างเพลงง่าย ๆ ใน 30 วินาที (Easy Mode)' : 'Quick Start Wizard (Easy Mode)'}
-                  className="hidden sm:inline-flex h-8 px-2.5 rounded-lg bg-accent-50 hover:bg-accent-200/60 text-accent-text text-xs font-semibold items-center gap-1 border border-accent-200 transition cursor-pointer shrink-0"
+                  aria-label={lang === 'th' ? 'สร้างเพลงง่าย ๆ ใน 30 วินาที (Easy Mode)' : 'Quick Start Wizard (Easy Mode)'}
+                  className="hidden xl:inline-flex w-8 h-8 rounded-lg bg-accent-50 hover:bg-accent-200/60 text-accent-text items-center justify-center border border-accent-200 transition cursor-pointer shrink-0"
                 >
                   <Wand2 className="w-3.5 h-3.5" strokeWidth={1.75} />
-                  <span className="hidden xl:inline">Easy Mode</span>
                 </button>
               )}
 
@@ -454,10 +452,10 @@ export const TransportBar: React.FC<TransportBarProps> = ({
                   type="button"
                   onClick={onCreateNewSong}
                   title={lang === 'th' ? 'สร้างเพลงใหม่' : 'New Song'}
-                  className="hidden sm:inline-flex h-8 px-2 rounded-lg hover:bg-surface-inset text-ink-700 hover:text-ink-900 text-xs font-medium items-center gap-1 transition cursor-pointer shrink-0"
+                  aria-label={lang === 'th' ? 'สร้างเพลงใหม่' : 'New Song'}
+                  className="hidden xl:inline-flex w-8 h-8 rounded-lg hover:bg-surface-inset text-ink-700 hover:text-ink-900 items-center justify-center transition cursor-pointer shrink-0"
                 >
                   <FilePlus2 className="w-3.5 h-3.5" strokeWidth={1.75} />
-                  <span className="hidden xl:inline">{lang === 'th' ? 'เพลงใหม่' : 'New'}</span>
                 </button>
               )}
 
@@ -471,10 +469,10 @@ export const TransportBar: React.FC<TransportBarProps> = ({
                       ? 'เปิด Advance Mode / AI สั่งตั้งค่าแอป & คลังเครดิต (Credits)'
                       : 'Open Advance Mode / AI Director & Credits'
                   }
-                  className="h-9 px-2.5 rounded-xl hover:bg-surface-inset text-ink-900 font-medium text-sm inline-flex items-center gap-1.5 transition cursor-pointer shrink-0"
+                  className="h-8 px-2 rounded-xl hover:bg-surface-inset text-ink-900 font-medium text-xs sm:text-sm inline-flex items-center gap-1 transition cursor-pointer shrink-0"
                 >
                   <Sparkles className="w-4 h-4 text-accent-500" strokeWidth={1.75} />
-                  <span className="hidden lg:inline text-ink-700">AI</span>
+                  <span className="hidden xl:inline text-ink-700">AI</span>
                   <span className="font-mono-tabular font-semibold text-xs sm:text-sm">
                     {creditBalance}
                   </span>
@@ -486,8 +484,14 @@ export const TransportBar: React.FC<TransportBarProps> = ({
                 <button
                   type="button"
                   onClick={onOpenAccountModal}
-                  title={lang === 'th' ? 'บัญชีผู้ใช้ & ซิงค์ Cloud' : 'Account & Cloud Sync'}
-                  className="hidden sm:inline-flex h-9 px-2.5 rounded-xl hover:bg-surface-inset text-ink-700 hover:text-ink-900 text-sm font-medium items-center gap-1.5 transition cursor-pointer relative shrink-0"
+                  title={
+                    cloudUser?.mode === 'authenticated' && cloudUser.displayName
+                      ? `${lang === 'th' ? 'บัญชีผู้ใช้ & ซิงค์ Cloud' : 'Account & Cloud Sync'}: ${cloudUser.displayName}`
+                      : lang === 'th'
+                        ? 'บัญชีผู้ใช้ & ซิงค์ Cloud'
+                        : 'Account & Cloud Sync'
+                  }
+                  className="hidden lg:inline-flex w-8 h-8 rounded-xl hover:bg-surface-inset text-ink-700 hover:text-ink-900 items-center justify-center transition cursor-pointer relative shrink-0"
                 >
                   <span className="relative inline-flex items-center">
                     <Cloud className="w-[18px] h-[18px]" strokeWidth={1.75} />
@@ -495,11 +499,6 @@ export const TransportBar: React.FC<TransportBarProps> = ({
                       className={`w-2 h-2 rounded-full ${SYNC_DOT_COLOR[syncStatus]} absolute -right-0.5 -bottom-0.5 ring-2 ring-surface-1`}
                     />
                   </span>
-                  {cloudUser?.mode === 'authenticated' && (
-                    <span className="hidden xl:inline max-w-[90px] truncate text-xs font-medium text-ink-900">
-                      {cloudUser.displayName}
-                    </span>
-                  )}
                 </button>
               )}
 
@@ -517,7 +516,7 @@ export const TransportBar: React.FC<TransportBarProps> = ({
                     : 'Switch to Dark theme'
                 }
                 aria-label="Toggle theme"
-                className="w-9 h-9 rounded-xl inline-flex items-center justify-center text-ink-700 hover:text-ink-900 hover:bg-surface-inset transition cursor-pointer shrink-0"
+                className="w-8 h-8 rounded-xl inline-flex items-center justify-center text-ink-700 hover:text-ink-900 hover:bg-surface-inset transition cursor-pointer shrink-0"
               >
                 {resolvedTheme === 'dark' ? (
                   <Moon className="w-[18px] h-[18px]" strokeWidth={1.75} />
@@ -534,7 +533,7 @@ export const TransportBar: React.FC<TransportBarProps> = ({
                   onClick={onToggleZenMode}
                   title={t.zenModeHint}
                   aria-label="Zen Focus Mode"
-                  className="hidden sm:inline-flex w-9 h-9 rounded-xl items-center justify-center text-ink-700 hover:text-ink-900 hover:bg-surface-inset transition cursor-pointer shrink-0"
+                  className="hidden xl:inline-flex w-8 h-8 rounded-xl items-center justify-center text-ink-700 hover:text-ink-900 hover:bg-surface-inset transition cursor-pointer shrink-0"
                 >
                   <Maximize2 className="w-[18px] h-[18px]" strokeWidth={1.75} />
                 </button>
@@ -547,7 +546,7 @@ export const TransportBar: React.FC<TransportBarProps> = ({
                   onClick={() => togglePopover('more')}
                   aria-expanded={openPopover === 'more'}
                   aria-label={lang === 'th' ? 'เมนูเพิ่มเติม' : 'More options'}
-                  className={`w-9 h-9 rounded-xl inline-flex items-center justify-center transition cursor-pointer ${
+                  className={`w-8 h-8 rounded-xl inline-flex items-center justify-center transition cursor-pointer ${
                     openPopover === 'more'
                       ? 'bg-accent-50 text-accent-text'
                       : 'text-ink-700 hover:text-ink-900 hover:bg-surface-inset'
@@ -588,6 +587,39 @@ export const TransportBar: React.FC<TransportBarProps> = ({
                     </div>
 
                     <div className="h-px bg-hairline my-1" />
+
+                    {(onUndo || onRedo) && (
+                      <div className="lg:hidden grid grid-cols-2 gap-1 px-1 pb-1">
+                        {onUndo && (
+                          <button
+                            type="button"
+                            disabled={!canUndo}
+                            onClick={() => {
+                              onUndo();
+                              setOpenPopover(null);
+                            }}
+                            className="h-8 px-2 rounded-xl hover:bg-surface-inset disabled:opacity-40 disabled:pointer-events-none flex items-center justify-center gap-1.5 text-xs font-medium transition cursor-pointer"
+                          >
+                            <Undo2 className="w-3.5 h-3.5 text-ink-700" />
+                            <span>{lang === 'th' ? 'ย้อนกลับ' : 'Undo'}</span>
+                          </button>
+                        )}
+                        {onRedo && (
+                          <button
+                            type="button"
+                            disabled={!canRedo}
+                            onClick={() => {
+                              onRedo();
+                              setOpenPopover(null);
+                            }}
+                            className="h-8 px-2 rounded-xl hover:bg-surface-inset disabled:opacity-40 disabled:pointer-events-none flex items-center justify-center gap-1.5 text-xs font-medium transition cursor-pointer"
+                          >
+                            <Redo2 className="w-3.5 h-3.5 text-ink-700" />
+                            <span>{lang === 'th' ? 'ทำซ้ำ' : 'Redo'}</span>
+                          </button>
+                        )}
+                      </div>
+                    )}
 
                     {onOpenEasyMode && (
                       <button
@@ -655,7 +687,7 @@ export const TransportBar: React.FC<TransportBarProps> = ({
                           onOpenAccountModal();
                           setOpenPopover(null);
                         }}
-                        className="w-full h-9 px-2.5 rounded-xl hover:bg-surface-inset flex items-center justify-between text-left transition cursor-pointer sm:hidden"
+                        className="w-full h-9 px-2.5 rounded-xl hover:bg-surface-inset flex items-center justify-between text-left transition cursor-pointer lg:hidden"
                       >
                         <span className="inline-flex items-center gap-2.5">
                           <Cloud className="w-4 h-4 text-ink-700" />
@@ -720,10 +752,10 @@ export const TransportBar: React.FC<TransportBarProps> = ({
                 onClick={onOpenExportModal}
                 aria-label={lang === 'th' ? 'แชร์ / ส่งออก' : 'Export / Share'}
                 title={lang === 'th' ? 'แชร์ / ส่งออก' : 'Export / Share'}
-                className="h-9 px-3 sm:px-4 rounded-xl bg-accent-500 hover:bg-accent-hover text-white font-semibold text-sm inline-flex items-center gap-1.5 shadow-xs transition cursor-pointer shrink-0"
+                className="h-8 sm:h-9 px-2.5 lg:px-3 rounded-xl bg-accent-500 hover:bg-accent-hover text-white font-semibold text-xs lg:text-sm inline-flex items-center gap-1.5 shadow-xs transition cursor-pointer shrink-0"
               >
                 <Share2 className="w-4 h-4" strokeWidth={1.75} />
-                <span className="hidden sm:inline">
+                <span className="hidden lg:inline">
                   {lang === 'th' ? 'แชร์ / ส่งออก' : 'Export / Share'}
                 </span>
               </button>

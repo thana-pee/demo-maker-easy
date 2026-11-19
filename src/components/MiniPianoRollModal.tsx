@@ -159,6 +159,24 @@ export const MiniPianoRollModal: React.FC<MiniPianoRollModalProps> = ({
     }
   }, [isOpen, isAuditioning]);
 
+  // Dismiss on Escape when not generating TTS
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !isGeneratingTts) {
+        e.preventDefault();
+        ttsAudioRef.current?.pause();
+        if (isAuditioning) {
+          getAudioEngine().stop();
+          setIsAuditioning(false);
+        }
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, isGeneratingTts, isAuditioning, onClose]);
+
   // Early return ONLY after all hooks have been called
   if (!isOpen || !section || !bar) return null;
 
@@ -421,8 +439,24 @@ export const MiniPianoRollModal: React.FC<MiniPianoRollModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-150">
-      <div className="bg-surface-1 w-full max-w-4xl max-h-[92vh] rounded-3xl shadow-2xl border border-hairline flex flex-col overflow-hidden">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-150"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !isGeneratingTts) {
+          ttsAudioRef.current?.pause();
+          if (isAuditioning) {
+            getAudioEngine().stop();
+            setIsAuditioning(false);
+          }
+          onClose();
+        }
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        className="bg-surface-1 w-full max-w-4xl max-h-[92vh] rounded-3xl shadow-2xl border border-hairline flex flex-col overflow-hidden"
+      >
         {/* Header */}
         <div className="px-5 py-3.5 border-b border-hairline flex items-center justify-between bg-gradient-to-r from-accent-50 via-surface-2 to-surface-1">
           <div className="flex items-center gap-3">
@@ -795,18 +829,23 @@ export const MiniPianoRollModal: React.FC<MiniPianoRollModalProps> = ({
 
         {/* Piano Roll Grid Area */}
         <div className="flex-1 overflow-y-auto max-h-[58vh] bg-surface-2 relative select-none">
-          <div className="flex min-w-[500px]">
+          <div className={`flex ${totalSteps >= 16 ? 'min-w-[680px]' : 'min-w-[540px]'}`}>
             {/* Left Keys Column */}
             <div className="w-20 sm:w-24 shrink-0 sticky left-0 z-20 bg-surface-1 border-r border-hairline shadow-xs">
-              {/* Pitch Row Header Placeholder */}
-              <div className="h-8 border-b border-hairline bg-surface-inset flex items-center justify-center font-bold text-[10px] text-ink-400 uppercase">
-                Pitch
-              </div>
-              {lyricSyllableGuides.length > 0 && (
-                <div className="h-9 border-b border-accent-200 bg-accent-50 flex items-center justify-center font-bold text-[10px] text-accent-text px-1 text-center">
-                  {lang === 'th' ? 'พยางค์/เสียง' : 'Syllable/Tone'}
+              {/* Top-left Sticky Corner Header */}
+              <div className="sticky top-0 z-30 bg-surface-1">
+                {/* Pitch Row Header Placeholder */}
+                <div className="h-8 border-b border-hairline bg-surface-inset flex items-center justify-center font-bold text-[10px] text-ink-400 uppercase">
+                  Pitch
                 </div>
-              )}
+                {lyricSyllableGuides.length > 0 && (
+                  <div className="h-9 border-b border-accent-200 bg-surface-1">
+                    <div className="h-full bg-accent-50 flex items-center justify-center font-bold text-[10px] text-accent-text px-1 text-center">
+                      {lang === 'th' ? 'พยางค์/เสียง' : 'Syllable/Tone'}
+                    </div>
+                  </div>
+                )}
+              </div>
               {visiblePitches.map((pitch) => {
                 const isBlack = isBlackKey(pitch);
                 const noteName = midiToNoteName(pitch);
@@ -842,45 +881,50 @@ export const MiniPianoRollModal: React.FC<MiniPianoRollModalProps> = ({
 
             {/* Grid Columns (Beats & Steps) */}
             <div className="flex-1 flex flex-col">
-              {/* Beat Headers */}
-              <div className="h-8 border-b border-hairline bg-surface-inset flex sticky top-0 z-10">
-                {Array.from({ length: totalSteps }).map((_, step) => {
-                  const isBeatStart = step % stepsPerBeat === 0;
-                  const beatNum = Math.floor(step / stepsPerBeat) + 1;
-                  return (
-                    <div
-                      key={step}
-                      className={`flex-1 border-r flex items-center justify-center text-[10px] font-bold ${
-                        isBeatStart
-                          ? 'border-r-ink-400/40 bg-surface-2 text-ink-900'
-                          : 'border-r-hairline text-ink-400'
-                      }`}
-                    >
-                      {isBeatStart ? `จังหวะ ${beatNum}` : ''}
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Aligned Thai Syllable + Tone & Liveness Strip */}
-              {lyricSyllableGuides.length > 0 && (
-                <div className="h-9 border-b border-accent-200 bg-accent-50 flex items-stretch sticky top-8 z-10 overflow-hidden">
-                  {lyricSyllableGuides.map((g, idx) => (
-                    <div
-                      key={`${g.syllable}-${idx}`}
-                      title={`${g.syllable} • วรรณยุกต์${g.phonetics.tone} • ${g.phonetics.livenessLabel} (${g.phonetics.codaFamily}) • ${g.phonetics.melodyAdvice}`}
-                      className="flex-1 min-w-0 border-r border-accent-200 px-1 flex flex-col items-center justify-center leading-tight"
-                    >
-                      <span className="text-[11px] font-bold text-ink-900 truncate max-w-full">
-                        {g.syllable}
-                      </span>
-                      <span className="text-[9px] font-semibold text-accent-text truncate max-w-full">
-                        {g.phonetics.tone}·{g.phonetics.isLiveSyllable ? 'เป็น' : 'ตาย'}
-                      </span>
-                    </div>
-                  ))}
+              {/* Unified Sticky Header (Beat + Syllable Strip stays above scrolled rows & z-10 notes) */}
+              <div className="sticky top-0 z-20 bg-surface-1 shadow-xs">
+                {/* Beat Headers */}
+                <div className="h-8 border-b border-hairline bg-surface-inset flex">
+                  {Array.from({ length: totalSteps }).map((_, step) => {
+                    const isBeatStart = step % stepsPerBeat === 0;
+                    const beatNum = Math.floor(step / stepsPerBeat) + 1;
+                    return (
+                      <div
+                        key={step}
+                        className={`flex-1 border-r flex items-center justify-center text-[10px] font-bold ${
+                          isBeatStart
+                            ? 'border-r-ink-400/40 bg-surface-2 text-ink-900'
+                            : 'border-r-hairline text-ink-400'
+                        }`}
+                      >
+                        {isBeatStart ? `จังหวะ ${beatNum}` : ''}
+                      </div>
+                    );
+                  })}
                 </div>
-              )}
+
+                {/* Aligned Thai Syllable + Tone & Liveness Strip */}
+                {lyricSyllableGuides.length > 0 && (
+                  <div className="h-9 border-b border-accent-200 bg-surface-1 overflow-hidden">
+                    <div className="h-full bg-accent-50 flex items-stretch">
+                      {lyricSyllableGuides.map((g, idx) => (
+                        <div
+                          key={`${g.syllable}-${idx}`}
+                          title={`${g.syllable} • วรรณยุกต์${g.phonetics.tone} • ${g.phonetics.livenessLabel} (${g.phonetics.codaFamily}) • ${g.phonetics.melodyAdvice}`}
+                          className="flex-1 min-w-0 border-r border-accent-200 px-1 flex flex-col items-center justify-center leading-tight"
+                        >
+                          <span className="text-[11px] font-bold text-ink-900 truncate max-w-full">
+                            {g.syllable}
+                          </span>
+                          <span className="text-[9px] font-semibold text-accent-text truncate max-w-full">
+                            {g.phonetics.tone}·{g.phonetics.isLiveSyllable ? 'เป็น' : 'ตาย'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {/* Grid Rows for each pitch */}
               {visiblePitches.map((pitch) => {
@@ -925,13 +969,13 @@ export const MiniPianoRollModal: React.FC<MiniPianoRollModalProps> = ({
                               left: `${leftPercent}%`,
                               width: `${widthPercent}%`,
                             }}
-                            className="absolute top-0.5 bottom-0.5 rounded-lg bg-gradient-to-r from-[#1A73E8] to-indigo-600 text-white font-black text-[10px] shadow-sm flex items-center justify-between px-1.5 z-10 border border-blue-400 cursor-pointer hover:brightness-110 active:brightness-95 group transition"
+                            className="absolute top-0.5 bottom-0.5 rounded-lg bg-gradient-to-r from-[#1A73E8] to-indigo-600 text-white font-black text-[10px] shadow-sm flex items-center justify-center sm:justify-start px-1 overflow-hidden z-10 border border-blue-400 cursor-pointer hover:brightness-110 active:brightness-95 group transition"
                             title={`โน้ต ${noteName} (เริ่มจังหวะที่ ${(note.step / stepsPerBeat) + 1}, ยาว ${note.durationSteps} ช่อง)`}
                           >
-                            <span className="truncate">{noteName}</span>
+                            <span className="truncate leading-none">{noteName}</span>
 
                             {/* Duration modifier buttons on hover (always visible on touch/mobile) */}
-                            <div className="flex items-center gap-0.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition">
+                            <div className="absolute right-0.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5 rounded bg-indigo-700/90 px-0.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition">
                               <button
                                 type="button"
                                 onClick={(e) => handleChangeDuration(e, note, -1)}
