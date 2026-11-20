@@ -240,6 +240,7 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
   const melodyEnabled = song.mixer.melody?.enabled ?? true;
   const melodyVolume = song.mixer.melody?.volume ?? 56;
   const melodySound = song.mixer.melody?.sound ?? 'flute';
+  const masterVolume = song.mixer.masterVolume ?? 100;
   const vocalEnabled = song.mixer.vocal?.enabled ?? true;
   const vocalVolume = song.mixer.vocal?.volume ?? 95;
   const vocalFxPreset: VocalFxPreset = song.mixer.vocal?.fxPreset ?? 'studio-warm';
@@ -507,6 +508,61 @@ export const SoundCustomizerPanel: React.FC<SoundCustomizerPanelProps> = ({
                     : '🎚️ Auto-Arrange Band by Genre (0 Credits)'}
                 </span>
               </button>
+            </div>
+
+            {/* Master Output Loudness (0–150% + Studio Limiter) */}
+            <div className="p-3.5 rounded-xl border border-accent-200 bg-accent-50/40 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold text-sm text-ink-900">
+                  {lang === 'th' ? '🔊 ความดังรวม (Master Output)' : '🔊 Master Output Loudness'}
+                </span>
+                <div className="flex items-center gap-1.5">
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-ok-500 text-[10px] font-bold">
+                    Studio Limiter ON
+                  </span>
+                  {masterVolume !== 100 && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onUpdateSong((prev) => ({
+                          ...prev,
+                          mixer: { ...prev.mixer, masterVolume: 100 },
+                        }))
+                      }
+                      className="px-2 py-0.5 rounded-md bg-surface-1 border border-hairline text-[10px] font-semibold text-ink-700 hover:text-accent-text cursor-pointer"
+                    >
+                      100%
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 text-xs text-ink-700">
+                <span className="w-7">{lang === 'th' ? 'ดัง' : 'Vol'}</span>
+                <input
+                  type="range"
+                  min="0"
+                  max="150"
+                  step="5"
+                  value={masterVolume}
+                  aria-label={lang === 'th' ? 'ความดังรวม (Master Output)' : 'Master Output Loudness'}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value, 10);
+                    onUpdateSong((prev) => ({
+                      ...prev,
+                      mixer: { ...prev.mixer, masterVolume: val },
+                    }));
+                  }}
+                  className="w-full accent-[#5B61EE] cursor-pointer"
+                />
+                <span className="font-mono-tabular w-11 text-right font-semibold text-accent-text">
+                  {masterVolume}%
+                </span>
+              </div>
+              <p className="text-[11px] text-ink-500">
+                {lang === 'th'
+                  ? 'ปรับความดังรวมได้ถึง 150% พร้อม Limiter ป้องกันเสียงแตกอัตโนมัติ'
+                  : 'Boost up to 150% safely with automatic brickwall limiter'}
+              </p>
             </div>
 
             {/* Track 1: Rhythm Guitar */}

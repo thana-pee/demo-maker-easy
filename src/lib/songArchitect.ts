@@ -34,6 +34,15 @@ export type VocalProfile = 'female' | 'male' | 'neutral';
 export type TempoFeel = 'slow' | 'medium' | 'fast';
 export type BandDensityLevel = 'unplugged' | 'balanced' | 'full';
 
+export const EASY_SECTION_BAR_STEPS = [2, 4, 6, 8] as const;
+
+export function cycleEasySectionBars(currentBars: number): number {
+  if (!Number.isFinite(currentBars) || currentBars < 4) return 4;
+  if (currentBars < 6) return 6;
+  if (currentBars < 8) return 8;
+  return 2;
+}
+
 export interface EasyStylePresetConfig {
   id: string;
   nameTh: string;
@@ -481,7 +490,8 @@ function sanitizeSection(
   preset: EasyStylePresetConfig,
   lang: 'th' | 'en',
   secIdx: number,
-  ctx?: GuideMelodyContext
+  ctx?: GuideMelodyContext,
+  requestedBars?: number
 ): SongSection {
   const obj =
     rawSection && typeof rawSection === 'object' ? (rawSection as Record<string, unknown>) : {};
@@ -508,12 +518,17 @@ function sanitizeSection(
     type === 'chorus' || type === 'solo' ? preset.chorusRhythmStyle : preset.verseRhythmStyle;
 
   const rawBars = Array.isArray(obj.bars) ? obj.bars : [];
-  const barCount = Math.max(2, Math.min(8, rawBars.length || (type === 'intro' || type === 'outro' ? 2 : 4)));
+  const barCount =
+    typeof requestedBars === 'number' && Number.isFinite(requestedBars)
+      ? clampInt(requestedBars, 2, 8, type === 'intro' || type === 'outro' ? 2 : 4)
+      : Math.max(2, Math.min(8, rawBars.length || (type === 'intro' || type === 'outro' ? 2 : 4)));
   const bars: SongBar[] = [];
   for (let i = 0; i < barCount; i += 1) {
-    bars.push(
-      sanitizeBar(rawBars[i], preset.defaultChords[i % preset.defaultChords.length], i, type, ctx)
-    );
+    const fallbackChord =
+      (rawBars.length > 0 && i >= rawBars.length && bars.length >= rawBars.length
+        ? bars[i % rawBars.length].chords[0]
+        : undefined) ?? preset.defaultChords[i % preset.defaultChords.length];
+    bars.push(sanitizeBar(rawBars[i], fallbackChord, i, type, ctx));
   }
 
   return {
@@ -620,9 +635,21 @@ export function sanitizeArchitectSongProject(
   };
 
   const rawSections = Array.isArray(obj.sections) ? obj.sections.slice(0, 9) : [];
+  const matchesCustomStructure =
+    Boolean(input.customStructure && input.customStructure.length > 0) &&
+    rawSections.length === input.customStructure!.length;
   const baseSections =
     rawSections.length >= 2
-      ? rawSections.map((sec, idx) => sanitizeSection(sec, preset, input.language, idx, melodyCtx))
+      ? rawSections.map((sec, idx) =>
+          sanitizeSection(
+            sec,
+            preset,
+            input.language,
+            idx,
+            melodyCtx,
+            matchesCustomStructure ? input.customStructure![idx]?.bars : undefined
+          )
+        )
       : buildSimulatedArchitectSong(input).sections;
 
   const totalBarSteps = timeSignature === '3/4' || timeSignature === '6/8' ? 12 : 16;

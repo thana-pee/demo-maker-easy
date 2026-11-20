@@ -174,6 +174,7 @@ export interface VocalTake {
 }
 
 export interface InstrumentMixerConfig {
+  masterVolume?: number; // 0–150 (default 100)
   guitarRhythm: { enabled: boolean; volume: number; style: GuitarStyle; model: GuitarModel };
   guitarLead:   { enabled: boolean; volume: number; style: LeadGuitarStyle; model: GuitarModel; drive?: LeadGuitarDrive };
   bass:         { enabled: boolean; volume: number; style: BassStyle };

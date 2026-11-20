@@ -95,7 +95,7 @@ export const STRUM_GAP_MS: Record<'campfire' | 'soft' | 'ring', [number, number]
   ring: [26, 32],
 };
 
-const INTENSITY_SCALE = { low: 0.72, medium: 0.86, high: 1 } as const;
+const INTENSITY_SCALE = { low: 0.82, medium: 0.91, high: 1 } as const;
 
 // ───────────────────────────── Utilities ─────────────────────────────
 
@@ -272,7 +272,7 @@ function pushNote(
   if (end - t < 0.04) end = t + 0.04;
   const secVol = getSectionTrackVolume(ctx.fb.section, track);
   if (secVol <= 0) return;
-  const scaledVel = secVol === 100 ? vel : vel * (secVol / 100);
+  const scaledVel = secVol === 100 ? vel : vel * (0.7 + 0.3 * (secVol / 100));
   ctx.out.push({ kind: 'note', track, t, midi, dur: end - t, vel: clampVel(scaledVel), release });
 }
 
@@ -281,7 +281,7 @@ function pushDrum(ctx: PlanCtx, voice: DrumVoice, t: number, vel: number, pan: n
   if (t >= ctx.cutT - 1e-6) return;
   const secVol = getSectionTrackVolume(ctx.fb.section, 'drums');
   if (secVol <= 0) return;
-  const scaledVel = secVol === 100 ? vel : vel * (secVol / 100);
+  const scaledVel = secVol === 100 ? vel : vel * (0.7 + 0.3 * (secVol / 100));
   ctx.out.push({ kind: 'drum', voice, t, vel: clampVel(scaledVel), pan });
 }
 

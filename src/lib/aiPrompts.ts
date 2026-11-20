@@ -1747,7 +1747,7 @@ export function buildEasyArchitectSystemPrompt(options?: {
     `- ทุกท่อนต้องต่อเรื่องราวกันอย่างมีพัฒนาการทางอารมณ์ และเคารพงบพยางค์แยกตามท่อน (~${budget.barDurationSec} วิ/ห้อง · เผื่อลมหายใจท้ายห้อง ≥ ${budget.restSteps} steps · ${budget.guidance})`,
     `- กฎความกระชับเพื่อการขับร้องจริง (Singable Pacing & Anti-Rush — Per-Section Breakdown ที่ ${bpm} BPM ${timeSig}):`,
     `  * Verse: ${budget.min}-${budget.max} พยางค์/ห้อง | Pre-Chorus: ${preChorusBudget.min}-${preChorusBudget.max} พยางค์/ห้อง`,
-    `  * Chorus: Bar 1 Hook สั้นติดหู ${chorusBar1Min}-${chorusBar1Max} พยางค์ และ Bar 2-4 ${chorusBudget.min}-${chorusBudget.max} พยางค์/ห้อง`,
+    `  * Chorus: Bar 1 Hook สั้นติดหู ${chorusBar1Min}-${chorusBar1Max} พยางค์ และ Bar 2 เป็นต้นไป (รองรับ 2–8 ห้อง) ${chorusBudget.min}-${chorusBudget.max} พยางค์/ห้อง`,
     `  * Bridge: ${bridgeBudget.min}-${bridgeBudget.max} พยางค์/ห้อง | Outro Bar 1: ${outroBudget.min}-${outroBudget.max} พยางค์/ห้อง`,
     '- สัมผัสภาษาไทยต่อเนื่องทุกวรรค: เลือกกลอนคู่ `AABB`, สลับ `ABAB` หรือ `Chain` ตาม Tier 3 เพื่อให้คำร้องเป็นธรรมชาติและสลับสระไม่ซ้ำคำลงท้ายเดิมในทุกท่อน',
     '- กฎความหลากหลายของคีย์ (Key Diversity): หลีกเลี่ยงการตกไปใช้ C หรือ Am ซ้ำทุกเพลง ให้เลือกใช้คีย์ที่เหมาะกับอารมณ์เพลงและโทนเสียงจริง เช่น D, E, F, G, A, Bb, Em, Bm, Dm, F#m พร้อม capoFret (0-5) ที่จับง่ายบนกีตาร์โปร่ง',
@@ -1868,10 +1868,13 @@ export function buildEasyArchitectUserPrompt(input: {
     'ข้อบังคับโครงสร้าง:',
     '- ท่อน intro เว้น lyrics เป็น "" และ melodyNotes เป็น [] เพื่อให้ดนตรีเกริ่นนำ ส่วน outro ให้ใส่ประโยคปิดท้ายอารมณ์สั้นๆ ในห้องแรก และใช้ playStyle: "let-ring" ปิดนิ่งในห้องสุดท้าย',
     '- ท่อน pre-chorus ต้องไต่ระดับอารมณ์ส่งเข้าคำแรกของท่อน chorus และท่อน chorus ต้องมีประโยคจำ (Opening Punchline + Signature Payoff Line) ที่ทรงพลังที่สุดในเพลง',
-    `- คุมงบพยางค์แยกตามท่อน (~${budget.barDurationSec} วิ/ห้อง${input.lyricDensity ? ` · โหมดความหนาแน่น: ${input.lyricDensity}` : ''}): Verse ${budget.min}-${budget.max} พยางค์ | Pre-Chorus ${preChorusBudget.min}-${preChorusBudget.max} พยางค์ | Chorus Bar 1 ${chorusBar1Min}-${chorusBar1Max} และ Bar 2-4 ${chorusBudget.min}-${chorusBudget.max} พยางค์ | Bridge ${bridgeBudget.min}-${bridgeBudget.max} พยางค์ | Outro ${outroBudget.min}-${outroBudget.max} พยางค์${budget.barStructureGuidance ? ` | ${budget.barStructureGuidance}` : ''} ไม่เขียนเนื้อร้องยาวล้นงบจนร้องรัว`,
+    `- คุมงบพยางค์แยกตามท่อน (~${budget.barDurationSec} วิ/ห้อง${input.lyricDensity ? ` · โหมดความหนาแน่น: ${input.lyricDensity}` : ''}): Verse ${budget.min}-${budget.max} พยางค์ | Pre-Chorus ${preChorusBudget.min}-${preChorusBudget.max} พยางค์ | Chorus Bar 1 ${chorusBar1Min}-${chorusBar1Max} และ Bar 2 เป็นต้นไป ${chorusBudget.min}-${chorusBudget.max} พยางค์ | Bridge ${bridgeBudget.min}-${bridgeBudget.max} พยางค์ | Outro ${outroBudget.min}-${outroBudget.max} พยางค์${budget.barStructureGuidance ? ` | ${budget.barStructureGuidance}` : ''} ไม่เขียนเนื้อร้องยาวล้นงบจนร้องรัว`,
     '- ท่อน verse, pre-chorus, chorus ต้องมีทั้งคอร์ดและเนื้อร้องที่มีสัมผัสคล้องจองสอดคล้องคำเป็น/คำตาย (ส่วน melodyNotes ให้ส่ง [] หรือละเว้นไว้เพื่อให้ระบบ Synth ฝั่งแอปสร้างโน้ตไกด์อัตโนมัติ)',
     hasCustomStructure
       ? '- บังคับสร้างท่อนและจำนวนห้องให้ตรงตามโครงสร้างด้านบนเป๊ะ 100%'
+      : '',
+    hasCustomStructure && input.customStructure!.some((s) => s.bars > 4)
+      ? '- สำหรับท่อนที่กำหนด 6 หรือ 8 ห้อง: ต้องสร้างครบทุกห้องตามจำนวนที่ระบุเป๊ะ (ห้ามตัดจบแค่ 4 ห้อง) โดยกระจายเนื้อเรื่องและสัมผัสคล้องจองต่อเนื่องตลอดทั้งท่อน (เช่น แบ่งเป็น 2 ช่วง 4+4 ห้องสำหรับท่อน 8 บาร์)'
       : '',
     '- เขียน `producerNotes` สั้นๆ 2–3 ข้ออธิบายแนวคิดการ Arrange ที่จัดให้',
   ].filter(Boolean).join('\n');
@@ -2406,7 +2409,7 @@ export const ARCHITECT_RESPONSE_SCHEMA: Record<string, unknown> = {
           },
           bars: {
             type: 'array',
-            description: '2 to 4 bars per section',
+            description: '2 to 8 bars per section (match customStructure bar count exactly when specified)',
             items: {
               type: 'object',
               properties: {

@@ -54,6 +54,35 @@ export const TRACK_DEFAULT_VOL: Record<TrackId, number> = {
   melody: 56,
 };
 
+/** ค่า Trim ชดเชยความต่างระดับเสียงตั้งต้นระหว่าง smplr Soundfont (GM headroom ต่ำ), Web Audio Synth และเสียงร้อง */
+export const TRACK_GAIN_TRIM: Record<TrackId | 'vocal', number> = {
+  guitarRhythm: 1.65,
+  guitarLead: 1.35,
+  bass: 1.55,
+  piano: 1.75,
+  drums: 1.0,
+  melody: 0.9,
+  vocal: 1.45,
+};
+
+/** Makeup Gain หลัง Glue Compressor เพื่อยก Loudness ให้เทียบเท่ามาตรฐานสตรีมมิง (~ -14 ถึง -12 LUFS) ก่อนเข้า Limiter */
+export const MASTER_MAKEUP_GAIN = 1.85;
+export const MASTER_LIMITER_THRESHOLD_DB = -1.5;
+
+/** แปลงค่า Mixer UI (0–100%, รองรับ legacy 0–127) เป็น Linear Gain (0 dB ที่ 100%) */
+export function mixerVolumeToGain(v: number, trimGain = 1.0): number {
+  if (!Number.isFinite(v) || v <= 0) return 0;
+  const norm = Math.max(0, Math.min(127, v)) / 100;
+  return norm ** 1.25 * trimGain;
+}
+
+/** แปลงค่า Master Output Volume (0–150%, ค่าเริ่มต้น 100%) เป็น Linear Gain */
+export function masterVolumeToGain(masterVolume = 100): number {
+  if (!Number.isFinite(masterVolume) || masterVolume <= 0) return 0;
+  const clamped = Math.max(0, Math.min(150, masterVolume));
+  return (clamped / 100) ** 1.15;
+}
+
 /** เลือกชื่อ Soundfont ของกีตาร์ลีดตามโมเดลและค่า Drive */
 export function resolveLeadSoundfontInstrument(song: SongProject): string {
   const leadModel = song.mixer.guitarLead.model || 'gibson-les-paul';
@@ -136,6 +165,101 @@ function setSmoothParamOrImmediate(
   }
 }
 
+export interface MasterBusChain {
+  masterBus: GainNode;
+  reverbConvolver: ConvolverNode;
+  reverbWetGain: GainNode;
+  glueCompressor: DynamicsCompressorNode;
+  masterMakeupGain: GainNode;
+  masterLimiter: DynamicsCompressorNode;
+  setAmbience: (mode: Ambience3DMode) => void;
+  setMasterVolume: (vol: number, t?: number) => void;
+  disconnect: () => void;
+}
+
+/**
+ * สร้าง Studio Master Output Bus Chain ที่ใช้ร่วมกันทั้ง Live Playback (AudioEngine) และ Offline Bounce (mp3Exporter):
+ *   masterBus -> glueCompressor (-14dB, 3:1) -> masterMakeupGain (1.85x) -> masterLimiter (-1.5dB, 20:1) -> destination
+ *             \-> reverbConvolver -> reverbWetGain -> glueCompressor
+ */
+export function createMasterBusChain(
+  ctx: BaseAudioContext,
+  ambienceMode: Ambience3DMode = 'wood-studio',
+  masterVolume = 100
+): MasterBusChain {
+  const now = ctx.currentTime || 0;
+
+  const masterBus = ctx.createGain();
+  masterBus.gain.value = masterVolumeToGain(masterVolume);
+
+  let currentAmbience: Ambience3DMode | null = ambienceMode;
+  const reverbConvolver = ctx.createConvolver();
+  reverbConvolver.buffer = buildRoomImpulseBuffer(ctx, ambienceMode);
+
+  const reverbWetGain = ctx.createGain();
+  reverbWetGain.gain.value = getAmbienceWetGain(ambienceMode);
+
+  const glueCompressor = ctx.createDynamicsCompressor();
+  glueCompressor.threshold.setValueAtTime(-14, now);
+  glueCompressor.knee.setValueAtTime(12, now);
+  glueCompressor.ratio.setValueAtTime(3.0, now);
+  glueCompressor.attack.setValueAtTime(0.015, now);
+  glueCompressor.release.setValueAtTime(0.14, now);
+
+  const masterMakeupGain = ctx.createGain();
+  masterMakeupGain.gain.value = MASTER_MAKEUP_GAIN;
+
+  const masterLimiter = ctx.createDynamicsCompressor();
+  masterLimiter.threshold.setValueAtTime(MASTER_LIMITER_THRESHOLD_DB, now);
+  masterLimiter.knee.setValueAtTime(0, now);
+  masterLimiter.ratio.setValueAtTime(20, now);
+  masterLimiter.attack.setValueAtTime(0.001, now);
+  masterLimiter.release.setValueAtTime(0.06, now);
+
+  masterBus.connect(glueCompressor);
+  masterBus.connect(reverbConvolver);
+  reverbConvolver.connect(reverbWetGain);
+  reverbWetGain.connect(glueCompressor);
+  glueCompressor.connect(masterMakeupGain);
+  masterMakeupGain.connect(masterLimiter);
+  masterLimiter.connect(ctx.destination);
+
+  const setAmbience = (mode: Ambience3DMode) => {
+    if (currentAmbience === mode) return;
+    currentAmbience = mode;
+    reverbConvolver.buffer = buildRoomImpulseBuffer(ctx, mode);
+    const wet = getAmbienceWetGain(mode);
+    setSmoothParamOrImmediate(reverbWetGain.gain, wet, ctx.currentTime || 0, 0.05);
+  };
+
+  const setMasterVolume = (vol: number, t?: number) => {
+    const nextGain = masterVolumeToGain(vol);
+    const targetTime = t !== undefined ? t : (ctx.currentTime || 0);
+    setSmoothParamOrImmediate(masterBus.gain, nextGain, targetTime, 0.03);
+  };
+
+  const disconnect = () => {
+    try { masterBus.disconnect(); } catch {}
+    try { reverbConvolver.disconnect(); } catch {}
+    try { reverbWetGain.disconnect(); } catch {}
+    try { glueCompressor.disconnect(); } catch {}
+    try { masterMakeupGain.disconnect(); } catch {}
+    try { masterLimiter.disconnect(); } catch {}
+  };
+
+  return {
+    masterBus,
+    reverbConvolver,
+    reverbWetGain,
+    glueCompressor,
+    masterMakeupGain,
+    masterLimiter,
+    setAmbience,
+    setMasterVolume,
+    disconnect,
+  };
+}
+
 // ─────────────────────────── Drum Synthesis ───────────────────────────
 
 /**
@@ -164,8 +288,8 @@ export class DrumSynth {
   }
 
   setVolume(v: number) {
-    // v: 0–127
-    this.out.gain.value = (Math.max(0, Math.min(127, v)) / 127) ** 1.5;
+    // v: 0–100 (รองรับ legacy 0–127)
+    this.out.gain.value = mixerVolumeToGain(v);
   }
 
   /** t = BaseAudioContext absolute time */
@@ -710,9 +834,17 @@ export class TrackGainNode {
   protected masterGain: GainNode;
   protected fadeGain: GainNode;
   protected panner: StereoPannerNode;
+  protected trimGain: number;
   readonly input: GainNode;
 
-  constructor(ctx: BaseAudioContext, destination: AudioNode, vol: number, pan: number) {
+  constructor(
+    ctx: BaseAudioContext,
+    destination: AudioNode,
+    vol: number,
+    pan: number,
+    trimGain = 1.0
+  ) {
+    this.trimGain = trimGain;
     this.masterGain = ctx.createGain();
     this.fadeGain = ctx.createGain();
     this.input = ctx.createGain();
@@ -729,13 +861,13 @@ export class TrackGainNode {
   }
 
   setVolume(v: number) {
-    // v: 0–127
-    this.masterGain.gain.value = (Math.max(0, Math.min(127, v)) / 127) ** 1.5;
+    // v: 0–100 (รองรับ legacy 0–127)
+    this.masterGain.gain.value = mixerVolumeToGain(v, this.trimGain);
   }
 
   /** ตั้งระดับเสียง ณ เวลาเจาะจงบน timeline (สำคัญสำหรับ OfflineAudioContext Section Mix & Auto-Ducking) */
   setVolumeAt(v: number, t: number) {
-    const gainVal = (Math.max(0, Math.min(127, v)) / 127) ** 1.5;
+    const gainVal = mixerVolumeToGain(v, this.trimGain);
     setParamAtTimeOrValue(this.masterGain.gain, gainVal, t);
   }
 
@@ -774,7 +906,7 @@ export class GuitarRhythmTrackGainNode extends TrackGainNode {
     model: GuitarModel,
     gauge: StringGauge = 'standard-010'
   ) {
-    super(ctx, destination, vol, pan);
+    super(ctx, destination, vol, pan, TRACK_GAIN_TRIM.guitarRhythm);
 
     // ปลด input -> masterGain ตรงๆ จาก constructor แม่ เพื่อต่อผ่าน EQ Chain
     this.input.disconnect(this.masterGain);
@@ -960,7 +1092,7 @@ export class LeadGuitarTrackGainNode extends TrackGainNode {
   private vibratoWet: GainNode;
 
   constructor(ctx: BaseAudioContext, destination: AudioNode, vol: number, pan: number) {
-    super(ctx, destination, vol, pan);
+    super(ctx, destination, vol, pan, TRACK_GAIN_TRIM.guitarLead);
     this.ctx = ctx;
 
     this.input.disconnect(this.masterGain);
@@ -1115,7 +1247,7 @@ export class VocalStudioTrackGainNode extends TrackGainNode {
     pan: number,
     preset: VocalFxPreset = 'studio-warm'
   ) {
-    super(ctx, destination, vol, pan);
+    super(ctx, destination, vol, pan, TRACK_GAIN_TRIM.vocal);
     this.audioCtx = ctx;
 
     this.input.disconnect(this.masterGain);
@@ -1204,7 +1336,7 @@ export class BassTrackGainNode extends TrackGainNode {
   private mudCut: BiquadFilterNode;
 
   constructor(ctx: BaseAudioContext, destination: AudioNode, vol: number, pan: number) {
-    super(ctx, destination, vol, pan);
+    super(ctx, destination, vol, pan, TRACK_GAIN_TRIM.bass);
 
     this.input.disconnect(this.masterGain);
 
@@ -1240,7 +1372,7 @@ export class PianoTrackGainNode extends TrackGainNode {
   private airShelf: BiquadFilterNode;
 
   constructor(ctx: BaseAudioContext, destination: AudioNode, vol: number, pan: number) {
-    super(ctx, destination, vol, pan);
+    super(ctx, destination, vol, pan, TRACK_GAIN_TRIM.piano);
 
     this.input.disconnect(this.masterGain);
 
@@ -1373,13 +1505,15 @@ export function createOfflineTrackBusSet(
       ctx,
       destination,
       song.mixer.drums.volume ?? TRACK_DEFAULT_VOL.drums,
-      TRACK_PAN.drums
+      TRACK_PAN.drums,
+      TRACK_GAIN_TRIM.drums
     ),
     melody: new TrackGainNode(
       ctx,
       destination,
       excludeMelodyGuide ? 0 : (song.mixer.melody?.volume ?? TRACK_DEFAULT_VOL.melody),
-      TRACK_PAN.melody
+      TRACK_PAN.melody,
+      TRACK_GAIN_TRIM.melody
     ),
   };
 

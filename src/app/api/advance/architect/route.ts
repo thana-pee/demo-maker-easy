@@ -169,7 +169,18 @@ export async function POST(request: Request): Promise<Response> {
   const effectiveThaiGenre = thaiGenre ?? preset.thaiGenre;
 
   const customStructure = Array.isArray(obj.customStructure)
-    ? (obj.customStructure as Array<{ type: SectionType; bars: number; name?: string }>).slice(0, 9)
+    ? (obj.customStructure as Array<{ type: SectionType; bars: number; name?: string }>)
+        .slice(0, 9)
+        .map((item) => ({
+          ...item,
+          bars: Math.max(
+            2,
+            Math.min(
+              8,
+              Math.round(Number(item.bars) || (item.type === 'intro' || item.type === 'outro' ? 2 : 4))
+            )
+          ),
+        }))
     : undefined;
   const chordProgressionPreset =
     typeof obj.chordProgressionPreset === 'string' && obj.chordProgressionPreset.trim()
@@ -201,12 +212,26 @@ export async function POST(request: Request): Promise<Response> {
   const modelToUse = useProArgon ? GEMINI_MODEL_PRO : GEMINI_MODEL_MAIN;
   const routeStartedAt = Date.now();
   const sectionCount = customStructure && customStructure.length > 0 ? customStructure.length : 5;
+  const totalRequestedBars =
+    customStructure && customStructure.length > 0
+      ? customStructure.reduce((sum, s) => sum + s.bars, 0)
+      : 14;
   const architectCost = useProArgon
     ? CREDIT_COST_TABLE.aiProArgonArranger
     : getEasyArchitectCreditCost(sectionCount);
-  const maxOutputTokens = useProArgon ? 32768 : sectionCount <= 5 ? 8192 : 12288;
+  const maxOutputTokens = useProArgon
+    ? 32768
+    : totalRequestedBars > 36 || sectionCount >= 8
+      ? 16384
+      : totalRequestedBars > 20 || sectionCount > 5
+        ? 12288
+        : 8192;
   const thinkingLevel = useProArgon ? 'medium' : 'low';
-  const timeoutMs = useProArgon ? 46_000 : sectionCount <= 5 ? 36_000 : 42_000;
+  const timeoutMs = useProArgon
+    ? 46_000
+    : totalRequestedBars > 36 || sectionCount > 5
+      ? 44_000
+      : 36_000;
   const fallbackModels = useProArgon
     ? [GEMINI_MODEL_MAIN, GEMINI_MODEL_FLASH]
     : [GEMINI_MODEL_FLASH, GEMINI_MODEL_LITE];
@@ -455,6 +480,10 @@ export async function POST(request: Request): Promise<Response> {
           }
         );
 
+        const totalPolishLines = selectedForPolish.reduce(
+          (sum, entry) => sum + entry.item.sec.bars.length,
+          0
+        );
         const polishRes = await callGeminiJson<{
           polishedSections?: Array<{ sectionId?: string; sectionName?: string; lines?: string[] }>;
         }>(polishPrompt, {
@@ -463,7 +492,7 @@ export async function POST(request: Request): Promise<Response> {
           systemInstruction:
             'คุณคือบรรณาธิการคำร้องไทยมืออาชีพ แก้เฉพาะคำลงท้าย/สัมผัส คำซ้ำ และความกระชับให้ร้องลื่นเป็นภาษาพูดธรรมชาติ (ห้ามกลับคำเป็น Yoda, ห้ามประดิษฐ์คำแปลก, ใช้กลอนคู่ AABB หรือสลับ ABAB ได้) โดยคงความหมาย จำนวนวรรค และคำหมุดหมายของผู้ใช้ไว้ครบถ้วน',
           responseSchema: RHYME_POLISH_RESPONSE_SCHEMA,
-          maxOutputTokens: 2048,
+          maxOutputTokens: totalPolishLines > 20 ? 4096 : 2048,
           thinkingLevel: 'low',
           timeoutMs: Math.min(12_000, remainingPolishBudgetMs),
         });

@@ -53,6 +53,12 @@ import {
   GUITAR_INSTRUMENT,
   TRACK_PAN,
   TRACK_DEFAULT_VOL,
+  TRACK_GAIN_TRIM,
+  MASTER_MAKEUP_GAIN,
+  MASTER_LIMITER_THRESHOLD_DB,
+  mixerVolumeToGain,
+  masterVolumeToGain,
+  createMasterBusChain,
   resolveLeadSoundfontInstrument,
   getAmbienceWetGain,
   buildRoomImpulseBuffer,
@@ -69,12 +75,19 @@ import {
   VocalStudioTrackGainNode,
   computeEffectiveBarMix,
   type LeadDriveDSPParams,
+  type MasterBusChain,
 } from './audioDspShared';
 
 export {
   GUITAR_INSTRUMENT,
   TRACK_PAN,
   TRACK_DEFAULT_VOL,
+  TRACK_GAIN_TRIM,
+  MASTER_MAKEUP_GAIN,
+  MASTER_LIMITER_THRESHOLD_DB,
+  mixerVolumeToGain,
+  masterVolumeToGain,
+  createMasterBusChain,
   resolveLeadSoundfontInstrument,
   getAmbienceWetGain,
   buildRoomImpulseBuffer,
@@ -90,6 +103,7 @@ export {
   PianoTrackGainNode,
   VocalStudioTrackGainNode,
   type LeadDriveDSPParams,
+  type MasterBusChain,
 };
 export { computeAutoDuckFactor };
 
@@ -176,11 +190,7 @@ type StatusChangeCb = (status: EngineStatus) => void;
 
 class AudioEngine {
   private ctx: AudioContext | null = null;
-  private masterCompressor: DynamicsCompressorNode | null = null;
-  private masterBus: GainNode | null = null;
-  private reverbConvolver: ConvolverNode | null = null;
-  private reverbWetGain: GainNode | null = null;
-  private currentAmbience: Ambience3DMode | null = null;
+  private masterChain: MasterBusChain | null = null;
   private instruments: Partial<Record<TrackId, Smplr>> = {};
   private drumSynth: DrumSynth | null = null;
   private melodySynth: MelodySynth | null = null;
@@ -275,6 +285,20 @@ class AudioEngine {
     return () => this.statusChangeCbs.delete(cb);
   }
 
+  private _ensureMasterChain(
+    ambienceMode: Ambience3DMode = 'wood-studio',
+    masterVolume = 100
+  ): MasterBusChain {
+    const ctx = this.ctx!;
+    if (!this.masterChain) {
+      this.masterChain = createMasterBusChain(ctx, ambienceMode, masterVolume);
+    } else {
+      this.masterChain.setAmbience(ambienceMode);
+      this.masterChain.setMasterVolume(masterVolume);
+    }
+    return this.masterChain;
+  }
+
   // ─── Init / Load ───
 
   async init(song: SongProject, onProgress?: (p: number) => void): Promise<void> {
@@ -305,30 +329,12 @@ class AudioEngine {
 
       const ctx = this.ctx;
 
-      // Master Bus & Mastering Compressor (ป้องกันเสียงแตกพร่า พร้อม Glue ความนวลสไตล์แผ่นเสียง)
-      if (!this.masterCompressor) {
-        this.masterCompressor = ctx.createDynamicsCompressor();
-        this.masterCompressor.threshold.setValueAtTime(-12, ctx.currentTime);
-        this.masterCompressor.knee.setValueAtTime(8, ctx.currentTime);
-        this.masterCompressor.ratio.setValueAtTime(3.5, ctx.currentTime);
-        this.masterCompressor.attack.setValueAtTime(0.015, ctx.currentTime);
-        this.masterCompressor.release.setValueAtTime(0.12, ctx.currentTime);
-        this.masterCompressor.connect(ctx.destination);
-      }
-      if (!this.masterBus) {
-        this.masterBus = ctx.createGain();
-        this.masterBus.gain.value = 1.0;
-        this.masterBus.connect(this.masterCompressor);
-      }
-      if (!this.reverbConvolver || !this.reverbWetGain) {
-        this.reverbConvolver = ctx.createConvolver();
-        this.reverbWetGain = ctx.createGain();
-        this.masterBus.connect(this.reverbConvolver);
-        this.reverbConvolver.connect(this.reverbWetGain);
-        this.reverbWetGain.connect(this.masterCompressor);
-      }
-      this.setAmbience3D(song.ambience3D || 'wood-studio');
-      const dest = this.masterBus;
+      // Studio Master Bus + 3D Room Reverb + Glue Compressor + Makeup Gain + Limiter
+      const masterChain = this._ensureMasterChain(
+        song.ambience3D || 'wood-studio',
+        song.mixer.masterVolume ?? 100
+      );
+      const dest = masterChain.masterBus;
 
       // สร้าง TrackGainNode สำหรับทุก track
       const tracks: TrackId[] = ['guitarRhythm', 'guitarLead', 'bass', 'piano', 'drums', 'melody'];
@@ -364,7 +370,13 @@ class AudioEngine {
         } else if (tr === 'piano') {
           this.trackGains[tr] = new PianoTrackGainNode(ctx, dest, mixVol ?? TRACK_DEFAULT_VOL[tr], TRACK_PAN[tr]);
         } else {
-          this.trackGains[tr] = new TrackGainNode(ctx, dest, mixVol ?? TRACK_DEFAULT_VOL[tr], TRACK_PAN[tr]);
+          this.trackGains[tr] = new TrackGainNode(
+            ctx,
+            dest,
+            mixVol ?? TRACK_DEFAULT_VOL[tr],
+            TRACK_PAN[tr],
+            TRACK_GAIN_TRIM[tr]
+          );
         }
       }
 
@@ -384,6 +396,7 @@ class AudioEngine {
       this.drumSynth = new DrumSynth(ctx, this.trackGains['drums']!.input);
       this.clickSynth?.dispose();
       this.clickSynth = new DrumSynth(ctx, dest);
+      this.clickSynth.setVolume(75);
 
       // MelodySynth ต่อเข้า melodyGain.input
       this.melodySynth?.dispose();
@@ -418,7 +431,7 @@ class AudioEngine {
           instrument,
           kit: 'MusyngKite',
           destination: this.trackGains[id]!.input,
-          volume: 100,
+          volume: 127,
           ...(cacheStorage ? { storage: cacheStorage } : {}),
           onLoadProgress: () => {
             // เรียกทุกครั้งที่ sample โหลดเสร็จ — ใช้สำหรับ per-instrument progress
@@ -501,12 +514,11 @@ class AudioEngine {
   }
 
   setAmbience3D(mode: Ambience3DMode) {
-    if (!this.ctx || !this.reverbConvolver || !this.reverbWetGain) return;
-    if (this.currentAmbience === mode) return;
-    this.currentAmbience = mode;
-    this.reverbConvolver.buffer = buildRoomImpulseBuffer(this.ctx, mode);
-    const wet = getAmbienceWetGain(mode);
-    this.reverbWetGain.gain.setTargetAtTime(wet, this.ctx.currentTime, 0.05);
+    this.masterChain?.setAmbience(mode);
+  }
+
+  setMasterVolume(vol: number) {
+    this.masterChain?.setMasterVolume(vol);
   }
 
   setVocalFxPreset(preset: VocalFxPreset) {
@@ -548,6 +560,7 @@ class AudioEngine {
       this.playbackFlat = flattenSong(song);
     }
     if (this.ctx) {
+      this.setMasterVolume(song.mixer.masterVolume ?? 100);
       const activeFlatBar = this.activeBarIndex >= 0 ? this.playbackFlat[this.activeBarIndex] : undefined;
       const activeSection = activeFlatBar?.section ?? song.sections[0];
       this._applySectionMixAndDrive(
@@ -571,9 +584,12 @@ class AudioEngine {
     if (this.ctx.state === 'suspended') {
       this.ctx.resume().catch(() => {});
     }
-    const dest = this.masterBus || this.ctx.destination;
+    const dest = this._ensureMasterChain(
+      this._currentSong?.ambience3D || 'wood-studio',
+      this._currentSong?.mixer.masterVolume ?? 100
+    ).masterBus;
     if (!this.trackGains['melody']) {
-      this.trackGains['melody'] = new TrackGainNode(this.ctx, dest, 95, 0.0);
+      this.trackGains['melody'] = new TrackGainNode(this.ctx, dest, 95, 0.0, TRACK_GAIN_TRIM.melody);
     }
     if (!this.melodySynth) {
       this.melodySynth = new MelodySynth(this.ctx, this.trackGains['melody'].input);
@@ -613,7 +629,10 @@ class AudioEngine {
       return;
     }
 
-    const dest = this.masterBus || this.ctx.destination;
+    const dest = this._ensureMasterChain(
+      activeSong?.ambience3D || 'wood-studio',
+      activeSong?.mixer.masterVolume ?? 100
+    ).masterBus;
     if (!this.chordPreviewSynth) {
       this.chordPreviewSynth = new MelodySynth(this.ctx, dest);
       this.chordPreviewSynth.setSound('piano');
@@ -1113,15 +1132,8 @@ class AudioEngine {
     for (const tg of Object.values(this.trackGains)) tg?.disconnect();
     this.vocalGain?.disconnect();
     this.vocalGain = null;
-    this.reverbConvolver?.disconnect();
-    this.reverbConvolver = null;
-    this.reverbWetGain?.disconnect();
-    this.reverbWetGain = null;
-    this.currentAmbience = null;
-    this.masterBus?.disconnect();
-    this.masterBus = null;
-    this.masterCompressor?.disconnect();
-    this.masterCompressor = null;
+    this.masterChain?.disconnect();
+    this.masterChain = null;
     this.vocalBufferCache.clear();
     for (const inst of Object.values(this.instruments)) {
       try {
@@ -1129,7 +1141,9 @@ class AudioEngine {
       } catch {}
     }
     this.drumSynth?.dispose();
+    this.clickSynth?.dispose();
     this.melodySynth?.dispose();
+    this.chordPreviewSynth?.dispose();
     this.ctx?.close().catch(() => {});
     this.ctx = null;
     this.loadedGuitarModel = null;
@@ -1137,7 +1151,9 @@ class AudioEngine {
     this.instruments = {};
     this.trackGains = {};
     this.drumSynth = null;
+    this.clickSynth = null;
     this.melodySynth = null;
+    this.chordPreviewSynth = null;
     this.state = 'idle';
     this.emitStatus();
   }

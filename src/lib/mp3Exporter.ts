@@ -28,9 +28,8 @@ import {
 } from './barPlanner';
 import {
   GUITAR_INSTRUMENT,
-  buildRoomImpulseBuffer,
+  createMasterBusChain,
   createOfflineTrackBusSet,
-  getAmbienceWetGain,
   resolveLeadSoundfontInstrument,
   type OfflineTrackBusSet,
 } from './audioDspShared';
@@ -394,7 +393,7 @@ async function loadOfflineSoundfonts(
           instrument,
           kit: 'MusyngKite',
           destination: trackGains[id].input,
-          volume: 100,
+          volume: 127,
           scheduler: OFFLINE_IMMEDIATE_SCHEDULER,
           ...(cacheStorage ? { storage: cacheStorage } : {}),
         });
@@ -443,28 +442,14 @@ export async function renderSongToAudioBuffer(
 
   const offlineCtx = new OfflineAudioContext(2, totalFrames, sampleRate);
 
-  // Master Compressor & Bus & 3D Room Reverb (Parity 100% กับ AudioEngine.init)
-  const masterCompressor = offlineCtx.createDynamicsCompressor();
-  masterCompressor.threshold.setValueAtTime(-12, 0);
-  masterCompressor.knee.setValueAtTime(8, 0);
-  masterCompressor.ratio.setValueAtTime(3.5, 0);
-  masterCompressor.attack.setValueAtTime(0.015, 0);
-  masterCompressor.release.setValueAtTime(0.12, 0);
-
-  const masterBus = offlineCtx.createGain();
-  masterBus.gain.value = 0.95;
-
+  // Studio Master Output Bus + 3D Room Reverb + Glue Compressor + Makeup Gain + Limiter (Parity กับ Live AudioEngine)
   const ambienceMode = song.ambience3D || 'wood-studio';
-  const reverbConvolver = offlineCtx.createConvolver();
-  reverbConvolver.buffer = buildRoomImpulseBuffer(offlineCtx, ambienceMode);
-  const reverbWetGain = offlineCtx.createGain();
-  reverbWetGain.gain.value = getAmbienceWetGain(ambienceMode);
-
-  masterBus.connect(masterCompressor);
-  masterBus.connect(reverbConvolver);
-  reverbConvolver.connect(reverbWetGain);
-  reverbWetGain.connect(masterCompressor);
-  masterCompressor.connect(offlineCtx.destination);
+  const masterChain = createMasterBusChain(
+    offlineCtx,
+    ambienceMode,
+    song.mixer.masterVolume ?? 100
+  );
+  const masterBus = masterChain.masterBus;
 
   // สร้าง Shared DSP Track Buses (รวม Guitar Body EQ, Lead Overdrive/Fuzz, และ Vocal Studio DSP Chain: HPF 95Hz + Presence 3800Hz + Comp)
   const busSet = createOfflineTrackBusSet(offlineCtx, song, masterBus, {
@@ -699,6 +684,8 @@ export async function renderSongToAudioBuffer(
         sf?.dispose();
       } catch {}
     }
+    busSet.disconnectAll();
+    masterChain.disconnect();
   }
 }
 

@@ -122,6 +122,7 @@ export function useAudioEngine(song: SongProject): AudioEngineHookResult {
     }
     eng.setGuitarAcoustics(song.guitarModel, song.stringGauge);
     eng.setAmbience3D(song.ambience3D || 'wood-studio');
+    eng.setMasterVolume(song.mixer.masterVolume ?? 100);
     eng.setMetronomeEnabled(Boolean(song.metronomeEnabled));
     eng.updateSong(song);
   }, [song]);

@@ -32,6 +32,7 @@ import {
   EASY_STYLE_PRESETS,
   getPresetConfig,
   applyBandDensityToSong,
+  cycleEasySectionBars,
   type BandDensityLevel,
   type TempoFeel,
   type VocalProfile,
@@ -261,6 +262,11 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
       { type: 'outro' as SectionType, bars: 2, name: 'Outro' },
     ];
   }, [structurePreset, customSections]);
+
+  const totalActiveBars = useMemo(
+    () => activeSections.reduce((sum, s) => sum + s.bars, 0),
+    [activeSections]
+  );
 
   const [useProArgon, setUseProArgon] = useState<boolean>(false);
   const [needsTopUpError, setNeedsTopUpError] = useState<boolean>(false);
@@ -1033,7 +1039,7 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
                         {lang === 'th' ? '3. โครงสร้างท่อนเพลง (Song Structure):' : '3. Song Structure:'}
                       </label>
                       <span className="px-2.5 py-0.5 rounded-full bg-accent-50 text-accent-text border border-accent-200 text-[11px] font-bold">
-                        {activeSections.length} {lang === 'th' ? 'ท่อน' : 'Sections'} · {currentCreditCost} {lang === 'th' ? 'เหรียญ' : 'Credits'}
+                        {activeSections.length} {lang === 'th' ? 'ท่อน' : 'Sections'} · {totalActiveBars} {lang === 'th' ? 'บาร์' : 'Bars'} · {currentCreditCost} {lang === 'th' ? 'เหรียญ' : 'Credits'}
                       </span>
                     </div>
 
@@ -1092,28 +1098,51 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
                     {/* Custom Chip Editor Mode */}
                     {structurePreset === 'custom' ? (
                       <div className="mt-2.5 pt-2.5 border-t border-hairline space-y-2">
-                        <div className="text-[11px] text-ink-500">
-                          {lang === 'th'
-                            ? 'กดปุ่มชิปเพื่อสลับ 2 หรือ 4 ห้อง / กด ✕ เพื่อลบท่อน (รองรับสูงสุด 9 ท่อน):'
-                            : 'Click chip to toggle 2/4 bars, or ✕ to remove (up to 9 sections):'}
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <div className="text-[11px] text-ink-500">
+                            {lang === 'th'
+                              ? 'กดปุ่มชิปเพื่อสลับ 2 / 4 / 6 / 8 บาร์ / กด ✕ เพื่อลบท่อน (รองรับสูงสุด 9 ท่อน · สูงสุด 8 บาร์/ท่อน):'
+                              : 'Click chip to cycle 2 / 4 / 6 / 8 bars, or ✕ to remove (up to 9 sections · max 8 bars/section):'}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setCustomSections((prev) =>
+                                prev.map((s) =>
+                                  s.type === 'verse' || s.type === 'chorus' || s.type === 'solo'
+                                    ? { ...s, bars: 8 }
+                                    : s
+                                )
+                              )
+                            }
+                            className="px-2.5 py-1 rounded-lg bg-accent-50 hover:bg-accent-200/70 border border-accent-200 text-[11px] font-bold text-accent-text cursor-pointer transition shrink-0"
+                          >
+                            {lang === 'th' ? 'ตั้งท่อนร้อง/โซโล่เป็น 8 บาร์' : 'Set Verse/Chorus/Solo to 8 bars'}
+                          </button>
                         </div>
                         <div className="flex flex-wrap gap-1.5 items-center">
                           {customSections.map((sec, idx) => (
                             <span
                               key={`${sec.type}-${idx}`}
-                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-surface-1 border border-hairline text-xs font-medium text-ink-900 shadow-xs"
+                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-medium shadow-xs ${
+                                sec.bars >= 8
+                                  ? 'bg-accent-50 border-accent-300 text-accent-text'
+                                  : sec.bars >= 6
+                                    ? 'bg-accent-50/50 border-accent-200 text-ink-900'
+                                    : 'bg-surface-1 border-hairline text-ink-900'
+                              }`}
                             >
                               <button
                                 type="button"
                                 onClick={() => {
                                   setCustomSections(
                                     customSections.map((s, i) =>
-                                      i === idx ? { ...s, bars: s.bars === 2 ? 4 : 2 } : s
+                                      i === idx ? { ...s, bars: cycleEasySectionBars(s.bars) } : s
                                     )
                                   );
                                 }}
                                 className="cursor-pointer hover:text-accent-500 font-bold"
-                                title={lang === 'th' ? 'คลิกเพื่อสลับจำนวนห้อง (2/4 ห้อง)' : 'Click to toggle bars'}
+                                title={lang === 'th' ? 'คลิกเพื่อสลับจำนวนห้อง (2 → 4 → 6 → 8 บาร์)' : 'Click to cycle bar count (2 → 4 → 6 → 8 bars)'}
                               >
                                 {sec.name || sec.type} ({sec.bars}บาร์)
                               </button>
@@ -1172,15 +1201,34 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
                         )}
                       </div>
                     ) : (
-                      <div className="text-[11px] text-ink-600 flex flex-wrap gap-1 pt-1">
-                        {activeSections.map((s, idx) => (
-                          <span
-                            key={idx}
-                            className="px-2 py-0.5 rounded bg-surface-1 border border-hairline text-[10px] font-semibold text-ink-700"
-                          >
-                            {s.name || s.type} ({s.bars}บาร์)
-                          </span>
-                        ))}
+                      <div className="space-y-1.5 pt-1">
+                        <div className="text-[11px] text-ink-600 flex flex-wrap gap-1">
+                          {activeSections.map((s, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => {
+                                setCustomSections(
+                                  activeSections.map((secItem, i) =>
+                                    i === idx
+                                      ? { ...secItem, bars: cycleEasySectionBars(secItem.bars) }
+                                      : { ...secItem }
+                                  )
+                                );
+                                setStructurePreset('custom');
+                              }}
+                              title={lang === 'th' ? 'คลิกเพื่อปรับจำนวนบาร์ (2 → 4 → 6 → 8 บาร์)' : 'Click to customize bar count (2 → 4 → 6 → 8 bars)'}
+                              className="px-2 py-0.5 rounded bg-surface-1 hover:bg-accent-50 border border-hairline hover:border-accent-300 text-[10px] font-semibold text-ink-700 hover:text-accent-text cursor-pointer transition"
+                            >
+                              {s.name || s.type} ({s.bars}บาร์)
+                            </button>
+                          ))}
+                        </div>
+                        <div className="text-[10px] text-ink-400">
+                          {lang === 'th'
+                            ? 'คลิกที่ท่อนใดก็ได้เพื่อปรับจำนวนบาร์ (2 / 4 / 6 / 8 บาร์) เองทันที'
+                            : 'Click any chip to customize its bar count (2 / 4 / 6 / 8 bars)'}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -1953,7 +2001,12 @@ export const EasyModeStarterModal: React.FC<EasyModeStarterModalProps> = ({
                     return (
                       <div key={sec.id} className="px-2.5 py-1.5 rounded-xl bg-surface-1 border border-hairline text-[11px]">
                         <div className="flex items-center justify-between gap-2">
-                          <span className="font-bold text-ink-900">{sec.name}</span>
+                          <span className="font-bold text-ink-900">
+                            {sec.name}{' '}
+                            <span className="text-[10px] font-medium text-ink-400">
+                              ({sec.bars.length} {lang === 'th' ? 'บาร์' : 'bars'})
+                            </span>
+                          </span>
                           <span className="font-mono-tabular text-accent-text font-semibold">{chordsStr}</span>
                         </div>
                         {snippet && <div className="text-ink-400 truncate mt-0.5">{snippet}</div>}
