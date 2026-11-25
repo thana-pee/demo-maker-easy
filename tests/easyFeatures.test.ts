@@ -231,36 +231,54 @@ test('Feature 2: POST /api/advance/cohesive-polish with 100/100 retention runs 0
 });
 
 test('Feature 2: POST /api/advance/cohesive-polish degrades gracefully in simulated mode without API key', async () => {
-  const sampleSong = buildSimulatedArchitectSong({
-    stylePreset: 'warm-acoustic',
-    vocalProfile: 'female',
-    tempoFeel: 'slow',
-    topic: 'แสงดาวเมื่อวันวาน',
-    language: 'th',
-  });
+  const prevApiKey = process.env.GEMINI_API_KEY;
+  const prevBillingMode = process.env.NEXT_PUBLIC_BILLING_MODE;
+  delete process.env.GEMINI_API_KEY;
+  process.env.NEXT_PUBLIC_BILLING_MODE = 'standalone';
 
-  const req = new Request('http://localhost:3000/api/advance/cohesive-polish', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      song: sampleSong,
-      lyricsRetentionPct: 75,
-      chordsRetentionPct: 70,
-      lockedSectionIds: [sampleSong.sections[0].id],
-      rebalanceBand: true,
-    }),
-  });
+  try {
+    const sampleSong = buildSimulatedArchitectSong({
+      stylePreset: 'warm-acoustic',
+      vocalProfile: 'female',
+      tempoFeel: 'slow',
+      topic: 'แสงดาวเมื่อวันวาน',
+      language: 'th',
+    });
 
-  const res = await cohesivePolishHandler(req);
-  assert.equal(res.status, 200);
+    const req = new Request('http://localhost:3000/api/advance/cohesive-polish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        song: sampleSong,
+        lyricsRetentionPct: 75,
+        chordsRetentionPct: 70,
+        lockedSectionIds: [sampleSong.sections[0].id],
+        rebalanceBand: true,
+      }),
+    });
 
-  const data = (await res.json()) as {
-    isSimulated: boolean;
-    song: SongProject;
-    tip: string;
-  };
+    const res = await cohesivePolishHandler(req);
+    assert.equal(res.status, 200);
 
-  assert.equal(data.isSimulated, true);
-  assert.equal(data.song.sections[0].id, sampleSong.sections[0].id);
-  assert.equal(data.song.sections[0].bars[0].lyrics, sampleSong.sections[0].bars[0].lyrics);
+    const data = (await res.json()) as {
+      isSimulated: boolean;
+      song: SongProject;
+      tip: string;
+    };
+
+    assert.equal(data.isSimulated, true);
+    assert.equal(data.song.sections[0].id, sampleSong.sections[0].id);
+    assert.equal(data.song.sections[0].bars[0].lyrics, sampleSong.sections[0].bars[0].lyrics);
+  } finally {
+    if (prevApiKey === undefined) {
+      delete process.env.GEMINI_API_KEY;
+    } else {
+      process.env.GEMINI_API_KEY = prevApiKey;
+    }
+    if (prevBillingMode === undefined) {
+      delete process.env.NEXT_PUBLIC_BILLING_MODE;
+    } else {
+      process.env.NEXT_PUBLIC_BILLING_MODE = prevBillingMode;
+    }
+  }
 });

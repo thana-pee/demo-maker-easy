@@ -26,6 +26,13 @@
 | **8A** | ✅ DONE | 2026-11-18 | Multi-Model Tiering, `v1beta` Parity, Pro Argon Mode (10 Cr) & Bulletproof Split-Wallet Refund |
 | **8B** | ✅ DONE | 2026-11-18 | Prompt Engineering, 16-Step Hum-to-Song & Cohesive Polish Fixes |
 | **8C** | ✅ DONE | 2026-11-18 | Studio Save Engine (Auto + Manual Save Ctrl+S + Auto-Checkpoints) & IDB Audio Fix |
+| **8D** | ✅ DONE | 2026-11-19 | Resilient Cloud Sync, Tombstone Delete & Multi-Device Conflict Guard |
+| **8E** | ✅ DONE | 2026-11-19 | User-Centric UX/UI Overhaul, Smart Undo/Redo, Chord Audition & Dark/Touch Polish |
+| **9A–9E** | ✅ DONE | 2026-11-19 | Singable Phrasing Physics, Breathable Melody Engine & Story Blueprint |
+| **UI QA** | ✅ DONE | 2026-11-19 | Navbar Overlap, Modal Tab Overflow, Piano Roll Sticky Z-Index & Stale Auth Sync (`cc55464`) |
+| **10** | ✅ DONE | 2026-11-19 | 4-Tier Constraint Harmony, AABB/ABAB & Mai-Yamok Parity, 3.8-Flash Non-Destructive Polish Gate (`e72fa90`) |
+| **Post-10** | ✅ DONE | 2026-11-21 | Easy Mode 8 Bars/Section & Studio Loudness Gain Staging (`464dc99`) |
+| **Wrap-up** | ✅ DONE | 2026-11-25 | Pre-Shelving Hygiene (Offline Test Isolation, Tutorial MP4 Gitignore, Handover README & Log Closure) |
 
 ---
 
@@ -849,3 +856,40 @@ Tests & Gates:
 - `npx tsx --test tests/*.test.ts` → `245/245` passing (0 failed, 0 skipped; all baseline + Phase 1–8 tests + 6 new Phase 9 suites)
 - `npm run lint` / `npx eslint . --max-warnings=0` → 0 errors, 0 warnings across the entire repository
 - `npm run build` → Next.js 16.4.6 (Turbopack) + TypeScript exited with code 0 (20/20 static/dynamic routes compiled cleanly)
+
+
+---
+
+### [UI QA] Navbar Overlap, Modal Tab Overflow, Piano Roll Sticky Z-Index & Stale Auth Sync (`cc55464`, 2026-11-19)
+Implemented UI polish and auth-sync fixes (`tests/ui_polish_vercel_qa.test.ts`):
+- `src/components/TransportBar.tsx` & `src/app/globals.css`: Resolved navbar overlap and strengthened sticky glass opacity.
+- `src/components/AdvanceModeModal.tsx`: Fixed responsive 5-column tab grid (no horizontal overflow) and Escape/dialog handling.
+- `src/components/MiniPianoRollModal.tsx`: Unified sticky headers, 16-step minimum grid width, non-clipping pills, and Escape dismissal.
+- `src/app/page.tsx`: Checked latest refreshed user state after `refreshAuthSession()` before invoking `handleSyncNow()`.
+
+---
+
+### [Phase 10] 4-Tier Constraint Harmony, AABB/ABAB & Mai-Yamok Parity, and 3.8-Flash Non-Destructive Polish Gate (`e72fa90`, 2026-11-19)
+Implemented Phase 10 quality & constraint harmony upgrades (`tests/phase10_constraint_harmony.test.ts`):
+- `src/lib/thaiRhymeHelper.ts` & `src/lib/aiPrompts.ts`: Synchronized mai-yamok (`ๆ`) segmentation parity with syllable counting, purged legacy clichés/double-words from `MASTER_LYRIC_FEW_SHOT_BANK`, synchronized Chorus Bar 1 budgets & 4-Tier Priority Ladder across prompts and validator, and added 88 BPM AABB/ABAB scoring + mid-line weak-word filtering + repeated-content-word checks with anchor exemption.
+- `src/app/api/advance/architect/route.ts`, `src/app/api/advance/lyrics/route.ts`, `src/lib/songArchitect.ts`, `src/components/EasyModeStarterModal.tsx`, & `src/components/SectionBuilder.tsx`: Added Non-Destructive Polish Gate (`gemini-3.8-flash` Option B polish) protecting primary model outputs, plus frontend HUD parity and token breakdown UI.
+
+---
+
+### [Post-Phase 10] Easy Mode 8 Bars/Section & Studio Loudness Gain Staging (`464dc99`, 2026-11-21)
+Implemented user-feedback upgrades (`tests/user_feedback_8bars_loudness.test.ts`):
+- `src/types/song.ts`, `src/lib/aiPrompts.ts`, `src/lib/songArchitect.ts`, `src/app/api/advance/architect/route.ts`, & `src/components/EasyModeStarterModal.tsx`: Added 2/4/6/8 bar cycling per section in Easy Mode (`customStructure` up to 8 bars/section) across schemas, prompts, sanitizer, and simulated song builder.
+- `src/lib/audioDspShared.ts`, `src/lib/audioEngine.ts`, `src/lib/mp3Exporter.ts`, `src/lib/barPlanner.ts`, `src/hooks/useAudioEngine.ts`, & `src/components/SoundCustomizerPanel.tsx`: Calibrated `mixerVolumeToGain` / `masterVolumeToGain`, built `createMasterBusChain` (glue compressor → makeup gain → limiter → destination + parallel reverb), applied `TRACK_GAIN_TRIM`, and softened `secVol` curve to prevent double attenuation with full live/offline parity.
+
+---
+
+### [Wrap-up] Pre-Shelving Hygiene (2026-11-25)
+Finalized repository hygiene before pausing active work on the project:
+- `tests/easyFeatures.test.ts`: Isolated `GEMINI_API_KEY` and `NEXT_PUBLIC_BILLING_MODE` in the simulated Cohesive Polish test (`try`/`finally` restore) so `npm test` runs 100% offline with zero live API calls.
+- `.gitignore` & Git index: Added `/tutorials/*.mp4` ignore rule and removed 24 deleted legacy `.mp4` paths from Git index (`git rm --cached`) while preserving all 21 local `.mp4` videos on disk and keeping `tutorials/CHAPTERS_YOUTUBE.txt` tracked.
+- `README.md` & `PROGRESS_LOG.md`: Replaced starter template with a full Thai/English handover README (features, stack, scripts, env/Supabase setup, repo map, known limitations) and closed out Phase 8D–Post-10 records.
+
+Tests & Gates:
+- `npm test` (`npx tsx --test tests/*.test.ts`) → `266/266` passing (`0` failed, `0` skipped, `~2.9s` offline)
+- `npm run lint` (`eslint`) → `0` errors, `0` warnings
+- `npx tsc --noEmit` → `0` errors

@@ -43,3 +43,6 @@ next-env.d.ts
 
 # local QA test outputs & exported audio
 /qa-results/
+
+# local tutorial video exports (keep on disk / cloud storage, exclude from git)
+/tutorials/*.mp4
